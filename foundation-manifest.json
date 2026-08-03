@@ -1,0 +1,28 @@
+{
+  "generated_at": "2026-08-03",
+  "repository": "greatkich/lineageguard",
+  "suggested_commit": "docs: establish LineageGuard product and agent engineering foundation",
+  "files": [
+    ".agents/skills/lineageguard-walkthrough-verification/SKILL.md",
+    ".agents/skills/lineageguard-impact-analysis/SKILL.md",
+    ".agents/skills/lineageguard-release-readiness/SKILL.md",
+    ".agents/skills/lineageguard-writeback-safety/SKILL.md",
+    ".codex/config.toml.example",
+    ".env.example",
+    "AGENTS.md",
+    "CODEX_START_PROMPT.md",
+    "FOUNDATION_MANIFEST.md",
+    "README.md",
+    "docs/AGENT_HARNESS.md",
+    "docs/ARCHITECTURE.md",
+    "docs/DECISIONS/ADR-001-typescript-first-hybrid.md",
+    "docs/DECISIONS/ADR-002-deterministic-control-plane.md",
+    "docs/PRODUCT_WALKTHROUGH.md",
+    "docs/IMPLEMENTATION_HANDOFF.md",
+    "docs/PRODUCT_VISION.md",
+    "docs/SKILLS_AND_AGENTS.md",
+    "docs/SOURCES.md",
+    "docs/PRODUCT_STRATEGY.md",
+    "scripts/bootstrap-agent-tooling.sh"
+  ]
+}
