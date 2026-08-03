@@ -1,0 +1,27 @@
+# Example only. Do not copy blindly.
+# Verify the current Codex configuration format and exact command in official docs.
+# Project-local MCP loading can differ between Codex CLI and desktop surfaces;
+# confirm visibility with the exact client that will run the implementation.
+
+# The DataHub MCP server can also be configured interactively with:
+#   npx -y @acryldata/mcp-server-datahub init
+#
+# Keep credentials in environment variables, never in this file.
+
+[mcp_servers.datahub]
+command = "npx"
+args = ["-y", "@acryldata/mcp-server-datahub"]
+startup_timeout_sec = 60.0
+tool_timeout_sec = 120.0
+
+# Optional development-only GitHub MCP. Prefer native GitHub tooling when available.
+# Start read-only and restrict toolsets. Verify current official server arguments.
+#
+# [mcp_servers.github]
+# command = "docker"
+# args = [
+#   "run", "-i", "--rm",
+#   "-e", "GITHUB_PERSONAL_ACCESS_TOKEN",
+#   "ghcr.io/github/github-mcp-server",
+#   "--read-only"
+# ]
