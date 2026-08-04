@@ -10,12 +10,10 @@ import {
 } from "./evidence.js";
 import { sha256 } from "./hash.js";
 import {
-  assertStructuralValidationReceiptBinding,
   bindMigrationCandidate,
   migrationArtifactFingerprint,
   migrationCandidateFingerprint,
   migrationCandidateSchema,
-  structuralValidationReceiptSchema,
 } from "./migration.js";
 import {
   assertRiskEvidenceReferences,
@@ -676,69 +674,6 @@ describe("migration contracts and binding", () => {
     ).toThrow(/reviewers/);
   });
 });
-
-function validationReceiptInput(
-  status: "PASS" | "FAIL" = "PASS",
-  candidate = migrationCandidateSchema.parse(candidateInput()),
-) {
-  const paths = candidate.artifacts.map((artifact) => artifact.path).sort();
-  const pathFor = (kind: (typeof candidate.artifacts)[number]["kind"]) =>
-    required(
-      candidate.artifacts.find((artifact) => artifact.kind === kind)?.path,
-      `candidate must have ${kind}`,
-    );
-  const pathsForCheck = (check: string): string[] => {
-    if (check === "SQL_MIGRATION" || check === "BACKFILL_EQUALITY") {
-      return candidate.artifacts
-        .filter((artifact) => artifact.kind === "SQL_MIGRATION")
-        .map((artifact) => artifact.path)
-        .sort();
-    }
-    if (check === "DBT_PARSE" || check === "DBT_COMPILE" || check === "DBT_TEST") {
-      return candidate.artifacts
-        .filter((artifact) => artifact.kind === "DBT_MODEL" || artifact.kind === "DBT_TEST")
-        .map((artifact) => artifact.path)
-        .sort();
-    }
-    if (check === "ROLLBACK") return [pathFor("ROLLBACK_SQL")];
-    return candidate.artifacts
-      .filter((artifact) => ["SQL_MIGRATION", "DBT_MODEL", "DBT_TEST"].includes(artifact.kind))
-      .map((artifact) => artifact.path)
-      .sort();
-  };
-  const checks = [
-    "SQL_MIGRATION",
-    "BACKFILL_EQUALITY",
-    "DBT_PARSE",
-    "DBT_COMPILE",
-    "DBT_TEST",
-    "OLD_CONSUMER_COMPATIBILITY",
-    "NEW_CONSUMER_COMPATIBILITY",
-    "ROLLBACK",
-  ].map((check, index) => ({
-    check,
-    status: "PASS",
-    startedAt: `2026-08-04T10:00:0${index}.000Z`,
-    completedAt: `2026-08-04T10:00:0${index}.500Z`,
-    summary: `${check} passed.`,
-    artifactPaths: pathsForCheck(check),
-  }));
-  return {
-    candidateFingerprint: migrationCandidateFingerprint(candidate),
-    status,
-    artifactPaths: paths,
-    artifactObservations: candidate.artifacts
-      .map((artifact) => ({
-        path: artifact.path,
-        candidateArtifactFingerprint: migrationArtifactFingerprint(artifact),
-        materializedSha256: sha256(artifact.content),
-      }))
-      .sort((left, right) => (left.path < right.path ? -1 : left.path > right.path ? 1 : 0)),
-    checks,
-    completedAt: "2026-08-04T10:00:10.000Z",
-  };
-}
-
 const checkCommands: Record<ValidationCheckName, ValidatorCommandId> = {
   SQL_MIGRATION: "VALIDATE_SQL_MIGRATION_V1",
   BACKFILL_EQUALITY: "VALIDATE_BACKFILL_EQUALITY_V1",
@@ -772,11 +707,38 @@ function expectedValidationExecution() {
 
 function signedLiveReceiptInput(candidate = migrationCandidateSchema.parse(candidateInput())) {
   const bundle = canonicalBundle();
-  const structural = structuralValidationReceiptSchema.parse(
-    validationReceiptInput("PASS", candidate),
-  );
   const expected = expectedValidationExecution();
-  const artifactSetFingerprint = validationArtifactSetFingerprint(structural.artifactObservations);
+  const artifactPaths = candidate.artifacts.map((artifact) => artifact.path).sort();
+  const artifactObservations = candidate.artifacts
+    .map((artifact) => ({
+      path: artifact.path,
+      candidateArtifactFingerprint: migrationArtifactFingerprint(artifact),
+      materializedSha256: sha256(artifact.content),
+    }))
+    .sort((left, right) => left.path.localeCompare(right.path));
+  const pathsForCheck = (check: ValidationCheckName): string[] => {
+    if (check === "SQL_MIGRATION" || check === "BACKFILL_EQUALITY") {
+      return candidate.artifacts
+        .filter((artifact) => artifact.kind === "SQL_MIGRATION")
+        .map((artifact) => artifact.path)
+        .sort();
+    }
+    if (check === "DBT_PARSE" || check === "DBT_COMPILE" || check === "DBT_TEST") {
+      return candidate.artifacts
+        .filter((artifact) => artifact.kind === "DBT_MODEL" || artifact.kind === "DBT_TEST")
+        .map((artifact) => artifact.path)
+        .sort();
+    }
+    if (check === "ROLLBACK") {
+      return candidate.artifacts
+        .filter((artifact) => artifact.kind === "ROLLBACK_SQL")
+        .map((artifact) => artifact.path);
+    }
+    return candidate.artifacts
+      .filter((artifact) => ["SQL_MIGRATION", "DBT_MODEL", "DBT_TEST"].includes(artifact.kind))
+      .map((artifact) => artifact.path)
+      .sort();
+  };
   const protectedHeaders = {
     schemaVersion: 1,
     purpose: "LINEAGEGUARD_VALIDATION_LIVE",
@@ -800,23 +762,24 @@ function signedLiveReceiptInput(candidate = migrationCandidateSchema.parse(candi
   } as const;
   const payload = {
     status: "PASS" as const,
-    artifactPaths: structural.artifactPaths,
-    artifactObservations: structural.artifactObservations,
-    artifactSetFingerprint,
-    checks: structural.checks.map((check) => {
+    artifactPaths,
+    artifactObservations,
+    artifactSetFingerprint: validationArtifactSetFingerprint(artifactObservations),
+    checks: (Object.keys(checkCommands) as ValidationCheckName[]).map((check, index) => {
       const validator = required(
-        expected.validators.find((item) => item.check === check.check),
+        expected.validators.find((item) => item.check === check),
         "expected validator",
       );
-      const observations = structural.artifactObservations.filter((observation) =>
-        check.artifactPaths.includes(observation.path),
+      const checkArtifactPaths = pathsForCheck(check);
+      const observations = artifactObservations.filter((observation) =>
+        checkArtifactPaths.includes(observation.path),
       );
-      const stdoutFingerprint = sha256(`${check.check}:stdout`);
-      const stderrFingerprint = sha256(`${check.check}:stderr`);
+      const stdoutFingerprint = sha256(`${check}:stdout`);
+      const stderrFingerprint = sha256(`${check}:stderr`);
       return {
-        check: check.check,
+        check,
         status: "PASS" as const,
-        artifactPaths: check.artifactPaths,
+        artifactPaths: checkArtifactPaths,
         artifactObservations: observations,
         artifactSetFingerprint: validationArtifactSetFingerprint(observations),
         validatorImplementationId: validator.implementationId,
@@ -824,14 +787,14 @@ function signedLiveReceiptInput(candidate = migrationCandidateSchema.parse(candi
         validatorDigest: validator.digest,
         commandId: validator.commandId,
         exitCode: 0 as const,
-        startedAt: check.startedAt,
-        finishedAt: check.completedAt,
+        startedAt: `2026-08-04T10:00:0${index}.000Z`,
+        finishedAt: `2026-08-04T10:00:0${index}.500Z`,
         stdoutFingerprint,
         stderrFingerprint,
         outputFingerprint: validationOutputFingerprint({
           schemaVersion: 1,
           purpose: "LINEAGEGUARD_VALIDATOR_OUTPUT",
-          check: check.check,
+          check,
           exitCode: 0,
           stdoutFingerprint,
           stderrFingerprint,
@@ -845,7 +808,7 @@ function signedLiveReceiptInput(candidate = migrationCandidateSchema.parse(candi
         generation: expected.generation,
       };
     }),
-    completedAt: structural.completedAt,
+    completedAt: "2026-08-04T10:00:10.000Z",
   };
   return signedLiveValidationReceiptSchema.parse({
     protectedHeaders,
@@ -854,102 +817,12 @@ function signedLiveReceiptInput(candidate = migrationCandidateSchema.parse(candi
       protectedHeaders,
       payload,
     }),
-    signature: "a".repeat(86),
+    signature: `${"a".repeat(85)}g`,
   });
 }
 
-describe("validation receipt contracts", () => {
-  it("accepts only a complete passing canonical set for PASS and binds exact artifacts", () => {
-    const candidate = migrationCandidateSchema.parse(candidateInput());
-    const receipt = structuralValidationReceiptSchema.parse(validationReceiptInput());
-    expect(() => assertStructuralValidationReceiptBinding(receipt, candidate)).not.toThrow();
-    const missing = validationReceiptInput();
-    missing.checks.pop();
-    expect(structuralValidationReceiptSchema.safeParse(missing).success).toBe(false);
-  });
-
-  it("binds every materialized byte and rejects multi-artifact check omissions", () => {
-    const raw = structuredClone(candidateInput());
-    const model = required(
-      raw.artifacts.find((artifact) => artifact.kind === "DBT_MODEL"),
-      "model",
-    );
-    raw.artifacts.push({
-      ...model,
-      path: "walkthrough/models/orders_shadow.sql",
-      content: "select customer_id, buyer_id from commerce.orders where false",
-    });
-    raw.artifacts.sort((left, right) =>
-      left.path < right.path ? -1 : left.path > right.path ? 1 : 0,
-    );
-    required(
-      raw.steps.find((step) => step.phase === "MIGRATE"),
-      "migrate step",
-    ).artifactTargets.push("walkthrough/models/orders_shadow.sql");
-    required(
-      raw.steps.find((step) => step.phase === "MIGRATE"),
-      "migrate step",
-    ).artifactTargets.sort();
-    const candidate = migrationCandidateSchema.parse(raw);
-    const receipt = structuralValidationReceiptSchema.parse(
-      validationReceiptInput("PASS", candidate),
-    );
-    expect(() => assertStructuralValidationReceiptBinding(receipt, candidate)).not.toThrow();
-
-    const omitted = structuredClone(receipt);
-    required(
-      omitted.checks.find((check) => check.check === "DBT_COMPILE"),
-      "compile check",
-    ).artifactPaths = required(
-      omitted.checks.find((check) => check.check === "DBT_COMPILE"),
-      "compile check",
-    ).artifactPaths.filter((path) => path !== "walkthrough/models/orders_shadow.sql");
-    expect(() => assertStructuralValidationReceiptBinding(omitted, candidate)).toThrow(
-      /exact applicable/,
-    );
-
-    const missingObservation = structuredClone(receipt);
-    missingObservation.artifactObservations.pop();
-    expect(structuralValidationReceiptSchema.safeParse(missingObservation).success).toBe(false);
-
-    const changedBytes = structuredClone(receipt);
-    required(
-      changedBytes.artifactObservations.find(
-        (observation) => observation.path === "walkthrough/models/orders_shadow.sql",
-      ),
-      "shadow observation",
-    ).materializedSha256 = sha256("changed materialized bytes");
-    expect(() => assertStructuralValidationReceiptBinding(changedBytes, candidate)).toThrow(
-      /candidate bytes/,
-    );
-  });
-
-  it("allows a partial set only as non-success and rejects mismatched candidate/artifact binding", () => {
-    const partial = validationReceiptInput("FAIL");
-    partial.checks = [
-      {
-        ...required(partial.checks[0], "receipt must have first check"),
-        status: "FAIL",
-        artifactPaths: partial.artifactPaths,
-      },
-    ];
-    expect(structuralValidationReceiptSchema.safeParse(partial).success).toBe(true);
-    expect(
-      structuralValidationReceiptSchema.safeParse({ ...partial, status: "PASS" }).success,
-    ).toBe(false);
-    const candidate = migrationCandidateSchema.parse(candidateInput());
-    const receipt = structuralValidationReceiptSchema.parse(validationReceiptInput());
-    const otherCandidate = migrationCandidateSchema.parse({
-      ...candidateInput(),
-      summary: "Different candidate.",
-    });
-    expect(() => assertStructuralValidationReceiptBinding(receipt, otherCandidate)).toThrow(
-      /different/,
-    );
-    expect(() => assertStructuralValidationReceiptBinding(receipt, candidate)).not.toThrow();
-  });
-
-  it("keeps structural PASS data and acceptance capabilities out of the root API", () => {
+describe("signed LIVE validation data contracts", () => {
+  it("exposes no structural PASS or acceptance capability from the root API", () => {
     expect("acceptExecutedValidationReceipt" in domainPublic).toBe(false);
     expect("AcceptedExecutedValidationReceipt" in domainPublic).toBe(false);
     expect("ValidationAttestationVerifier" in domainPublic).toBe(false);
@@ -960,15 +833,9 @@ describe("validation receipt contracts", () => {
     expect(
       signedLiveValidationReceiptSchema.safeParse({ ...live, receiptId: "caller-id" }).success,
     ).toBe(false);
-    expect(
-      structuralValidationReceiptSchema.safeParse({
-        ...validationReceiptInput(),
-        receiptId: "val_111111111111111111111111",
-      }).success,
-    ).toBe(false);
   });
 
-  it("domain-separates every signed identity and execution binding", () => {
+  it("domain-separates signed identity, policy, fence, and output data", () => {
     const receipt = signedLiveReceiptInput();
     const unsigned = {
       protectedHeaders: receipt.protectedHeaders,
@@ -1015,7 +882,50 @@ describe("validation receipt contracts", () => {
     }
   });
 
-  it("rejects malformed expected validator configuration at runtime", () => {
+  it("accepts one canonical Base64URL spelling per signature byte sequence", () => {
+    const ed25519 = signedLiveReceiptInput();
+    const noncanonicalEd25519 = {
+      ...ed25519,
+      signature: `${ed25519.signature.slice(0, -1)}h`,
+    };
+    expect(
+      Buffer.from(ed25519.signature, "base64url").equals(
+        Buffer.from(noncanonicalEd25519.signature, "base64url"),
+      ),
+    ).toBe(true);
+    expect(signedLiveValidationReceiptSchema.safeParse(noncanonicalEd25519).success).toBe(false);
+    expect(() =>
+      signedLiveValidationReceiptFingerprint(noncanonicalEd25519 as typeof ed25519),
+    ).toThrow(/canonical unpadded Base64URL/);
+
+    const hmacHeaders = {
+      ...ed25519.protectedHeaders,
+      algorithm: "HMAC-SHA256" as const,
+    };
+    const hmac = signedLiveValidationReceiptSchema.parse({
+      ...ed25519,
+      protectedHeaders: hmacHeaders,
+      signedPayloadFingerprint: liveValidationSignedPayloadFingerprint({
+        protectedHeaders: hmacHeaders,
+        payload: ed25519.payload,
+      }),
+      signature: `${"a".repeat(42)}A`,
+    });
+    expect(signedLiveValidationReceiptFingerprint(hmac)).toHaveLength(64);
+    expect(
+      signedLiveValidationReceiptSchema.safeParse({
+        ...hmac,
+        signature: `${hmac.signature.slice(0, -1)}B`,
+      }).success,
+    ).toBe(false);
+    expect(
+      Buffer.from(hmac.signature, "base64url").equals(
+        Buffer.from(`${hmac.signature.slice(0, -1)}B`, "base64url"),
+      ),
+    ).toBe(true);
+  });
+
+  it("rejects malformed or incomplete expected validator configuration", () => {
     const expected = expectedValidationExecution();
     expect(
       expectedValidationExecutionSchema.safeParse({ ...expected, validators: [] }).success,

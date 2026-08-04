@@ -1,11 +1,21 @@
 import { z } from "zod";
 import { sha256 } from "./hash.js";
-import { migrationArtifactPathSchema, validationCheckNameSchema } from "./migration.js";
+import { migrationArtifactPathSchema } from "./migration.js";
 
 const fingerprintSchema = z.string().regex(/^[a-f0-9]{64}$/);
 const isoDateTimeSchema = z.iso.datetime({ offset: true });
 const runIdSchema = z.string().regex(/^run_[a-f0-9]{24}$/);
 const leaseIdSchema = z.string().regex(/^lease_[a-f0-9]{24}$/);
+export const validationCheckNameSchema = z.enum([
+  "SQL_MIGRATION",
+  "BACKFILL_EQUALITY",
+  "DBT_PARSE",
+  "DBT_COMPILE",
+  "DBT_TEST",
+  "OLD_CONSUMER_COMPATIBILITY",
+  "NEW_CONSUMER_COMPATIBILITY",
+  "ROLLBACK",
+]);
 const checkNames = validationCheckNameSchema.options;
 export type ValidationCheckName = z.infer<typeof validationCheckNameSchema>;
 
@@ -259,7 +269,7 @@ export const signedLiveValidationReceiptSchema = z
     protectedHeaders: liveValidationProtectedHeadersSchema,
     payload: liveValidationPayloadSchema,
     signedPayloadFingerprint: fingerprintSchema,
-    signature: z.string().regex(/^[A-Za-z0-9_-]{43,86}$/),
+    signature: z.string().min(43).max(86),
   })
   .strict()
   .superRefine((receipt, refinement) => {
@@ -346,11 +356,14 @@ export const signedLiveValidationReceiptSchema = z
         path: ["payload", "checks"],
       });
     }
-    const expectedSignatureLength = protectedHeaders.algorithm === "ED25519" ? 86 : 43;
-    if (receipt.signature.length !== expectedSignatureLength) {
+    const canonicalSignature =
+      protectedHeaders.algorithm === "ED25519"
+        ? /^[A-Za-z0-9_-]{85}[AQgw]$/.test(receipt.signature)
+        : /^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$/.test(receipt.signature);
+    if (!canonicalSignature) {
       refinement.addIssue({
         code: "custom",
-        message: "Signature byte length does not match the protected algorithm",
+        message: "Signature must be canonical unpadded Base64URL for the protected algorithm",
         path: ["signature"],
       });
     }
