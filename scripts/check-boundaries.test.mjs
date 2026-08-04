@@ -1,12 +1,20 @@
 import assert from "node:assert/strict";
 import { resolve } from "node:path";
 import test from "node:test";
-import { extractImportSpecifiers, findBoundaryViolations } from "./check-boundaries.mjs";
+import {
+  extractImportSpecifiers,
+  findBoundaryViolations,
+  findManifestBoundaryViolations,
+} from "./check-boundaries.mjs";
 
 const repositoryRoot = resolve("/workspace/lineageguard");
 
 function sourceFile(path, source) {
   return { path: resolve(repositoryRoot, path), source };
+}
+
+function manifestFile(path, manifest) {
+  return { path: resolve(repositoryRoot, path, "package.json"), manifest };
 }
 
 test("extracts static, exported, dynamic, and required module specifiers", () => {
@@ -41,6 +49,20 @@ test("accepts imports explicitly allowed for each application boundary", () => {
   assert.deepEqual(findBoundaryViolations(files, repositoryRoot), []);
 });
 
+test("ignores import-shaped text in comments and templates", () => {
+  const files = [
+    sourceFile(
+      "packages/domain/src/prompt.ts",
+      `
+        // import { unsafe } from "@lineageguard/datahub";
+        const prompt = \`Never output: import("@lineageguard/github")\`;
+      `,
+    ),
+  ];
+
+  assert.deepEqual(findBoundaryViolations(files, repositoryRoot), []);
+});
+
 test("rejects forbidden package and relative cross-boundary imports", () => {
   const files = [
     sourceFile(
@@ -66,4 +88,44 @@ test("rejects unknown internal package names", () => {
   ];
 
   assert.equal(findBoundaryViolations(files, repositoryRoot).length, 1);
+});
+
+test("accepts allowed internal dependencies across every manifest section", () => {
+  const manifests = [
+    manifestFile("apps/worker", {
+      dependencies: { "@lineageguard/domain": "workspace:*" },
+      devDependencies: { "@lineageguard/agent": "workspace:*" },
+      optionalDependencies: { "@lineageguard/datahub": "workspace:*" },
+      peerDependencies: { "@lineageguard/validation": "workspace:*" },
+    }),
+    manifestFile("apps/web", {
+      dependencies: {
+        "@lineageguard/db": "workspace:*",
+        "@lineageguard/ui": "workspace:*",
+      },
+    }),
+  ];
+
+  assert.deepEqual(findManifestBoundaryViolations(manifests, repositoryRoot), []);
+});
+
+test("rejects forbidden internal dependencies declared in manifests", () => {
+  const manifests = [
+    manifestFile("packages/domain", {
+      dependencies: { "@lineageguard/datahub": "workspace:*" },
+    }),
+    manifestFile("apps/web", {
+      devDependencies: { "@lineageguard/agent": "workspace:*" },
+    }),
+  ];
+
+  assert.deepEqual(
+    findManifestBoundaryViolations(manifests, repositoryRoot).map(
+      ({ section, source, target }) => ({ section, source, target }),
+    ),
+    [
+      { section: "dependencies", source: "domain", target: "datahub" },
+      { section: "devDependencies", source: "web", target: "agent" },
+    ],
+  );
 });

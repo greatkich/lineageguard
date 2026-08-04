@@ -1,6 +1,7 @@
 import { readFile, readdir } from "node:fs/promises";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import ts from "typescript";
 
 const WORKSPACE_RULES = {
   agent: { path: "packages/agent", allowed: ["domain"] },
@@ -17,9 +18,13 @@ const WORKSPACE_RULES = {
   },
 };
 
-const SOURCE_EXTENSION = /\.(?:[cm]?[jt]s|tsx)$/;
-const STATIC_IMPORT = /\b(?:import|export)\s+(?:type\s+)?(?:[^;"']*?\s+from\s+)?["']([^"']+)["']/g;
-const DYNAMIC_IMPORT = /\b(?:import|require)\(\s*["']([^"']+)["']\s*\)/g;
+const DEPENDENCY_SECTIONS = [
+  "dependencies",
+  "devDependencies",
+  "optionalDependencies",
+  "peerDependencies",
+];
+const SOURCE_EXTENSION = /\.[cm]?[jt]sx?$/;
 
 function normalize(path) {
   return path.split(sep).join("/");
@@ -33,14 +38,50 @@ function workspaceForPath(filePath, repositoryRoot) {
   )?.[0];
 }
 
-export function extractImportSpecifiers(source) {
+function scriptKind(filePath) {
+  if (/\.tsx$/i.test(filePath)) return ts.ScriptKind.TSX;
+  if (/\.jsx$/i.test(filePath)) return ts.ScriptKind.JSX;
+  if (/\.[cm]?js$/i.test(filePath)) return ts.ScriptKind.JS;
+  return ts.ScriptKind.TS;
+}
+
+function moduleSpecifierText(node) {
+  return node && ts.isStringLiteralLike(node) ? node.text : undefined;
+}
+
+export function extractImportSpecifiers(source, filePath = "source.ts") {
   const specifiers = new Set();
-  for (const pattern of [STATIC_IMPORT, DYNAMIC_IMPORT]) {
-    pattern.lastIndex = 0;
-    for (const match of source.matchAll(pattern)) {
-      if (match[1]) specifiers.add(match[1]);
+  const sourceFile = ts.createSourceFile(
+    filePath,
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    scriptKind(filePath),
+  );
+
+  function visit(node) {
+    if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) {
+      const specifier = moduleSpecifierText(node.moduleSpecifier);
+      if (specifier) specifiers.add(specifier);
+    } else if (ts.isImportEqualsDeclaration(node)) {
+      const reference = node.moduleReference;
+      if (ts.isExternalModuleReference(reference)) {
+        const specifier = moduleSpecifierText(reference.expression);
+        if (specifier) specifiers.add(specifier);
+      }
+    } else if (ts.isCallExpression(node)) {
+      const isDynamicImport = node.expression.kind === ts.SyntaxKind.ImportKeyword;
+      const isRequire = ts.isIdentifier(node.expression) && node.expression.text === "require";
+      if (isDynamicImport || isRequire) {
+        const specifier = moduleSpecifierText(node.arguments[0]);
+        if (specifier) specifiers.add(specifier);
+      }
     }
+
+    ts.forEachChild(node, visit);
   }
+
+  visit(sourceFile);
   return [...specifiers];
 }
 
@@ -62,7 +103,7 @@ export function findBoundaryViolations(files, repositoryRoot) {
     if (!sourceWorkspace) continue;
 
     const allowed = WORKSPACE_RULES[sourceWorkspace].allowed;
-    for (const specifier of extractImportSpecifiers(file.source)) {
+    for (const specifier of extractImportSpecifiers(file.source, file.path)) {
       const target = targetWorkspace(specifier, file.path, repositoryRoot);
       if (!target || target === sourceWorkspace) continue;
 
@@ -73,6 +114,40 @@ export function findBoundaryViolations(files, repositoryRoot) {
           specifier,
           target,
         });
+      }
+    }
+  }
+
+  return violations;
+}
+
+export function findManifestBoundaryViolations(manifests, repositoryRoot) {
+  const violations = [];
+
+  for (const file of manifests) {
+    const sourceWorkspace = workspaceForPath(file.path, repositoryRoot);
+    if (!sourceWorkspace) continue;
+    const allowed = WORKSPACE_RULES[sourceWorkspace].allowed;
+
+    for (const section of DEPENDENCY_SECTIONS) {
+      const dependencies = file.manifest[section];
+      if (!dependencies || typeof dependencies !== "object" || Array.isArray(dependencies))
+        continue;
+
+      for (const specifier of Object.keys(dependencies)) {
+        if (!specifier.startsWith("@lineageguard/")) continue;
+        const target = targetWorkspace(specifier, file.path, repositoryRoot);
+        if (!target || target === sourceWorkspace) continue;
+
+        if (!(target in WORKSPACE_RULES) || !allowed.includes(target)) {
+          violations.push({
+            file: normalize(relative(repositoryRoot, file.path)),
+            section,
+            source: sourceWorkspace,
+            specifier,
+            target,
+          });
+        }
       }
     }
   }
@@ -102,19 +177,32 @@ async function main() {
     ...(await collectSourceFiles(resolve(repositoryRoot, "apps"))),
     ...(await collectSourceFiles(resolve(repositoryRoot, "packages"))),
   ];
-  const violations = findBoundaryViolations(files, repositoryRoot);
+  const manifests = await Promise.all(
+    Object.values(WORKSPACE_RULES).map(async (rule) => {
+      const path = resolve(repositoryRoot, rule.path, "package.json");
+      return { path, manifest: JSON.parse(await readFile(path, "utf8")) };
+    }),
+  );
+  const sourceViolations = findBoundaryViolations(files, repositoryRoot);
+  const manifestViolations = findManifestBoundaryViolations(manifests, repositoryRoot);
+  const violations = [...sourceViolations, ...manifestViolations];
 
   if (violations.length > 0) {
     for (const violation of violations) {
+      const relationship = violation.section
+        ? `declare ${violation.specifier} in ${violation.section}`
+        : `import ${violation.specifier}`;
       console.error(
-        `${violation.file}: ${violation.source} cannot import ${violation.specifier} (${violation.target})`,
+        `${violation.file}: ${violation.source} cannot ${relationship} (${violation.target})`,
       );
     }
     process.exitCode = 1;
     return;
   }
 
-  console.log(`dependency boundaries: verified (${files.length} source files)`);
+  console.log(
+    `dependency boundaries: verified (${files.length} source files, ${manifests.length} manifests)`,
+  );
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) await main();
