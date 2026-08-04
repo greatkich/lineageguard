@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import * as domainPublic from "./index.js";
 import { canonicalDatasetRef, parseProposedChange } from "./change.js";
 import {
   canonicalAnalyticsRevenueUrn,
@@ -12,7 +11,7 @@ import {
   computeImpactCollectionFailureFingerprint,
   computeImpactCollectionFingerprint,
   computeImpactContextFingerprint,
-  createCanonicalImpactContext,
+  createCanonicalImpactContextFixture,
   createEvidence,
   evidenceItemSchema,
   impactCollectionFailureReportSchema,
@@ -20,6 +19,7 @@ import {
   impactContextSchema,
 } from "./evidence.js";
 import { sha256 } from "./hash.js";
+import * as domainPublic from "./index.js";
 import {
   bindMigrationCandidate,
   migrationArtifactFingerprint,
@@ -41,11 +41,11 @@ import {
   liveValidationSignedPayloadFingerprint,
   signedLiveValidationReceiptFingerprint,
   signedLiveValidationReceiptSchema,
+  type ValidationCheckName,
+  type ValidatorCommandId,
   validationArtifactSetFingerprint,
   validationOutputFingerprint,
   validationReplayPresentationSchema,
-  type ValidationCheckName,
-  type ValidatorCommandId,
 } from "./validation.js";
 
 const assessedAt = "2026-08-04T09:00:00.000Z";
@@ -77,10 +77,10 @@ function canonicalChange(
 }
 
 function reboundContext(
-  context: ReturnType<typeof createCanonicalImpactContext>,
+  context: ReturnType<typeof createCanonicalImpactContextFixture>,
   overrides: Partial<
     Omit<
-      ReturnType<typeof createCanonicalImpactContext>,
+      ReturnType<typeof createCanonicalImpactContextFixture>,
       "impactContextFingerprint" | "collectionFingerprint"
     >
   >,
@@ -88,24 +88,47 @@ function reboundContext(
   const {
     impactContextFingerprint: _fingerprint,
     collectionFingerprint: _collectionFingerprint,
+    collectionOrigin: originalCollectionOrigin,
     ...identity
   } = context;
+  const { collectionOrigin: overrideCollectionOrigin, ...dataOverrides } = overrides;
   const rebound = {
     ...identity,
-    ...overrides,
+    ...dataOverrides,
     evidence: (overrides.evidence ?? identity.evidence)
       .slice()
       .sort((left, right) => left.id.localeCompare(right.id)),
   };
-  return {
+  const liveRebound = {
     ...rebound,
-    impactContextFingerprint: computeImpactContextFingerprint(rebound),
-    collectionFingerprint: computeImpactCollectionFingerprint(rebound),
+    collectionOrigin: { mode: "LIVE" as const },
+  };
+  const impactContextFingerprint = computeImpactContextFingerprint(liveRebound);
+  const sourceLiveCollectionFingerprint = computeImpactCollectionFingerprint(liveRebound);
+  const requestedCollectionOrigin = overrideCollectionOrigin ?? originalCollectionOrigin;
+  const collectionOrigin =
+    requestedCollectionOrigin.mode === "LIVE"
+      ? { mode: "LIVE" as const }
+      : {
+          mode: "VERIFIED_REPLAY" as const,
+          manifestFingerprint: sha256({
+            purpose: "LINEAGEGUARD_DOMAIN_TEST_REBOUND_MANIFEST",
+            sourceLiveCollectionFingerprint,
+            sourceImpactContextFingerprint: impactContextFingerprint,
+          }),
+          sourceLiveCollectionFingerprint,
+          sourceImpactContextFingerprint: impactContextFingerprint,
+        };
+  const sourcedRebound = { ...rebound, collectionOrigin };
+  return {
+    ...sourcedRebound,
+    impactContextFingerprint,
+    collectionFingerprint: computeImpactCollectionFingerprint(sourcedRebound),
   };
 }
 
 function contextWithObservedOwnerAbsence(
-  context: ReturnType<typeof createCanonicalImpactContext>,
+  context: ReturnType<typeof createCanonicalImpactContextFixture>,
   omittedOwnerUrns = context.evidence
     .filter((item) => item.kind === "OWNER")
     .map((item) => item.payload.ownerUrn),
@@ -133,7 +156,7 @@ function contextWithObservedOwnerAbsence(
 
 function canonicalBundle() {
   const change = canonicalChange();
-  const context = createCanonicalImpactContext(change.id);
+  const context = createCanonicalImpactContextFixture(change.id);
   const baseline = evaluateRepositoryBaseline(change, assessedAt);
   const grounded = evaluateGroundedRisk(change, context, assessedAt);
   return { change, context, baseline, grounded };
@@ -142,14 +165,65 @@ function canonicalBundle() {
 describe("canonical impact evidence", () => {
   it("contains schema, four hidden consumer outcomes, owners, and glossary with stable IDs", () => {
     const change = canonicalChange();
-    const first = createCanonicalImpactContext(change.id);
-    const second = createCanonicalImpactContext(change.id);
+    const first = createCanonicalImpactContextFixture(change.id);
+    const second = createCanonicalImpactContextFixture(change.id);
     expect(first).toEqual(second);
+    expect(first.collectionOrigin).toMatchObject({
+      mode: "VERIFIED_REPLAY",
+      sourceImpactContextFingerprint: first.impactContextFingerprint,
+    });
+    const live = reboundContext(first, { collectionOrigin: { mode: "LIVE" } });
+    expect(live.impactContextFingerprint).toBe(first.impactContextFingerprint);
+    expect(live.collectionFingerprint).not.toBe(first.collectionFingerprint);
+    if (first.collectionOrigin.mode !== "VERIFIED_REPLAY") {
+      throw new Error("fixture must carry verified replay provenance");
+    }
+    expect(first.collectionOrigin.sourceLiveCollectionFingerprint).toBe(live.collectionFingerprint);
+    expect(
+      impactCollectionResultSchema.safeParse({ outcome: "COLLECTED_LIVE", context: live }).success,
+    ).toBe(true);
+    expect(
+      impactCollectionResultSchema.safeParse({
+        outcome: "COLLECTED_VERIFIED_REPLAY",
+        context: first,
+      }).success,
+    ).toBe(true);
+    expect(
+      impactCollectionResultSchema.safeParse({ outcome: "COLLECTED_LIVE", context: first }).success,
+    ).toBe(false);
+    expect(
+      impactCollectionResultSchema.safeParse({
+        outcome: "COLLECTED_VERIFIED_REPLAY",
+        context: live,
+      }).success,
+    ).toBe(false);
+    expect(
+      impactCollectionResultSchema.safeParse({ outcome: "COLLECTED", context: first }).success,
+    ).toBe(false);
+    const {
+      impactContextFingerprint: replayImpactFingerprint,
+      collectionFingerprint: _replayCollectionFingerprint,
+      ...replayData
+    } = first;
+    const forgedReplayData = {
+      ...replayData,
+      collectionOrigin: {
+        ...first.collectionOrigin,
+        sourceImpactContextFingerprint: "f".repeat(64),
+      },
+    };
+    expect(
+      impactContextSchema.safeParse({
+        ...forgedReplayData,
+        impactContextFingerprint: replayImpactFingerprint,
+        collectionFingerprint: computeImpactCollectionFingerprint(forgedReplayData),
+      }).success,
+    ).toBe(false);
     expect(first.impactContextFingerprint).toBe(
       "279bdd00ec97b74d63af2b9ac49732b17f5ee51f0ed1a35363898ab574076018",
     );
     expect(first.collectionFingerprint).toBe(
-      "287299aa718eb1f377a84ba941470f26066822efbb33bf8d43c6cf59fe20eeb9",
+      "0163ea5ded6869208ac2be170b24532f758f3b9213baba6809514cb31736f5ba",
     );
     expect(first.evidence.map((item) => `${item.kind}:${item.id}`)).toEqual([
       "SCHEMA:ev_09d0ce72de399bd52bd82247",
@@ -212,7 +286,7 @@ describe("canonical impact evidence", () => {
   });
 
   it("preserves the adapter-supplied raw response fingerprint separately", () => {
-    const context = createCanonicalImpactContext(canonicalChange().id);
+    const context = createCanonicalImpactContextFixture(canonicalChange().id);
     const item = context.evidence.find((evidence) => evidence.kind === "SCHEMA");
     if (!item) throw new Error("fixture must have schema evidence");
     const changedRaw = {
@@ -228,7 +302,7 @@ describe("canonical impact evidence", () => {
   });
 
   it("requires every ordered MCP proof used to construct compound evidence", () => {
-    const context = createCanonicalImpactContext(canonicalChange().id);
+    const context = createCanonicalImpactContextFixture(canonicalChange().id);
     const query = context.evidence.find((item) => item.kind === "QUERY_USAGE");
     if (!query) throw new Error("fixture must have query evidence");
     const { id: _id, fingerprint: _fingerprint, ...queryDraft } = query;
@@ -251,15 +325,56 @@ describe("canonical impact evidence", () => {
     expect(impactContextSchema.safeParse(reversedContext).success).toBe(false);
   });
 
+  it("rejects reversed call chronology and contradictory shared invocation provenance", () => {
+    const context = createCanonicalImpactContextFixture(canonicalChange().id);
+    const query = required(
+      context.evidence.find((item) => item.kind === "QUERY_USAGE"),
+      "query evidence",
+    );
+    const reversedChronology = reboundContext(context, {
+      collectedAt: "2026-08-04T08:00:03.000Z",
+      evidence: context.evidence.map((item) =>
+        item.id === query.id
+          ? {
+              ...item,
+              provenance: item.provenance.map((entry, index) => ({
+                ...entry,
+                retrievedAt: index === 0 ? "2026-08-04T08:00:02.000Z" : "2026-08-04T08:00:01.000Z",
+              })),
+            }
+          : item,
+      ),
+    });
+    expect(impactContextSchema.safeParse(reversedChronology).success).toBe(false);
+
+    const paths = context.evidence.filter((item) => item.kind === "LINEAGE_PATH");
+    const secondPath = required(paths[1], "second lineage path");
+    const contradictoryInvocation = reboundContext(context, {
+      evidence: context.evidence.map((item) =>
+        item.id === secondPath.id
+          ? {
+              ...item,
+              provenance: item.provenance.map((entry) =>
+                entry.role === "LINEAGE_DISCOVERY"
+                  ? { ...entry, responseFingerprint: "d".repeat(64) }
+                  : entry,
+              ),
+            }
+          : item,
+      ),
+    });
+    expect(impactContextSchema.safeParse(contradictoryInvocation).success).toBe(false);
+  });
+
   it("binds evidence ID and fingerprint to policy-relevant normalized fields", () => {
-    const context = createCanonicalImpactContext(canonicalChange().id);
+    const context = createCanonicalImpactContextFixture(canonicalChange().id);
     const item = context.evidence.find((evidence) => evidence.kind === "DASHBOARD");
     if (!item) throw new Error("fixture must have dashboard evidence");
     expect(evidenceItemSchema.safeParse({ ...item, criticality: "LOW" }).success).toBe(false);
   });
 
   it("rejects duplicate, dangling, and semantically mismatched evidence", () => {
-    const context = createCanonicalImpactContext(canonicalChange().id);
+    const context = createCanonicalImpactContextFixture(canonicalChange().id);
     expect(
       impactContextSchema.safeParse({
         ...context,
@@ -286,14 +401,14 @@ describe("canonical impact evidence", () => {
   });
 
   it("rejects empty/incomplete COMPLETE but permits observed critical assets without owners", () => {
-    const context = createCanonicalImpactContext(canonicalChange().id);
+    const context = createCanonicalImpactContextFixture(canonicalChange().id);
     expect(impactContextSchema.safeParse({ ...context, evidence: [] }).success).toBe(false);
     const withoutOwners = contextWithObservedOwnerAbsence(context);
     expect(impactContextSchema.safeParse(withoutOwners).success).toBe(true);
   });
 
   it("distinguishes partial collection from a pre-resolution failure", () => {
-    const context = createCanonicalImpactContext(canonicalChange().id);
+    const context = createCanonicalImpactContextFixture(canonicalChange().id);
     expect(
       impactContextSchema.safeParse({ ...context, collectionStatus: "PARTIAL", failures: [] })
         .success,
@@ -333,8 +448,15 @@ describe("canonical impact evidence", () => {
       failureFingerprint: computeImpactCollectionFailureFingerprint(failureIdentity),
     });
     expect(
-      impactCollectionResultSchema.safeParse({ outcome: "FAILED", report: failureReport }).success,
+      impactCollectionResultSchema.safeParse({
+        outcome: "FAILED",
+        mode: "LIVE",
+        report: failureReport,
+      }).success,
     ).toBe(true);
+    expect(
+      impactCollectionResultSchema.safeParse({ outcome: "FAILED", report: failureReport }).success,
+    ).toBe(false);
     expect(
       impactContextSchema.safeParse({
         ...context,
@@ -345,7 +467,7 @@ describe("canonical impact evidence", () => {
   });
 
   it("rejects forged canonical path, query, and classification semantics", () => {
-    const context = createCanonicalImpactContext(canonicalChange().id);
+    const context = createCanonicalImpactContextFixture(canonicalChange().id);
     const path = required(
       context.evidence.find((item) => item.kind === "LINEAGE_PATH"),
       "lineage path",
@@ -1028,6 +1150,7 @@ function signedLiveReceiptInput(candidate = migrationCandidateSchema.parse(candi
 
 describe("signed LIVE validation data contracts", () => {
   it("exposes no structural PASS or acceptance capability from the root API", () => {
+    expect("createCanonicalImpactContextFixture" in domainPublic).toBe(false);
     expect("acceptExecutedValidationReceipt" in domainPublic).toBe(false);
     expect("AcceptedExecutedValidationReceipt" in domainPublic).toBe(false);
     expect("ValidationAttestationVerifier" in domainPublic).toBe(false);

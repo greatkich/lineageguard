@@ -119,6 +119,19 @@ export const canonicalImpactRequest: CanonicalImpactRequest = Object.freeze({
 export const criticalitySchema = z.enum(["LOW", "MEDIUM", "HIGH", "CRITICAL"]);
 export type Criticality = z.infer<typeof criticalitySchema>;
 
+export const impactCollectionOriginSchema = z.discriminatedUnion("mode", [
+  z.object({ mode: z.literal("LIVE") }).strict(),
+  z
+    .object({
+      mode: z.literal("VERIFIED_REPLAY"),
+      manifestFingerprint: fingerprintSchema,
+      sourceLiveCollectionFingerprint: fingerprintSchema,
+      sourceImpactContextFingerprint: fingerprintSchema,
+    })
+    .strict(),
+]);
+export type ImpactCollectionOrigin = z.infer<typeof impactCollectionOriginSchema>;
+
 export const evidenceProvenanceSchema = z
   .object({
     source: z.literal("DATAHUB_MCP"),
@@ -432,6 +445,7 @@ export const impactContextSchema = z
     changeId: z.string().regex(/^chg_[a-f0-9]{24}$/),
     datasetUrn: z.literal(canonicalDatasetUrn),
     fieldPath: z.literal(canonicalFieldPath),
+    collectionOrigin: impactCollectionOriginSchema,
     resolution: impactResolutionSchema,
     collectedAt: isoDateTimeSchema,
     collectionStatus: z.enum(["COMPLETE", "PARTIAL"]),
@@ -448,6 +462,15 @@ export const impactContextSchema = z
       issue(refinement, "Impact collection fingerprint is invalid", ["collectionFingerprint"]);
     }
     if (
+      context.collectionOrigin.mode === "VERIFIED_REPLAY" &&
+      context.collectionOrigin.sourceImpactContextFingerprint !== impactContextFingerprint
+    ) {
+      issue(refinement, "Replay manifest is not bound to the preserved semantic context", [
+        "collectionOrigin",
+        "sourceImpactContextFingerprint",
+      ]);
+    }
+    if (
       context.resolution.datasetUrn !== context.datasetUrn ||
       JSON.stringify(context.resolution.requested) !== JSON.stringify(canonicalImpactRequest)
     ) {
@@ -455,10 +478,9 @@ export const impactContextSchema = z
         "resolution",
       ]);
     }
-    if (
-      new Date(context.resolution.provenance.retrievedAt).getTime() >
-      new Date(context.collectedAt).getTime()
-    ) {
+    const resolutionTime = new Date(context.resolution.provenance.retrievedAt).getTime();
+    const collectedTime = new Date(context.collectedAt).getTime();
+    if (resolutionTime > collectedTime) {
       issue(refinement, "Resolution cannot be retrieved after context collection", [
         "resolution",
         "provenance",
@@ -485,6 +507,20 @@ export const impactContextSchema = z
       issue(refinement, "Evidence IDs must be unique", ["evidence"]);
     }
 
+    const invocationIdentity = new Map<
+      string,
+      Pick<
+        z.infer<typeof evidenceProvenanceSchema>,
+        "source" | "tool" | "retrievedAt" | "responseFingerprint"
+      >
+    >();
+    invocationIdentity.set(context.resolution.provenance.invocationId, {
+      source: context.resolution.provenance.source,
+      tool: context.resolution.provenance.tool,
+      retrievedAt: context.resolution.provenance.retrievedAt,
+      responseFingerprint: context.resolution.provenance.responseFingerprint,
+    });
+
     for (const [index, item] of context.evidence.entries()) {
       const provenanceKeys = item.provenance.map(
         (entry) => `${entry.role}\u0000${entry.tool}\u0000${entry.invocationId}`,
@@ -496,8 +532,10 @@ export const impactContextSchema = z
           "provenance",
         ]);
       }
+      let previousRetrievalTime = resolutionTime;
       for (const [provenanceIndex, entry] of item.provenance.entries()) {
-        if (new Date(entry.retrievedAt).getTime() > new Date(context.collectedAt).getTime()) {
+        const retrievalTime = new Date(entry.retrievedAt).getTime();
+        if (retrievalTime > collectedTime) {
           issue(refinement, "Evidence cannot be retrieved after context collection", [
             "evidence",
             index,
@@ -505,6 +543,41 @@ export const impactContextSchema = z
             provenanceIndex,
             "retrievedAt",
           ]);
+        }
+        if (retrievalTime < previousRetrievalTime) {
+          issue(refinement, "Evidence provenance must follow collection chronology", [
+            "evidence",
+            index,
+            "provenance",
+            provenanceIndex,
+            "retrievedAt",
+          ]);
+        }
+        previousRetrievalTime = retrievalTime;
+
+        const identity = {
+          source: entry.source,
+          tool: entry.tool,
+          retrievedAt: entry.retrievedAt,
+          responseFingerprint: entry.responseFingerprint,
+        };
+        const existingIdentity = invocationIdentity.get(entry.invocationId);
+        if (
+          existingIdentity &&
+          (existingIdentity.source !== identity.source ||
+            existingIdentity.tool !== identity.tool ||
+            existingIdentity.retrievedAt !== identity.retrievedAt ||
+            existingIdentity.responseFingerprint !== identity.responseFingerprint)
+        ) {
+          issue(refinement, "Invocation ID has contradictory raw-response provenance", [
+            "evidence",
+            index,
+            "provenance",
+            provenanceIndex,
+            "invocationId",
+          ]);
+        } else {
+          invocationIdentity.set(entry.invocationId, identity);
         }
       }
       const expectedProvenance =
@@ -849,6 +922,15 @@ export const impactContextSchema = z
     if (context.collectionStatus === "PARTIAL" && context.failures.length === 0) {
       issue(refinement, "Partial context must describe at least one failure", ["failures"]);
     }
+    for (const [failureIndex, failure] of context.failures.entries()) {
+      if (invocationIdentity.has(failure.invocationId)) {
+        issue(refinement, "Invocation ID cannot represent both a response and a failure", [
+          "failures",
+          failureIndex,
+          "invocationId",
+        ]);
+      }
+    }
   });
 
 export type ImpactContext = z.infer<typeof impactContextSchema>;
@@ -858,6 +940,8 @@ export type ImpactContextData = Omit<
 >;
 
 function impactContextSemanticIdentity(context: ImpactContextData) {
+  // Policy identity is mode-independent. The collection fingerprint separately binds LIVE versus
+  // VERIFIED_REPLAY provenance and the verified replay-manifest/original-live fingerprints.
   return {
     changeId: context.changeId,
     datasetUrn: context.datasetUrn,
@@ -882,10 +966,33 @@ export function computeImpactCollectionFingerprint(context: ImpactContextData): 
   return sha256(context);
 }
 
-export const impactCollectionResultSchema = z.discriminatedUnion("outcome", [
-  z.object({ outcome: z.literal("COLLECTED"), context: impactContextSchema }).strict(),
-  z.object({ outcome: z.literal("FAILED"), report: impactCollectionFailureReportSchema }).strict(),
-]);
+export const impactCollectionResultSchema = z
+  .discriminatedUnion("outcome", [
+    z.object({ outcome: z.literal("COLLECTED_LIVE"), context: impactContextSchema }).strict(),
+    z
+      .object({ outcome: z.literal("COLLECTED_VERIFIED_REPLAY"), context: impactContextSchema })
+      .strict(),
+    z
+      .object({
+        outcome: z.literal("FAILED"),
+        mode: z.enum(["LIVE", "VERIFIED_REPLAY"]),
+        report: impactCollectionFailureReportSchema,
+      })
+      .strict(),
+  ])
+  .superRefine((result, refinement) => {
+    if (result.outcome === "COLLECTED_LIVE" && result.context.collectionOrigin.mode !== "LIVE") {
+      issue(refinement, "Live collection result requires live context provenance", ["context"]);
+    }
+    if (
+      result.outcome === "COLLECTED_VERIFIED_REPLAY" &&
+      result.context.collectionOrigin.mode !== "VERIFIED_REPLAY"
+    ) {
+      issue(refinement, "Replay collection result requires verified replay provenance", [
+        "context",
+      ]);
+    }
+  });
 export type ImpactCollectionResult = z.infer<typeof impactCollectionResultSchema>;
 
 type EvidenceDraftFor<Item extends EvidenceItem> = Omit<Item, "fingerprint" | "id">;
@@ -921,7 +1028,8 @@ function provenance(
   };
 }
 
-export function createCanonicalImpactContext(changeId: string): ImpactContext {
+/** Internal deterministic test fixture; intentionally omitted from the package root API. */
+export function createCanonicalImpactContextFixture(changeId: string): ImpactContext {
   const resolution = impactResolutionSchema.parse({
     requested: canonicalImpactRequest,
     datasetUrn: canonicalDatasetUrn,
@@ -1105,7 +1213,7 @@ export function createCanonicalImpactContext(changeId: string): ImpactContext {
     },
   });
 
-  const context = {
+  const commonContext = {
     changeId,
     datasetUrn: canonicalDatasetUrn,
     fieldPath: canonicalFieldPath,
@@ -1124,10 +1232,29 @@ export function createCanonicalImpactContext(changeId: string): ImpactContext {
       glossary,
     ].sort((left, right) => left.id.localeCompare(right.id)),
     failures: [],
+  } satisfies Omit<ImpactContextData, "collectionOrigin">;
+  const liveContext = {
+    ...commonContext,
+    collectionOrigin: { mode: "LIVE" as const },
+  } satisfies ImpactContextData;
+  const impactContextFingerprint = computeImpactContextFingerprint(liveContext);
+  const sourceLiveCollectionFingerprint = computeImpactCollectionFingerprint(liveContext);
+  const context = {
+    ...commonContext,
+    collectionOrigin: {
+      mode: "VERIFIED_REPLAY" as const,
+      manifestFingerprint: sha256({
+        purpose: "LINEAGEGUARD_DOMAIN_TEST_REPLAY_MANIFEST",
+        sourceLiveCollectionFingerprint,
+        sourceImpactContextFingerprint: impactContextFingerprint,
+      }),
+      sourceLiveCollectionFingerprint,
+      sourceImpactContextFingerprint: impactContextFingerprint,
+    },
   } satisfies ImpactContextData;
   return impactContextSchema.parse({
     ...context,
-    impactContextFingerprint: computeImpactContextFingerprint(context),
+    impactContextFingerprint,
     collectionFingerprint: computeImpactCollectionFingerprint(context),
   });
 }
