@@ -44,6 +44,8 @@ def _creation_state(
         aspects[(proposal.entityUrn, type(proposal.aspect))] = proposal.aspect
         by_entity.setdefault(proposal.entityUrn, []).append(operation)
     for urn, operations in by_entity.items():
+        if urn not in expected_graph.owned_urns:
+            continue
         store.append(
             OperationReceipt.create(
                 scenario_id=expected_graph.scenario_id,
@@ -126,6 +128,7 @@ def test_reset_uses_receipts_markers_and_recovers_partial_failure(
         ownership_nonce=store.ownership_nonce,
     )
     catalog = CatalogDeleter(aspects, fail_at=2)
+    assert not set(plan.urns) & set(expected_graph.connector_dataset_urns)
     with pytest.raises(RuntimeError, match="injected"):
         execute_reset(catalog, catalog, store, plan)
     assert len(catalog.deleted) == 2
@@ -134,3 +137,5 @@ def test_reset_uses_receipts_markers_and_recovers_partial_failure(
     assert len(receipt.deleted_urns) == len(plan.urns) - 2
     assert set(urn for urn, _ in catalog.deleted) == set(plan.urns)
     assert all(hard is False for _, hard in catalog.deleted)
+    skipped = [item for item in store.read_all() if item.status is ReceiptStatus.SKIPPED]
+    assert {item.entity_urn for item in skipped} == set(plan.urns[:2])

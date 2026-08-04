@@ -20,6 +20,8 @@ SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 
 
 class ReceiptStatus(StrEnum):
+    PLANNED = "PLANNED"
+    RECONCILIATION_REQUIRED = "RECONCILIATION_REQUIRED"
     SUCCESS = "SUCCESS"
     FAILURE = "FAILURE"
     SKIPPED = "SKIPPED"

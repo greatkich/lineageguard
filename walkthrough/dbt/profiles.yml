@@ -5,8 +5,8 @@ lineageguard_walkthrough:
       type: postgres
       host: "{{ env_var('WALKTHROUGH_POSTGRES_HOST') }}"
       port: "{{ env_var('WALKTHROUGH_POSTGRES_PORT') | int }}"
-      user: "{{ env_var('WALKTHROUGH_POSTGRES_USER') }}"
-      password: "{{ env_var('WALKTHROUGH_POSTGRES_PASSWORD') }}"
+      user: "{{ env_var('WALKTHROUGH_DBT_POSTGRES_USER') }}"
+      password: "{{ env_var('WALKTHROUGH_DBT_POSTGRES_PASSWORD') }}"
       dbname: "{{ env_var('WALKTHROUGH_POSTGRES_DATABASE') }}"
       schema: analytics
       threads: 2

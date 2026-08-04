@@ -17,8 +17,8 @@ def test_dbt_parse_relations_match_expected_graph(
     environment = {
         "WALKTHROUGH_POSTGRES_HOST": "127.0.0.1",
         "WALKTHROUGH_POSTGRES_PORT": "5432",
-        "WALKTHROUGH_POSTGRES_USER": "lineageguard",
-        "WALKTHROUGH_POSTGRES_PASSWORD": "placeholder",
+        "WALKTHROUGH_DBT_POSTGRES_USER": "lineageguard_dbt",
+        "WALKTHROUGH_DBT_POSTGRES_PASSWORD": "placeholder",
         "WALKTHROUGH_POSTGRES_DATABASE": "lineageguard",
         "WALKTHROUGH_POSTGRES_SSLMODE": "disable",
     }

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
+
+from psycopg import sql
 
 from lineageguard_datahub.paths import resolve_checked_file
 
@@ -28,7 +30,11 @@ CANONICAL_RELATIONS = (
 
 
 class SqlCursor(Protocol):
-    def execute(self, query: str, params: tuple[object, ...] | None = None) -> object: ...
+    def execute(
+        self,
+        query: str | bytes | sql.SQL | sql.Composed,
+        params: Sequence[object] | Mapping[str, object] | None = None,
+    ) -> object: ...
     def fetchone(self) -> Sequence[object] | None: ...
 
 
@@ -61,6 +67,7 @@ def apply_warehouse_seed(
     query_password: str,
     ingest_password: str,
     seed_password: str,
+    dbt_password: str,
 ) -> None:
     if _scalar(cursor, "SELECT current_database()") != WAREHOUSE_DATABASE:
         raise ValueError("WAREHOUSE_DATABASE_IDENTITY_MISMATCH")
@@ -75,7 +82,7 @@ def apply_warehouse_seed(
             "WHERE nspname IN ('commerce','analytics','fraud')) + "
             "(SELECT count(*) FROM pg_roles WHERE rolname IN "
             "('lineageguard_reader','lineageguard_query','lineageguard_ingest',"
-            "'lineageguard_seed'))",
+            "'lineageguard_seed','lineageguard_dbt'))",
         )
         if int(str(conflicts)) != 0:
             raise ValueError("WAREHOUSE_PREEXISTING_OBJECTS")
@@ -121,9 +128,10 @@ def apply_warehouse_seed(
             "END IF; END $$"
         )
         cursor.execute(
-            f"ALTER ROLE {role} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE "
-            "NOREPLICATION INHERIT PASSWORD %s",
-            (password,),
+            sql.SQL(
+                "ALTER ROLE {} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE "
+                "NOREPLICATION INHERIT PASSWORD {}"
+            ).format(sql.Identifier(role), sql.Literal(password))
         )
         cursor.execute(f"GRANT lineageguard_reader TO {role}")
         role_safe = _scalar(
@@ -141,9 +149,10 @@ def apply_warehouse_seed(
         "END IF; END $$"
     )
     cursor.execute(
-        "ALTER ROLE lineageguard_seed LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE "
-        "NOREPLICATION INHERIT PASSWORD %s",
-        (seed_password,),
+        sql.SQL(
+            "ALTER ROLE {} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE "
+            "NOREPLICATION INHERIT PASSWORD {}"
+        ).format(sql.Identifier("lineageguard_seed"), sql.Literal(seed_password))
     )
     seed_safe = _scalar(
         cursor,
@@ -152,6 +161,24 @@ def apply_warehouse_seed(
     )
     if seed_safe is not True:
         raise ValueError("WAREHOUSE_ROLE_UNSAFE:lineageguard_seed")
+    cursor.execute(
+        "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'lineageguard_dbt') "
+        "THEN CREATE ROLE lineageguard_dbt LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE INHERIT; "
+        "END IF; END $$"
+    )
+    cursor.execute(
+        sql.SQL(
+            "ALTER ROLE {} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE "
+            "NOREPLICATION INHERIT PASSWORD {}"
+        ).format(sql.Identifier("lineageguard_dbt"), sql.Literal(dbt_password))
+    )
+    dbt_safe = _scalar(
+        cursor,
+        "SELECT rolcanlogin AND NOT rolsuper AND NOT rolcreatedb AND NOT rolcreaterole "
+        "AND NOT rolreplication FROM pg_roles WHERE rolname = 'lineageguard_dbt'",
+    )
+    if dbt_safe is not True:
+        raise ValueError("WAREHOUSE_ROLE_UNSAFE:lineageguard_dbt")
     cursor.execute("GRANT USAGE ON SCHEMA commerce, analytics, fraud TO lineageguard_reader")
     cursor.execute("GRANT SELECT ON commerce.orders TO lineageguard_reader")
     cursor.execute("GRANT pg_read_all_stats TO lineageguard_reader")
@@ -159,6 +186,10 @@ def apply_warehouse_seed(
     cursor.execute("GRANT SELECT, INSERT ON commerce.orders TO lineageguard_seed")
     cursor.execute("GRANT USAGE ON SCHEMA lineageguard_control TO lineageguard_seed")
     cursor.execute("GRANT SELECT ON lineageguard_control.scenario_registry TO lineageguard_seed")
+    cursor.execute(f"GRANT CONNECT ON DATABASE {WAREHOUSE_DATABASE} TO lineageguard_dbt")
+    cursor.execute("GRANT USAGE ON SCHEMA commerce TO lineageguard_dbt")
+    cursor.execute("GRANT SELECT ON commerce.orders TO lineageguard_dbt")
+    cursor.execute("GRANT USAGE, CREATE ON SCHEMA analytics, fraud TO lineageguard_dbt")
 
 
 def apply_warehouse_rows(
@@ -193,3 +224,21 @@ def apply_warehouse_rows(
     )
     if seed_exact is not True:
         raise ValueError("WAREHOUSE_SEED_CONTENT_MISMATCH")
+
+
+def verify_dbt_role(cursor: SqlCursor) -> None:
+    checks = _scalar(
+        cursor,
+        "SELECT current_user = 'lineageguard_dbt' "
+        "AND NOT rolsuper AND NOT rolcreatedb AND NOT rolcreaterole AND NOT rolreplication "
+        "AND has_database_privilege(current_user, 'lineageguard', 'CONNECT') "
+        "AND has_schema_privilege(current_user, 'commerce', 'USAGE') "
+        "AND has_table_privilege(current_user, 'commerce.orders', 'SELECT') "
+        "AND NOT COALESCE(has_table_privilege(current_user, 'commerce.orders', "
+        "'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER'), false) "
+        "AND has_schema_privilege(current_user, 'analytics', 'USAGE,CREATE') "
+        "AND has_schema_privilege(current_user, 'fraud', 'USAGE,CREATE') "
+        "FROM pg_roles WHERE rolname = current_user",
+    )
+    if checks is not True:
+        raise ValueError("DBT_POSTGRES_ROLE_UNSAFE")

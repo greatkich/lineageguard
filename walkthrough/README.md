@@ -43,13 +43,16 @@ ownership nonce read back from the server. A manifest or public marker never aut
 overwrite. An exact pre-existing entity is skipped without becoming a reset target; any differing
 pre-existing entity is refused unless its creation provenance is already protected by this tool.
 
-Local targets must use loopback addresses. Remote DataHub targets require HTTPS plus explicit remote
-and mutation opt-ins. Remote PostgreSQL requires `sslmode=verify-full` and its own opt-in. DataHub
-read, metadata-write, and ingestion tokens are separate variables. PostgreSQL bootstrap admin,
-fixed `lineageguard_seed`, fixed `lineageguard_query`, and fixed `lineageguard_ingest` credentials
-are separate; the two read-only LOGIN roles only inherit the NOLOGIN `lineageguard_reader` group.
-The seed LOGIN receives only SELECT/INSERT on `commerce.orders`. Secret fields are
-never included in configuration representations, receipts, or ingestion subprocess environments.
+Metadata mutation targets must use loopback addresses and the exact canonical target attestation;
+the tool denies metadata seed/reset against remote DataHub. Remote connector ingestion remains a
+separate operation requiring HTTPS and an explicit ingestion opt-in. Remote PostgreSQL requires
+`sslmode=verify-full` and its own opt-in. DataHub read, mutation, and ingestion tokens are separate
+variables. PostgreSQL bootstrap admin, fixed `lineageguard_seed`, fixed `lineageguard_query`, fixed
+`lineageguard_ingest`, and fixed `lineageguard_dbt` credentials are separate; the query and ingestion
+LOGIN roles only inherit the NOLOGIN `lineageguard_reader` group. The seed LOGIN receives only
+SELECT/INSERT on `commerce.orders`. The dbt LOGIN receives SELECT on that source plus CREATE only in
+the `analytics` and `fraud` schemas. Secret fields are never included in configuration
+representations, receipts, or ingestion subprocess environments.
 
 The PostgreSQL service must preload `pg_stat_statements`; the first seed file creates the extension
 idempotently. This setting belongs to the application PostgreSQL service, never DataHub's internal
@@ -73,20 +76,28 @@ After PostgreSQL is available, the canonical live sequence is:
 ```bash
 uv run --project tools/datahub lineageguard-datahub warehouse-seed --execute
 uv run --project tools/datahub dbt build --project-dir walkthrough/dbt --profiles-dir walkthrough/dbt
-uv run --project tools/datahub lineageguard-datahub metadata-seed --execute
 uv run --project tools/datahub lineageguard-datahub query --execute
 uv run --project tools/datahub lineageguard-datahub ingest --execute
+uv run --project tools/datahub lineageguard-datahub metadata-seed --execute
 uv run --project tools/datahub lineageguard-datahub verify
 ```
+
+The PostgreSQL and dbt connectors own the four Dataset entities and their base schema metadata.
+`metadata-seed` runs only after those connectors and adds controlled ownership, tag, glossary, and
+lineage overlays; it never replaces connector-owned DatasetProperties or SchemaMetadata. Repeating
+connector ingestion and metadata seeding must preserve both the connector schema and the controlled
+overlays. Reset therefore deletes only immutable, namespaced entities created by this tool and never
+deletes connector-owned Dataset URNs.
 
 `metadata-seed` does not emit a MANUAL Query. The pinned PostgreSQL recipe is restricted to exactly
 `commerce.orders`, `analytics.stg_orders`, `analytics.customer_revenue`, and
 `fraud.customer_features`. It runs in a minimal environment containing only the ingestion token and
 read-only ingestion database credential. The checked `pg_stat_statements` observation is reconciled
-into one deterministic namespaced Query with official SYSTEM `QueryProperties`, `QuerySubjects`,
-`DataPlatformInstance`, and `QueryUsageStatistics` aspects. Verification fetches that URN directly
-and accepts it only when its statement, exact subject field, instance, timestamp, usage count,
-pg_stat id/count/time, recipe digest, proposal keys, and ordered receipts all agree.
+into one deterministic namespaced Query. Stable query identity lives in official SYSTEM
+`QueryProperties`, `QuerySubjects`, and `DataPlatformInstance` aspects; each later observation is a
+monotonic `QueryUsageStatistics` timeseries update. Verification fetches that URN directly and
+accepts it only when its statement, exact subject field, instance, timestamp, usage count, pg_stat
+id/count/time, recipe digest, proposal keys, and ordered receipts all agree.
 
 MANUAL Query examples may remain in committed replay fixtures, but are never emitted or accepted by
 the LIVE path. DataHub 1.6 does not support the `Ownership` aspect on Query entities, so the tool
@@ -102,12 +113,12 @@ uv run --project tools/datahub lineageguard-datahub reset \
 ```
 
 `verify` exits non-zero for a missing entity, field lineage, entity lineage, owner, tag, glossary
-term, query signal, pg_stat receipt, ingestion receipt, or incomplete mixed field/entity path. Counts
-The manifest freezes the complete field inventory of every canonical dataset; missing or extra
-fields fail verification. Counts come only from one connected set of reachable observed outcomes; a failing graph never reports the manifest's expected
-count as though it were observed. Operation receipts are stored with mode `0600` under ignored
-`walkthrough/.state/` and record every success, failure, and reconciled retry. They are strictly
-bounded and validated, chained with an authenticated hash, and bound to a separate `0600` local
-ownership state. A checked-in manifest
-or unit test is not a live DataHub receipt; live verification must be observed separately against the
-pinned server.
+term, query signal, pg_stat receipt, ingestion receipt, or incomplete mixed field/entity path. The
+manifest freezes the complete field inventory of every canonical dataset; missing or extra fields
+fail verification. Counts come only from one connected set of reachable observed outcomes; a
+failing graph never reports the manifest's expected count as though it were observed. Operation
+receipts are stored with mode `0600` under ignored `walkthrough/.state/` and record planned,
+successful, failed, skipped, and reconciliation-required outcomes. They are strictly bounded and
+validated, chained with HMAC, and bound to a separate `0600` local ownership state. A checked-in
+manifest or unit test is not a live DataHub receipt; live verification must be observed separately
+against the pinned server.

@@ -25,16 +25,10 @@ from datahub.metadata.schema_classes import (
     GlossaryTermInfoClass,
     GlossaryTermsClass,
     MLModelPropertiesClass,
-    NumberTypeClass,
-    OtherSchemaClass,
     OwnerClass,
     OwnershipClass,
     OwnershipTypeClass,
     QueryPropertiesClass,
-    SchemaFieldClass,
-    SchemaFieldDataTypeClass,
-    SchemaMetadataClass,
-    StringTypeClass,
     TagAssociationClass,
     TagPropertiesClass,
     TrainingDataClass,
@@ -113,70 +107,6 @@ def _tags(node: GraphNode) -> GlobalTagsClass:
     return GlobalTagsClass(tags=[TagAssociationClass(tag=tag_urn) for tag_urn in node.tag_urns])
 
 
-def _field(
-    name: str, native_type: str, *, number: bool = False, term_urn: str | None = None
-) -> SchemaFieldClass:
-    terms = None
-    if term_urn is not None:
-        terms = GlossaryTermsClass(
-            terms=[GlossaryTermAssociationClass(urn=term_urn, actor=ACTOR_URN)],
-            auditStamp=AUDIT_STAMP,
-        )
-    field_type = (
-        NumberTypeClass()  # type: ignore[no-untyped-call]
-        if number
-        else StringTypeClass()  # type: ignore[no-untyped-call]
-    )
-    return SchemaFieldClass(
-        fieldPath=name,
-        type=SchemaFieldDataTypeClass(type=field_type),
-        nativeDataType=native_type,
-        nullable=False,
-        glossaryTerms=terms,
-    )
-
-
-def _schema_for(node: GraphNode, graph: ExpectedGraph) -> SchemaMetadataClass:
-    fields_by_key = {
-        "commerce.orders": [
-            _field("order_id", "uuid"),
-            _field("customer_id", "uuid", term_urn=graph.source_field.glossary_term_urn),
-            _field("order_total", "numeric(12,2)", number=True),
-            _field("ordered_at", "timestamptz"),
-        ],
-        "analytics.stg_orders": [
-            _field("order_id", "uuid"),
-            _field("customer_id", "uuid"),
-            _field("order_total", "numeric(12,2)", number=True),
-            _field("ordered_at", "timestamptz"),
-        ],
-        "analytics.customer_revenue": [
-            _field("customer_id", "uuid"),
-            _field("lifetime_revenue", "numeric", number=True),
-        ],
-        "fraud.customer_features": [
-            _field("customer_id", "uuid"),
-            _field("order_count", "bigint", number=True),
-            _field("max_order_total", "numeric", number=True),
-        ],
-    }
-    fields = fields_by_key[node.logical_key]
-    raw_schema = json.dumps(
-        {"fields": [{"name": field.fieldPath, "type": field.nativeDataType} for field in fields]},
-        sort_keys=True,
-    )
-    return SchemaMetadataClass(
-        schemaName=node.logical_key,
-        platform="urn:li:dataPlatform:postgres",
-        version=0,
-        hash=hashlib.sha256(raw_schema.encode()).hexdigest(),
-        platformSchema=OtherSchemaClass(rawSchema=raw_schema),
-        fields=fields,
-        created=AUDIT_STAMP,
-        lastModified=AUDIT_STAMP,
-    )
-
-
 def _marker_properties(ownership_nonce: str) -> dict[str, str]:
     return {
         SCENARIO_MARKER_KEY: SCENARIO_MARKER_VALUE,
@@ -194,29 +124,7 @@ def _node_aspects(
     node: GraphNode, graph: ExpectedGraph, ownership_nonce: str
 ) -> list[PlannedUpsert]:
     upserts: list[PlannedUpsert] = []
-    if node.entity_type is EntityType.DATASET:
-        upserts.extend(
-            [
-                _upsert(
-                    f"{node.logical_key}:properties",
-                    node.urn,
-                    "dataset",
-                    DatasetPropertiesClass(
-                        name=node.name,
-                        qualifiedName=node.logical_key,
-                        description=f"Canonical LineageGuard asset: {node.logical_key}.",
-                        customProperties=_marker_properties(ownership_nonce),
-                    ),
-                ),
-                _upsert(
-                    f"{node.logical_key}:schema",
-                    node.urn,
-                    "dataset",
-                    _schema_for(node, graph),
-                ),
-            ]
-        )
-    elif node.entity_type is EntityType.DASHBOARD:
+    if node.entity_type is EntityType.DASHBOARD:
         revenue_urn = next(
             item.urn for item in graph.nodes if item.logical_key == "analytics.customer_revenue"
         )
@@ -363,6 +271,22 @@ def build_seed_plan(
             ),
         )
     )
+    upserts.append(
+        _upsert(
+            "commerce.orders.customer_id:glossary-terms",
+            graph.source_field.schema_field_urn,
+            "schemaField",
+            GlossaryTermsClass(
+                terms=[
+                    GlossaryTermAssociationClass(
+                        urn=graph.source_field.glossary_term_urn,
+                        actor=ACTOR_URN,
+                    )
+                ],
+                auditStamp=AUDIT_STAMP,
+            ),
+        )
+    )
     for node in graph.nodes:
         upserts.extend(_node_aspects(node, graph, ownership_nonce))
     node_types = {node.urn: _entity_name(node) for node in graph.nodes}
@@ -419,6 +343,21 @@ def seed_metadata(
 ) -> SeedReceipt:
     nonce = receipt_store.ownership_nonce
     plan = build_seed_plan(graph, root, nonce)
+    for operation in plan:
+        receipt_store.append(
+            OperationReceipt.create(
+                scenario_id=graph.scenario_id,
+                operation_kind="seed",
+                entity_urn=operation.proposal.entityUrn,
+                aspect_name=operation.proposal.aspectName,
+                idempotency_key=operation.idempotency_key,
+                status=ReceiptStatus.PLANNED,
+                detail_code="OPERATION_PLANNED",
+                proposal_hash=operation.idempotency_key,
+                ownership_nonce=nonce,
+                metrics={"beforeStatus": "UNKNOWN", "afterStatus": "PLANNED"},
+            )
+        )
     by_entity: dict[tuple[str, str], list[PlannedUpsert]] = {}
     for operation in plan:
         urn = operation.proposal.entityUrn
@@ -426,6 +365,10 @@ def seed_metadata(
             raise ValueError("SEED_ENTITY_URN_MISSING")
         by_entity.setdefault((urn, operation.proposal.entityType), []).append(operation)
     receipts = receipt_store.read_all()
+    connector_references = {
+        *graph.connector_dataset_urns,
+        graph.source_field.schema_field_urn,
+    }
     created_receipts = {
         receipt.entity_urn: receipt
         for receipt in receipts
@@ -438,6 +381,46 @@ def seed_metadata(
     preexisting_exact: set[str] = set()
     owned: set[str] = set()
     for (urn, entity_type), operations in by_entity.items():
+        if urn in connector_references:
+            if not reader.exists(urn):
+                operation = operations[0]
+                receipt_store.append(
+                    OperationReceipt.create(
+                        scenario_id=graph.scenario_id,
+                        operation_kind="seed",
+                        entity_urn=urn,
+                        aspect_name=operation.proposal.aspectName,
+                        idempotency_key=operation.idempotency_key,
+                        status=ReceiptStatus.RECONCILIATION_REQUIRED,
+                        detail_code="CONNECTOR_ENTITY_REQUIRED",
+                        proposal_hash=operation.idempotency_key,
+                        ownership_nonce=nonce,
+                    )
+                )
+                raise ValueError(f"CONNECTOR_ENTITY_REQUIRED:{urn}")
+            for operation in operations:
+                aspect = operation.proposal.aspect
+                if aspect is None:
+                    raise ValueError("SEED_ASPECT_MISSING")
+                current = reader.get_aspect(urn, type(aspect))
+                if current is not None and current.to_obj() != aspect.to_obj():
+                    receipt_store.append(
+                        OperationReceipt.create(
+                            scenario_id=graph.scenario_id,
+                            operation_kind="seed",
+                            entity_urn=urn,
+                            aspect_name=operation.proposal.aspectName,
+                            idempotency_key=operation.idempotency_key,
+                            status=ReceiptStatus.RECONCILIATION_REQUIRED,
+                            detail_code="CONNECTOR_OVERLAY_CONFLICT",
+                            proposal_hash=operation.idempotency_key,
+                            ownership_nonce=nonce,
+                        )
+                    )
+                    raise ValueError(
+                        f"CONNECTOR_OVERLAY_CONFLICT:{urn}:{operation.proposal.aspectName}"
+                    )
+            continue
         if not reader.exists(urn):
             continue
         exact = all(
@@ -456,6 +439,20 @@ def seed_metadata(
             or creation.proposal_hash != entity_hash
             or not entity_has_scenario_marker(reader, urn, entity_type, nonce)
         ):
+            operation = operations[0]
+            receipt_store.append(
+                OperationReceipt.create(
+                    scenario_id=graph.scenario_id,
+                    operation_kind="seed",
+                    entity_urn=urn,
+                    aspect_name=operation.proposal.aspectName,
+                    idempotency_key=operation.idempotency_key,
+                    status=ReceiptStatus.RECONCILIATION_REQUIRED,
+                    detail_code="EXISTING_ENTITY_NOT_OWNED",
+                    proposal_hash=operation.idempotency_key,
+                    ownership_nonce=nonce,
+                )
+            )
             raise ValueError(f"EXISTING_ENTITY_NOT_OWNED:{urn}")
         owned.add(urn)
         for operation in operations:
@@ -464,6 +461,19 @@ def seed_metadata(
                 raise ValueError("SEED_ASPECT_MISSING")
             current = reader.get_aspect(urn, type(aspect))
             if current is not None and current.to_obj() != aspect.to_obj():
+                receipt_store.append(
+                    OperationReceipt.create(
+                        scenario_id=graph.scenario_id,
+                        operation_kind="seed",
+                        entity_urn=urn,
+                        aspect_name=operation.proposal.aspectName,
+                        idempotency_key=operation.idempotency_key,
+                        status=ReceiptStatus.RECONCILIATION_REQUIRED,
+                        detail_code="OWNED_ASPECT_DRIFT",
+                        proposal_hash=operation.idempotency_key,
+                        ownership_nonce=nonce,
+                    )
+                )
                 raise ValueError(f"OWNED_ASPECT_DRIFT:{urn}:{operation.proposal.aspectName}")
     emitted = 0
     skipped = 0
@@ -526,7 +536,7 @@ def seed_metadata(
                 metrics={"beforeStatus": "MISSING", "afterStatus": "EMITTED"},
             )
         )
-        if urn not in preexisting_exact and urn not in owned:
+        if urn not in connector_references and urn not in preexisting_exact and urn not in owned:
             operations = by_entity[(urn, proposal.entityType)]
             receipt_store.append(
                 OperationReceipt.create(

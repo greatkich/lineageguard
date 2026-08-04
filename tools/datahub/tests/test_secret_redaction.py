@@ -49,15 +49,21 @@ def test_query_and_ingest_principals_are_fixed_login_names() -> None:
         "WALKTHROUGH_QUERY_POSTGRES_PASSWORD": "query",
         "WALKTHROUGH_INGEST_POSTGRES_USER": "lineageguard_query",
         "WALKTHROUGH_INGEST_POSTGRES_PASSWORD": "ingest",
+        "WALKTHROUGH_DBT_POSTGRES_USER": "shared_dbt",
+        "WALKTHROUGH_DBT_POSTGRES_PASSWORD": "dbt",
     }
     with pytest.raises(ConfigurationError, match="QUERY_POSTGRES_PRINCIPAL_MISMATCH"):
         load_postgres_config(values, query_role=True)
     with pytest.raises(ConfigurationError, match="INGEST_POSTGRES_PRINCIPAL_MISMATCH"):
         load_postgres_config(values, ingest_role=True)
+    with pytest.raises(ConfigurationError, match="DBT_POSTGRES_PRINCIPAL_MISMATCH"):
+        load_postgres_config(values, dbt_role=True)
     values["WALKTHROUGH_QUERY_POSTGRES_USER"] = "lineageguard_query"
     values["WALKTHROUGH_INGEST_POSTGRES_USER"] = "lineageguard_ingest"
+    values["WALKTHROUGH_DBT_POSTGRES_USER"] = "lineageguard_dbt"
     assert load_postgres_config(values, query_role=True).credential_kind == "query"
     assert load_postgres_config(values, ingest_role=True).credential_kind == "ingest"
+    assert load_postgres_config(values, dbt_role=True).credential_kind == "dbt"
 
 
 def test_redaction_replaces_longest_secret_first() -> None:
@@ -77,20 +83,35 @@ def test_remote_postgres_requires_verify_full_and_opt_in() -> None:
     assert load_postgres_config(values).remote is True
 
 
-def test_datahub_target_policy_and_separate_write_token() -> None:
+def test_datahub_target_policy_and_separate_mutation_token() -> None:
     local = load_datahub_config({"DATAHUB_GMS_URL": "http://localhost:8080"})
     assert local.token is None
     assert "token=" not in repr(local)
-    with pytest.raises(ConfigurationError, match="DATAHUB_WRITE_TOKEN_REQUIRED"):
+    with pytest.raises(ConfigurationError, match="DATAHUB_MUTATION_TOKEN_REQUIRED"):
         load_datahub_config({"DATAHUB_GMS_URL": "http://localhost:8080"}, write=True)
     with pytest.raises(ConfigurationError, match="REMOTE_DATAHUB_HTTPS_REQUIRED"):
         load_datahub_config({"DATAHUB_GMS_URL": "http://datahub.example.com"})
     with pytest.raises(ConfigurationError, match="DATAHUB_GMS_URL_UNSAFE_COMPONENT"):
         load_datahub_config({"DATAHUB_GMS_URL": "https://user@datahub.example.com/#fragment"})
+    with pytest.raises(ConfigurationError, match="TARGET_ATTESTATION_REQUIRED"):
+        load_datahub_config(
+            {
+                "DATAHUB_GMS_URL": "http://localhost:8080",
+                "DATAHUB_MUTATION_TOKEN": "hidden",
+            },
+            write=True,
+        )
     remote = {
         "DATAHUB_GMS_URL": "https://datahub.example.com",
         "LINEAGEGUARD_REMOTE_DATAHUB": "approved",
         "LINEAGEGUARD_REMOTE_DATAHUB_WRITE": "approved",
-        "DATAHUB_WRITE_TOKEN": "hidden",
+        "DATAHUB_MUTATION_TOKEN": "hidden",
     }
-    assert load_datahub_config(remote, write=True).remote is True
+    with pytest.raises(ConfigurationError, match="REMOTE_DATAHUB_MUTATION_DENIED"):
+        load_datahub_config(remote, write=True)
+    local_mutation = {
+        "DATAHUB_GMS_URL": "http://localhost:8080",
+        "DATAHUB_MUTATION_TOKEN": "hidden",
+        "LINEAGEGUARD_DATAHUB_TARGET_ATTESTATION": "canonical-local-lineageguard-v1",
+    }
+    assert load_datahub_config(local_mutation, write=True).credential_kind == "mutation"

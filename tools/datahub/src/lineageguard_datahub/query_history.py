@@ -14,6 +14,10 @@ CANONICAL_NORMALIZED_SQL = (
     "select customer_id, lifetime_revenue from analytics.customer_revenue "
     "where lifetime_revenue >= 100 order by lifetime_revenue desc"
 )
+CANONICAL_PG_STAT_SQL = (
+    "select customer_id, lifetime_revenue from analytics.customer_revenue "
+    "where lifetime_revenue >= $1 order by lifetime_revenue desc"
+)
 
 
 class QueryPolicyError(ValueError):
@@ -121,7 +125,7 @@ def execute_query(cursor: Cursor, plan: QueryExecutionPlan) -> QueryExecutionRec
     observed = cursor.fetchone()
     if observed is None or len(observed) != 4:
         raise QueryPolicyError("QUERY_HISTORY_NOT_OBSERVED")
-    if _normalized(str(observed[3])) != CANONICAL_NORMALIZED_SQL:
+    if _normalized(str(observed[3])) != CANONICAL_PG_STAT_SQL:
         raise QueryPolicyError("QUERY_HISTORY_FINGERPRINT_MISMATCH")
     execution_count = int(cast(str | int, observed[1]))
     total_exec_time_ms = float(cast(str | int | float, observed[2]))

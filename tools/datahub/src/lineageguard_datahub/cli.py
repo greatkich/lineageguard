@@ -96,6 +96,7 @@ def _warehouse_seed(execute: bool, root: Path) -> dict[str, object]:
         query_config = load_postgres_config(query_role=True)
         ingest_config = load_postgres_config(ingest_role=True)
         seed_config = load_postgres_config()
+        dbt_config = load_postgres_config(dbt_role=True)
         store = _receipt_store(root)
         with psycopg.connect(config.dsn) as connection, connection.cursor() as cursor:
             apply_warehouse_seed(
@@ -105,6 +106,7 @@ def _warehouse_seed(execute: bool, root: Path) -> dict[str, object]:
                 query_password=query_config.password,
                 ingest_password=ingest_config.password,
                 seed_password=seed_config.password,
+                dbt_password=dbt_config.password,
             )
         with psycopg.connect(seed_config.dsn) as connection, connection.cursor() as cursor:
             apply_warehouse_rows(cursor, plan, ownership_nonce=store.ownership_nonce)
@@ -127,11 +129,24 @@ def _query(execute: bool, root: Path) -> dict[str, object]:
     if execute:
         _require_environment_gate()
         config = load_postgres_config(query_role=True)
+        store = _receipt_store(root)
+        store.append(
+            OperationReceipt.create(
+                scenario_id=graph.scenario_id,
+                operation_kind="query",
+                entity_urn=None,
+                aspect_name="pg_stat_statements",
+                idempotency_key=plan.normalized_fingerprint,
+                status=ReceiptStatus.PLANNED,
+                detail_code="OPERATION_PLANNED",
+                proposal_hash=plan.normalized_fingerprint,
+            )
+        )
         try:
             with psycopg.connect(config.dsn) as connection, connection.cursor() as cursor:
                 receipt = execute_query(cursor, plan)
         except Exception as error:
-            _receipt_store(root).append(
+            store.append(
                 OperationReceipt.create(
                     scenario_id=graph.scenario_id,
                     operation_kind="query",
@@ -147,7 +162,7 @@ def _query(execute: bool, root: Path) -> dict[str, object]:
         result["pgStatQueryId"] = receipt.query_id
         result["executionCount"] = receipt.execution_count
         result["totalExecTimeMs"] = receipt.total_exec_time_ms
-        _receipt_store(root).append(
+        store.append(
             OperationReceipt.create(
                 scenario_id=graph.scenario_id,
                 operation_kind="query",
@@ -181,6 +196,18 @@ def _ingest(execute: bool, root: Path) -> dict[str, object]:
         with psycopg.connect(postgres_config.dsn) as connection, connection.cursor() as cursor:
             verify_ingestion_role(cursor)
         for command, recipe in zip(commands, recipes, strict=True):
+            store.append(
+                OperationReceipt.create(
+                    scenario_id="canonical-customer-id-rename",
+                    operation_kind="ingest",
+                    entity_urn=None,
+                    aspect_name=recipe.relative_path,
+                    idempotency_key=recipe.sha256,
+                    status=ReceiptStatus.PLANNED,
+                    detail_code="OPERATION_PLANNED",
+                    proposal_hash=recipe.sha256,
+                )
+            )
             try:
                 _run(command, cwd=root, env=child_env)
             except subprocess.CalledProcessError as error:
@@ -323,12 +350,13 @@ def main(argv: list[str] | None = None) -> int:
         secrets = (
             os.environ.get("DATAHUB_TOKEN"),
             os.environ.get("DATAHUB_READ_TOKEN"),
-            os.environ.get("DATAHUB_WRITE_TOKEN"),
+            os.environ.get("DATAHUB_MUTATION_TOKEN"),
             os.environ.get("DATAHUB_INGEST_TOKEN"),
             os.environ.get("WALKTHROUGH_POSTGRES_PASSWORD"),
             os.environ.get("WALKTHROUGH_QUERY_POSTGRES_PASSWORD"),
             os.environ.get("WALKTHROUGH_INGEST_POSTGRES_PASSWORD"),
             os.environ.get("WALKTHROUGH_ADMIN_POSTGRES_PASSWORD"),
+            os.environ.get("WALKTHROUGH_DBT_POSTGRES_PASSWORD"),
         )
         print(redact(str(error), secrets), file=sys.stderr)
         return 2

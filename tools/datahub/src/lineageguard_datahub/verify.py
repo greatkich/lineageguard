@@ -16,6 +16,7 @@ from datahub.metadata.schema_classes import (
     DashboardInfoClass,
     DataPlatformInstanceClass,
     GlobalTagsClass,
+    GlossaryTermsClass,
     OwnershipClass,
     QueryPropertiesClass,
     QuerySourceClass,
@@ -471,6 +472,12 @@ def observe_live(reader: GraphReader, graph: ExpectedGraph) -> ObservedGraph:
         tag_aspect = reader.get_aspect(node.urn, GlobalTagsClass)
         if tag_aspect is not None:
             tags.update((node.urn, association.tag) for association in tag_aspect.tags)
+    source_terms = reader.get_aspect(graph.source_field.schema_field_urn, GlossaryTermsClass)
+    if source_terms is not None:
+        glossary_terms.update(
+            (graph.source_field.schema_field_urn, association.urn)
+            for association in source_terms.terms
+        )
     urn = graph.query_evidence[0].query_urn
     if reader.exists(urn):
         properties = reader.get_aspect(urn, QueryPropertiesClass)

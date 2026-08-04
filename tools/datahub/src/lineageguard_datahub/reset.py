@@ -62,7 +62,7 @@ def build_reset_plan(
         raise ResetPolicyError("CANONICAL_ENV_REQUIRED")
     if platform_instance != graph.platform_instance:
         raise ResetPolicyError("PLATFORM_INSTANCE_MISMATCH")
-    managed = set(graph.managed_urns)
+    managed = set(graph.owned_urns)
     seed_plan = build_seed_plan(graph, root, ownership_nonce)
     seed_by_entity: dict[str, list[PlannedUpsert]] = {}
     for operation in seed_plan:
@@ -97,6 +97,8 @@ def build_reset_plan(
                         and item.operation_kind == "ingest-query"
                         and item.status is ReceiptStatus.SUCCESS
                         and item.aspect_name is not None
+                        and item.aspect_name
+                        in {"queryProperties", "querySubjects", "dataPlatformInstance"}
                     ):
                         first_aspect_keys.setdefault(item.aspect_name, item.idempotency_key)
                 aspect_keys = sorted(first_aspect_keys.values())
@@ -143,11 +145,52 @@ def execute_reset(
     successful = receipt_store.latest_success(plan.scenario_id, "reset")
     deleted: list[str] = []
     for target in plan.targets:
+        receipt_store.append(
+            OperationReceipt.create(
+                scenario_id=plan.scenario_id,
+                operation_kind="reset",
+                entity_urn=target.urn,
+                aspect_name=None,
+                idempotency_key=target.idempotency_key,
+                status=ReceiptStatus.PLANNED,
+                detail_code="OPERATION_PLANNED",
+                proposal_hash=target.proposal_hash,
+                ownership_nonce=target.ownership_nonce,
+                metrics={"beforeStatus": "UNKNOWN", "afterStatus": "PLANNED"},
+            )
+        )
         if target.idempotency_key in successful and not reader.exists(target.urn):
+            receipt_store.append(
+                OperationReceipt.create(
+                    scenario_id=plan.scenario_id,
+                    operation_kind="reset",
+                    entity_urn=target.urn,
+                    aspect_name=None,
+                    idempotency_key=target.idempotency_key,
+                    status=ReceiptStatus.SKIPPED,
+                    detail_code="ALREADY_DELETED",
+                    proposal_hash=target.proposal_hash,
+                    ownership_nonce=target.ownership_nonce,
+                    metrics={"beforeStatus": "ABSENT", "afterStatus": "UNCHANGED"},
+                )
+            )
             continue
         if not reader.exists(target.urn) or not entity_has_scenario_marker(
             reader, target.urn, target.entity_type, target.ownership_nonce
         ):
+            receipt_store.append(
+                OperationReceipt.create(
+                    scenario_id=plan.scenario_id,
+                    operation_kind="reset",
+                    entity_urn=target.urn,
+                    aspect_name=None,
+                    idempotency_key=target.idempotency_key,
+                    status=ReceiptStatus.RECONCILIATION_REQUIRED,
+                    detail_code="SERVER_MARKER_REQUIRED",
+                    proposal_hash=target.proposal_hash,
+                    ownership_nonce=target.ownership_nonce,
+                )
+            )
             raise ResetPolicyError(f"SERVER_MARKER_REQUIRED:{target.urn}")
         try:
             deleter.delete_entity(target.urn, hard=False)

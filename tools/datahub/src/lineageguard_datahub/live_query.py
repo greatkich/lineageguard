@@ -5,6 +5,7 @@ import json
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import Protocol
 
 from datahub.emitter.mce_builder import (
     make_dataplatform_instance_urn,
@@ -34,6 +35,16 @@ from lineageguard_datahub.seed import (
     EntityReader,
     McpEmitter,
 )
+
+
+class LiveQueryReader(EntityReader, Protocol):
+    def get_timeseries_values(
+        self,
+        entity_urn: str,
+        aspect_type: type[QueryUsageStatisticsClass],
+        filter: dict[str, object],
+        limit: int = 10,
+    ) -> list[QueryUsageStatisticsClass]: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,7 +106,7 @@ def build_live_query_plan(
     recorded_at = datetime.fromisoformat(receipt.recorded_at)
     timestamp_ms = int(recorded_at.timestamp() * 1000)
     urn = query.query_urn
-    audit = AuditStampClass(time=timestamp_ms, actor="urn:li:corpuser:lineageguard-reader")
+    audit = AuditStampClass(time=0, actor="urn:li:corpuser:lineageguard-reader")
     proposals = (
         MetadataChangeProposalWrapper(
             entityUrn=urn,
@@ -147,7 +158,7 @@ def build_live_query_plan(
 
 def emit_live_query_evidence(
     emitter: McpEmitter,
-    reader: EntityReader,
+    reader: LiveQueryReader,
     store: ReceiptStore,
     graph: ExpectedGraph,
     root: Path,
@@ -176,8 +187,25 @@ def emit_live_query_evidence(
     urn = plan[0].proposal.entityUrn
     if urn is None:
         raise ValueError("LIVE_QUERY_URN_MISSING")
+    for operation in plan:
+        store.append(
+            OperationReceipt.create(
+                scenario_id=graph.scenario_id,
+                operation_kind="ingest-query",
+                entity_urn=urn,
+                aspect_name=operation.proposal.aspectName,
+                idempotency_key=operation.idempotency_key,
+                status=ReceiptStatus.PLANNED,
+                detail_code="OPERATION_PLANNED",
+                proposal_hash=operation.idempotency_key,
+                ownership_nonce=nonce,
+                metrics=_evidence_metrics(receipt, recipe_digest)
+                | {"beforeStatus": "UNKNOWN", "afterStatus": "PLANNED"},
+            )
+        )
+    stable_plan = plan[:-1]
     entity_hash = hashlib.sha256(
-        "\n".join(sorted(item.idempotency_key for item in plan)).encode()
+        "\n".join(sorted(item.idempotency_key for item in stable_plan)).encode()
     ).hexdigest()
     creation = next(
         (
@@ -203,13 +231,40 @@ def emit_live_query_evidence(
             or not isinstance(expected, QueryPropertiesClass)
             or properties.to_obj() != expected.to_obj()
         ):
+            operation = stable_plan[0]
+            store.append(
+                OperationReceipt.create(
+                    scenario_id=graph.scenario_id,
+                    operation_kind="ingest-query",
+                    entity_urn=urn,
+                    aspect_name=operation.proposal.aspectName,
+                    idempotency_key=operation.idempotency_key,
+                    status=ReceiptStatus.RECONCILIATION_REQUIRED,
+                    detail_code="EXISTING_ENTITY_NOT_OWNED",
+                    proposal_hash=operation.idempotency_key,
+                    ownership_nonce=nonce,
+                )
+            )
             raise ValueError("LIVE_QUERY_EXISTING_ENTITY_NOT_OWNED")
-        for operation in plan[:-1]:
+        for operation in stable_plan:
             aspect = operation.proposal.aspect
             if aspect is None:
                 raise ValueError("LIVE_QUERY_ASPECT_MISSING")
             current = reader.get_aspect(urn, type(aspect))
             if current is not None and current.to_obj() != aspect.to_obj():
+                store.append(
+                    OperationReceipt.create(
+                        scenario_id=graph.scenario_id,
+                        operation_kind="ingest-query",
+                        entity_urn=urn,
+                        aspect_name=operation.proposal.aspectName,
+                        idempotency_key=operation.idempotency_key,
+                        status=ReceiptStatus.RECONCILIATION_REQUIRED,
+                        detail_code="STATIC_ASPECT_DRIFT",
+                        proposal_hash=operation.idempotency_key,
+                        ownership_nonce=nonce,
+                    )
+                )
                 raise ValueError(f"LIVE_QUERY_STATIC_ASPECT_DRIFT:{operation.proposal.aspectName}")
     emitted = 0
     for index, operation in enumerate(plan):
@@ -238,6 +293,52 @@ def emit_live_query_evidence(
                     )
                 )
                 continue
+        if isinstance(aspect, QueryUsageStatisticsClass):
+            observed_usage = reader.get_timeseries_values(
+                urn, QueryUsageStatisticsClass, {}, limit=10
+            )
+            if observed_usage:
+                latest = max(observed_usage, key=lambda item: item.timestampMillis)
+                latest_count = int(latest.queryCount or 0)
+                expected_count = int(aspect.queryCount or 0)
+                if (
+                    latest.timestampMillis == aspect.timestampMillis
+                    and latest_count == expected_count
+                ):
+                    store.append(
+                        OperationReceipt.create(
+                            scenario_id=graph.scenario_id,
+                            operation_kind="ingest-query",
+                            entity_urn=urn,
+                            aspect_name=proposal.aspectName,
+                            idempotency_key=operation.idempotency_key,
+                            status=ReceiptStatus.SKIPPED,
+                            detail_code="ASPECT_SKIPPED_EXACT",
+                            proposal_hash=operation.idempotency_key,
+                            ownership_nonce=nonce,
+                            metrics=_evidence_metrics(receipt, recipe_digest)
+                            | {"beforeStatus": "EXACT", "afterStatus": "UNCHANGED"},
+                        )
+                    )
+                    continue
+                if (
+                    latest.timestampMillis >= aspect.timestampMillis
+                    or latest_count > expected_count
+                ):
+                    store.append(
+                        OperationReceipt.create(
+                            scenario_id=graph.scenario_id,
+                            operation_kind="ingest-query",
+                            entity_urn=urn,
+                            aspect_name=proposal.aspectName,
+                            idempotency_key=operation.idempotency_key,
+                            status=ReceiptStatus.RECONCILIATION_REQUIRED,
+                            detail_code="OBSERVATION_NOT_MONOTONIC",
+                            proposal_hash=operation.idempotency_key,
+                            ownership_nonce=nonce,
+                        )
+                    )
+                    raise ValueError("LIVE_QUERY_OBSERVATION_NOT_MONOTONIC")
         try:
             emitter.emit_mcp(proposal)
         except Exception as error:

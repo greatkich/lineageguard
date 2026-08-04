@@ -73,7 +73,6 @@ def test_loader_forbids_manifest_target_expansion(repository_root: Path, tmp_pat
     manifest["owners"][0]["urn"] = "urn:li:corpGroup:shared-finance"
     manifest["nodes"][2]["ownerUrns"] = ["urn:li:corpGroup:shared-finance"]
     manifest["nodes"][4]["ownerUrns"] = ["urn:li:corpGroup:shared-finance"]
-    manifest["queryEvidence"][0]["ownerUrn"] = "urn:li:corpGroup:shared-finance"
     invalid = tmp_path / "expanded.json"
     invalid.write_text(json.dumps(manifest))
     with pytest.raises(GraphContractError, match="URN allowlist mismatch"):

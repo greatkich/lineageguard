@@ -15,9 +15,16 @@ from lineageguard_datahub.query_history import (
 
 
 class RecordingCursor:
-    def __init__(self, *, observed: bool, read_only_role: bool = True) -> None:
+    def __init__(
+        self,
+        *,
+        observed: bool,
+        read_only_role: bool = True,
+        observed_statement: str | None = None,
+    ) -> None:
         self.observed = observed
         self.read_only_role = read_only_role
+        self.observed_statement = observed_statement
         self.commands: list[tuple[str, tuple[object, ...] | None]] = []
         self.fetchone_calls = 0
 
@@ -37,7 +44,8 @@ class RecordingCursor:
         if self.fetchone_calls == 1:
             return (self.read_only_role,) * 12
         if self.observed:
-            return ("48291", 3, 1.25, self.commands[3][0])
+            statement = self.observed_statement or self.commands[3][0].replace("100", "$1")
+            return ("48291", 3, 1.25, statement)
         return ()
 
 
@@ -106,3 +114,21 @@ def test_execution_rejects_privileged_role(
     plan = plan_query_execution(repository_root, expected_graph.query_evidence[0])
     with pytest.raises(QueryPolicyError, match="QUERY_ROLE_NOT_READ_ONLY"):
         execute_query(RecordingCursor(observed=True, read_only_role=False), plan)
+
+
+def test_execution_rejects_different_pg_stat_statement(
+    expected_graph: ExpectedGraph, repository_root: Path
+) -> None:
+    plan = plan_query_execution(repository_root, expected_graph.query_evidence[0])
+    with pytest.raises(QueryPolicyError, match="QUERY_HISTORY_FINGERPRINT_MISMATCH"):
+        execute_query(
+            RecordingCursor(
+                observed=True,
+                observed_statement=(
+                    "-- lineageguard:finance-monthly-close\n"
+                    "SELECT customer_id FROM analytics.customer_revenue WHERE "
+                    "lifetime_revenue >= $1"
+                ),
+            ),
+            plan,
+        )

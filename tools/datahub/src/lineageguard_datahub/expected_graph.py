@@ -277,7 +277,6 @@ def _query(raw: dict[str, Any]) -> QueryEvidence:
             "datasetUrn",
             "fieldPath",
             "sha256",
-            "ownerUrn",
         },
         "queryEvidence",
     )
@@ -292,7 +291,6 @@ def _query(raw: dict[str, Any]) -> QueryEvidence:
         dataset_urn=_string(raw["datasetUrn"], "queryEvidence.datasetUrn"),
         field_path=_string(raw["fieldPath"], "queryEvidence.fieldPath"),
         sha256=digest,
-        owner_urn=_string(raw["ownerUrn"], "queryEvidence.ownerUrn"),
     )
 
 
@@ -347,6 +345,17 @@ def _validate_canonical_allowlist(graph: ExpectedGraph) -> None:
     }
     if dataset_urns != expected_dataset_urns:
         raise GraphContractError("canonical dataset URN allowlist mismatch")
+    orders_urn = next(node.urn for node in graph.nodes if node.logical_key == "commerce.orders")
+    expected_source_field_urn = f"urn:li:schemaField:({orders_urn},customer_id)"
+    if (
+        graph.source_field.logical_key != "commerce.orders.customer_id"
+        or graph.source_field.dataset_urn != orders_urn
+        or graph.source_field.field_path != "customer_id"
+        or graph.source_field.schema_field_urn != expected_source_field_urn
+        or graph.source_field.glossary_term_urn
+        != "urn:li:glossaryTerm:lineageguard-canonical.CustomerIdentifier"
+    ):
+        raise GraphContractError("canonical source field allowlist mismatch")
     actual_non_dataset = set(graph.managed_urns) - dataset_urns
     if actual_non_dataset != CANONICAL_NON_DATASET_URNS:
         raise GraphContractError("canonical non-dataset URN allowlist mismatch")

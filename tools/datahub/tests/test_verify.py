@@ -132,7 +132,7 @@ def test_custom_query_owner_cannot_replace_official_asset_ownership(
     revenue = next(
         node for node in expected_graph.nodes if node.logical_key == "analytics.customer_revenue"
     )
-    owner = expected_graph.query_evidence[0].owner_urn
+    owner = expected_graph.owners[0].urn
     ownership = (set(observed.ownership) - {(revenue.urn, owner)}) | {
         (expected_graph.query_evidence[0].query_urn, owner)
     }

@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 
 import pytest
+from psycopg.sql import Composable
 
 from lineageguard_datahub.config import load_datahub_config, load_postgres_config
 from lineageguard_datahub.ingestion import (
@@ -17,15 +18,16 @@ from lineageguard_datahub.warehouse import (
     apply_warehouse_rows,
     apply_warehouse_seed,
     build_warehouse_seed_plan,
+    verify_dbt_role,
 )
 
 
 class BootstrapCursor:
     def __init__(self, responses: list[object]) -> None:
         self.responses = responses
-        self.commands: list[tuple[str, tuple[object, ...] | None]] = []
+        self.commands: list[tuple[object, tuple[object, ...] | None]] = []
 
-    def execute(self, query: str, params: tuple[object, ...] | None = None) -> object:
+    def execute(self, query: object, params: tuple[object, ...] | None = None) -> object:
         self.commands.append((query, params))
         return self
 
@@ -174,6 +176,7 @@ def test_bootstrap_refuses_wrong_database_and_preexisting_schema(repository_root
             query_password="query",
             ingest_password="ingest",
             seed_password="seed",
+            dbt_password="dbt",
         )
     with pytest.raises(ValueError, match="PREEXISTING_OBJECTS"):
         apply_warehouse_seed(
@@ -183,11 +186,12 @@ def test_bootstrap_refuses_wrong_database_and_preexisting_schema(repository_root
             query_password="query",
             ingest_password="ingest",
             seed_password="seed",
+            dbt_password="dbt",
         )
 
 
 def test_clean_bootstrap_provisions_distinct_login_members(repository_root: Path) -> None:
-    cursor = BootstrapCursor(["lineageguard", None, 0, True, True, True])
+    cursor = BootstrapCursor(["lineageguard", None, 0, True, True, True, True])
     apply_warehouse_seed(
         cursor,
         build_warehouse_seed_plan(repository_root),
@@ -195,16 +199,27 @@ def test_clean_bootstrap_provisions_distinct_login_members(repository_root: Path
         query_password="query-password",
         ingest_password="ingest-password",
         seed_password="seed-password",
+        dbt_password="dbt-password",
     )
-    sql = "\n".join(command for command, _ in cursor.commands)
-    assert "CREATE ROLE lineageguard_reader NOLOGIN" in sql
-    assert "CREATE ROLE lineageguard_query LOGIN" in sql
-    assert "CREATE ROLE lineageguard_ingest LOGIN" in sql
-    assert "CREATE ROLE lineageguard_seed LOGIN" in sql
-    assert "GRANT lineageguard_reader TO lineageguard_query" in sql
-    assert "GRANT lineageguard_reader TO lineageguard_ingest" in sql
-    secrets = ("query-password", "ingest-password", "seed-password")
-    assert all(secret not in sql for secret in secrets)
+    raw_sql = "\n".join(command for command, _ in cursor.commands if isinstance(command, str))
+    assert "CREATE ROLE lineageguard_reader NOLOGIN" in raw_sql
+    assert "CREATE ROLE lineageguard_query LOGIN" in raw_sql
+    assert "CREATE ROLE lineageguard_ingest LOGIN" in raw_sql
+    assert "CREATE ROLE lineageguard_seed LOGIN" in raw_sql
+    assert "CREATE ROLE lineageguard_dbt LOGIN" in raw_sql
+    assert "GRANT USAGE, CREATE ON SCHEMA analytics, fraud TO lineageguard_dbt" in raw_sql
+    assert "GRANT SELECT ON commerce.orders TO lineageguard_dbt" in raw_sql
+    assert "GRANT lineageguard_reader TO lineageguard_query" in raw_sql
+    assert "GRANT lineageguard_reader TO lineageguard_ingest" in raw_sql
+    secrets = ("query-password", "ingest-password", "seed-password", "dbt-password")
+    assert all(secret not in raw_sql for secret in secrets)
+    password_commands = [
+        command for command, _ in cursor.commands if isinstance(command, Composable)
+    ]
+    assert len(password_commands) == 4
+    verify_dbt_role(BootstrapCursor([True]))
+    with pytest.raises(ValueError, match="DBT_POSTGRES_ROLE_UNSAFE"):
+        verify_dbt_role(BootstrapCursor([False]))
 
 
 def test_seed_rows_run_under_separate_owned_principal(repository_root: Path) -> None:

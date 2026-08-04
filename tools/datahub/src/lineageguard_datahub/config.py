@@ -42,6 +42,8 @@ def _required(name: str, environ: dict[str, str]) -> str:
     value = environ.get(name)
     if value is None or not value.strip():
         raise ConfigurationError(f"MISSING_ENV:{name}")
+    if len(value) > 4096:
+        raise ConfigurationError(f"ENV_TOO_LARGE:{name}")
     return value
 
 
@@ -76,21 +78,26 @@ def load_datahub_config(
         raise ConfigurationError("REMOTE_DATAHUB_HTTPS_REQUIRED")
     if not local and values.get("LINEAGEGUARD_REMOTE_DATAHUB") != "approved":
         raise ConfigurationError("REMOTE_DATAHUB_OPT_IN_REQUIRED")
-    credential_kind = "ingest" if ingest else ("write" if write else "read")
+    credential_kind = "ingest" if ingest else ("mutation" if write else "read")
     token_name = {
         "read": "DATAHUB_READ_TOKEN",
-        "write": "DATAHUB_WRITE_TOKEN",
+        "mutation": "DATAHUB_MUTATION_TOKEN",
         "ingest": "DATAHUB_INGEST_TOKEN",
     }[credential_kind]
     token = values.get(token_name) or None
     if credential_kind != "read" and token is None:
         raise ConfigurationError(f"{token_name}_REQUIRED")
-    if (
-        credential_kind != "read"
-        and not local
-        and values.get("LINEAGEGUARD_REMOTE_DATAHUB_WRITE") != "approved"
-    ):
-        raise ConfigurationError("REMOTE_DATAHUB_WRITE_OPT_IN_REQUIRED")
+    if credential_kind == "mutation":
+        if not local:
+            raise ConfigurationError("REMOTE_DATAHUB_MUTATION_DENIED")
+        if (
+            values.get("LINEAGEGUARD_DATAHUB_TARGET_ATTESTATION")
+            != "canonical-local-lineageguard-v1"
+        ):
+            raise ConfigurationError("DATAHUB_TARGET_ATTESTATION_REQUIRED")
+    elif credential_kind == "ingest" and not local:
+        if values.get("LINEAGEGUARD_REMOTE_DATAHUB_WRITE") != "approved":
+            raise ConfigurationError("REMOTE_DATAHUB_WRITE_OPT_IN_REQUIRED")
     return DataHubConfig(
         server=server.rstrip("/"),
         token=token,
@@ -104,9 +111,10 @@ def load_postgres_config(
     *,
     query_role: bool = False,
     ingest_role: bool = False,
+    dbt_role: bool = False,
     admin_role: bool = False,
 ) -> PostgresConfig:
-    if sum((query_role, ingest_role, admin_role)) > 1:
+    if sum((query_role, ingest_role, dbt_role, admin_role)) > 1:
         raise ConfigurationError("POSTGRES_CREDENTIAL_PURPOSE_CONFLICT")
     values = dict(os.environ if environ is None else environ)
     raw_port = _required("WALKTHROUGH_POSTGRES_PORT", values)
@@ -131,11 +139,16 @@ def load_postgres_config(
     kind = (
         "query"
         if query_role
-        else ("ingest" if ingest_role else ("admin" if admin_role else "application"))
+        else (
+            "ingest"
+            if ingest_role
+            else ("dbt" if dbt_role else ("admin" if admin_role else "application"))
+        )
     )
     prefix = {
         "query": "WALKTHROUGH_QUERY_POSTGRES",
         "ingest": "WALKTHROUGH_INGEST_POSTGRES",
+        "dbt": "WALKTHROUGH_DBT_POSTGRES",
         "admin": "WALKTHROUGH_ADMIN_POSTGRES",
         "application": "WALKTHROUGH_POSTGRES",
     }[kind]
@@ -145,6 +158,7 @@ def load_postgres_config(
     fixed_users = {
         "query": "lineageguard_query",
         "ingest": "lineageguard_ingest",
+        "dbt": "lineageguard_dbt",
         "application": "lineageguard_seed",
     }
     if kind in fixed_users and user != fixed_users[kind]:
@@ -165,7 +179,11 @@ def load_postgres_config(
 
 
 def redact(text: str, secrets: tuple[str | None, ...]) -> str:
-    redacted = text
-    for secret in sorted((item for item in secrets if item), key=len, reverse=True):
+    redacted = text[:16384]
+    for secret in sorted(
+        (item for item in secrets if item and len(item) <= 4096),
+        key=len,
+        reverse=True,
+    ):
         redacted = redacted.replace(secret, "[REDACTED]")
     return redacted

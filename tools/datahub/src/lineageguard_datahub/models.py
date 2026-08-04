@@ -70,7 +70,6 @@ class QueryEvidence:
     dataset_urn: str
     field_path: str
     sha256: str
-    owner_urn: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,7 +89,7 @@ class ExpectedGraph:
 
     @property
     def managed_urns(self) -> tuple[str, ...]:
-        """Every entity URN the canonical seeder is allowed to mutate or remove."""
+        """Every canonical entity URN referenced by the expected graph."""
         urns = {
             self.source_field.glossary_term_urn,
             *(owner.urn for owner in self.owners),
@@ -99,3 +98,18 @@ class ExpectedGraph:
             *(query.query_urn for query in self.query_evidence),
         }
         return tuple(sorted(urns))
+
+    @property
+    def connector_dataset_urns(self) -> tuple[str, ...]:
+        return tuple(
+            sorted(node.urn for node in self.nodes if node.entity_type is EntityType.DATASET)
+        )
+
+    @property
+    def owned_urns(self) -> tuple[str, ...]:
+        connector = set(self.connector_dataset_urns)
+        return tuple(sorted(set(self.managed_urns) - connector))
+
+    @property
+    def allowed_mutation_urns(self) -> tuple[str, ...]:
+        return tuple(sorted({*self.managed_urns, self.source_field.schema_field_urn}))
