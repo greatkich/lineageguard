@@ -1,5 +1,6 @@
 import { canonicalImpactRequest } from "@lineageguard/domain";
 import { describe, expect, it, vi } from "vitest";
+import { canonicalRawResponses } from "./canonical-test-support.js";
 import { createLiveDataHubContextPort } from "./context-port.js";
 import { requiredReadToolNames, type ToolSession } from "./tool-client.js";
 
@@ -20,6 +21,43 @@ function session(overrides: Partial<ToolSession> = {}): ToolSession {
 }
 
 describe("live DataHub context port", () => {
+  it("collects the complete canonical live result through the read-only session", async () => {
+    const responses = canonicalRawResponses();
+    const transport = session({
+      callTool: vi.fn(async (name) => {
+        const response = responses.shift();
+        if (response === undefined || response.tool !== name) {
+          throw new Error("unexpected canonical tool order");
+        }
+        return { structuredContent: response.payload };
+      }),
+    });
+    let invocation = 0;
+    let tick = 0;
+    const port = createLiveDataHubContextPort({
+      clock: () => {
+        tick += 1;
+        return new Date(`2026-08-04T08:00:${String(tick).padStart(2, "0")}.000Z`);
+      },
+      invocationId: () => {
+        invocation += 1;
+        return `inv_live_${String(invocation).padStart(2, "0")}`;
+      },
+      sessionFactory: vi.fn(async () => transport),
+    });
+
+    const result = await port.collect({
+      changeId: "chg_0123456789abcdef01234567",
+      request: canonicalImpactRequest,
+    });
+
+    expect(result.outcome).toBe("COLLECTED_LIVE");
+    if (result.outcome !== "COLLECTED_LIVE") throw new Error("expected live result");
+    expect(result.context.evidence).toHaveLength(9);
+    expect(transport.callTool).toHaveBeenCalledTimes(12);
+    expect(transport.close).toHaveBeenCalledTimes(1);
+  });
+
   it("returns a typed resolution failure and always closes the MCP session", async () => {
     const transport = session();
     const port = createLiveDataHubContextPort({
