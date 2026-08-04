@@ -39,6 +39,7 @@ This document records the primary sources used for the initial product, architec
 - Biome documentation: https://biomejs.dev/
 - Playwright documentation: https://playwright.dev/docs/intro
 - pnpm workspaces: https://pnpm.io/workspaces
+- Docker Compose history and supported CLI versions: https://docs.docker.com/compose/intro/history/
 
 ## Data and validation
 
