@@ -190,7 +190,12 @@ const baseEvidenceShape = {
   summary: z.string().min(1).max(1_000),
   criticality: criticalitySchema,
   provenance: z.array(evidenceProvenanceSchema).min(1).max(8),
-  relatedEvidenceIds: z.array(evidenceIdSchema).max(20),
+  relatedEvidenceIds: z
+    .array(evidenceIdSchema)
+    .max(20)
+    .refine((ids) => new Set(ids).size === ids.length, {
+      message: "Related evidence IDs must be unique",
+    }),
 };
 
 const schemaEvidenceSchema = z
@@ -722,7 +727,8 @@ export const impactContextSchema = z
           !firstField ||
           firstField.sourceUrn !== context.datasetUrn ||
           firstField.sourceFieldPath !== context.resolution.nativeFieldPath ||
-          fieldAfterEntity
+          fieldAfterEntity ||
+          item.relatedEvidenceIds.length !== 0
         ) {
           issue(refinement, "Lineage path segments do not prove the resolved downstream path", [
             "evidence",
@@ -731,9 +737,9 @@ export const impactContextSchema = z
         }
       }
       if (item.kind === "DASHBOARD") {
-        const relatedPaths = item.relatedEvidenceIds
-          .map((id) => byId.get(id))
-          .filter((related) => related?.kind === "LINEAGE_PATH");
+        const relatedPathId =
+          item.relatedEvidenceIds.length === 1 ? item.relatedEvidenceIds[0] : undefined;
+        const relatedPath = relatedPathId ? byId.get(relatedPathId) : undefined;
         const classifications = item.payload.classificationUrns;
         const ownerUrns = item.payload.ownerUrns;
         if (
@@ -751,21 +757,19 @@ export const impactContextSchema = z
             (ownerUrn, ownerIndex) => ownerUrn !== [...ownerUrns].sort()[ownerIndex],
           ) ||
           !item.payload.downstreamField.endsWith(".customer_id") ||
-          !relatedPaths.some(
-            (path) =>
-              path?.targetUrn === item.payload.dashboardUrn &&
-              path.payload.segments.some(
-                (segment) =>
-                  segment.granularity === "FIELD" &&
-                  segment.targetUrn === item.payload.downstreamDatasetUrn &&
-                  segment.targetFieldPath === canonicalNativeFieldPath,
-              ) &&
-              path.payload.segments.some(
-                (segment) =>
-                  segment.granularity === "ENTITY" &&
-                  segment.sourceUrn === item.payload.downstreamDatasetUrn &&
-                  segment.targetUrn === item.payload.dashboardUrn,
-              ),
+          relatedPath?.kind !== "LINEAGE_PATH" ||
+          relatedPath.targetUrn !== item.payload.dashboardUrn ||
+          !relatedPath.payload.segments.some(
+            (segment) =>
+              segment.granularity === "FIELD" &&
+              segment.targetUrn === item.payload.downstreamDatasetUrn &&
+              segment.targetFieldPath === canonicalNativeFieldPath,
+          ) ||
+          !relatedPath.payload.segments.some(
+            (segment) =>
+              segment.granularity === "ENTITY" &&
+              segment.sourceUrn === item.payload.downstreamDatasetUrn &&
+              segment.targetUrn === item.payload.dashboardUrn,
           )
         ) {
           issue(refinement, "Dashboard evidence is not linked to a matching field lineage path", [
@@ -775,9 +779,9 @@ export const impactContextSchema = z
         }
       }
       if (item.kind === "ML_MODEL") {
-        const relatedPaths = item.relatedEvidenceIds
-          .map((id) => byId.get(id))
-          .filter((related) => related?.kind === "LINEAGE_PATH");
+        const relatedPathId =
+          item.relatedEvidenceIds.length === 1 ? item.relatedEvidenceIds[0] : undefined;
+        const relatedPath = relatedPathId ? byId.get(relatedPathId) : undefined;
         const classifications = item.payload.classificationUrns;
         const ownerUrns = item.payload.ownerUrns;
         if (
@@ -795,21 +799,19 @@ export const impactContextSchema = z
             (ownerUrn, ownerIndex) => ownerUrn !== [...ownerUrns].sort()[ownerIndex],
           ) ||
           !item.payload.featureField.endsWith(".customer_id") ||
-          !relatedPaths.some(
-            (path) =>
-              path?.targetUrn === item.payload.modelUrn &&
-              path.payload.segments.some(
-                (segment) =>
-                  segment.granularity === "FIELD" &&
-                  segment.targetUrn === item.payload.featureDatasetUrn &&
-                  segment.targetFieldPath === canonicalNativeFieldPath,
-              ) &&
-              path.payload.segments.some(
-                (segment) =>
-                  segment.granularity === "ENTITY" &&
-                  segment.sourceUrn === item.payload.featureDatasetUrn &&
-                  segment.targetUrn === item.payload.modelUrn,
-              ),
+          relatedPath?.kind !== "LINEAGE_PATH" ||
+          relatedPath.targetUrn !== item.payload.modelUrn ||
+          !relatedPath.payload.segments.some(
+            (segment) =>
+              segment.granularity === "FIELD" &&
+              segment.targetUrn === item.payload.featureDatasetUrn &&
+              segment.targetFieldPath === canonicalNativeFieldPath,
+          ) ||
+          !relatedPath.payload.segments.some(
+            (segment) =>
+              segment.granularity === "ENTITY" &&
+              segment.sourceUrn === item.payload.featureDatasetUrn &&
+              segment.targetUrn === item.payload.modelUrn,
           )
         ) {
           issue(refinement, "ML model evidence is not linked to a matching field lineage path", [
@@ -819,20 +821,19 @@ export const impactContextSchema = z
         }
       }
       if (item.kind === "QUERY_USAGE") {
-        const relatedPaths = item.relatedEvidenceIds
-          .map((id) => byId.get(id))
-          .filter((related) => related?.kind === "LINEAGE_PATH");
+        const relatedPathId =
+          item.relatedEvidenceIds.length === 1 ? item.relatedEvidenceIds[0] : undefined;
+        const relatedPath = relatedPathId ? byId.get(relatedPathId) : undefined;
         if (
           item.targetUrn !== item.payload.queryUrn ||
           item.payload.subjectSchemaFieldUrn !==
             `urn:li:schemaField:(${item.payload.subjectDatasetUrn},${item.payload.subjectFieldPath})` ||
-          !relatedPaths.some((path) =>
-            path?.payload.segments.some(
-              (segment) =>
-                segment.granularity === "FIELD" &&
-                segment.targetUrn === item.payload.subjectDatasetUrn &&
-                segment.targetFieldPath === item.payload.subjectFieldPath,
-            ),
+          relatedPath?.kind !== "LINEAGE_PATH" ||
+          !relatedPath.payload.segments.some(
+            (segment) =>
+              segment.granularity === "FIELD" &&
+              segment.targetUrn === item.payload.subjectDatasetUrn &&
+              segment.targetFieldPath === item.payload.subjectFieldPath,
           )
         ) {
           issue(refinement, "Query evidence does not match its DataHub query subject", [
@@ -845,7 +846,8 @@ export const impactContextSchema = z
         if (
           item.targetUrn !== item.payload.termUrn ||
           item.payload.schemaFieldUrn !== context.resolution.schemaFieldUrn ||
-          item.payload.fieldPath !== context.fieldPath
+          item.payload.fieldPath !== context.fieldPath ||
+          item.relatedEvidenceIds.length !== 0
         ) {
           issue(refinement, "Glossary evidence does not match the requested field", [
             "evidence",
@@ -854,16 +856,16 @@ export const impactContextSchema = z
         }
       }
       if (item.kind === "OWNER") {
-        const relatedAssets = item.relatedEvidenceIds.map((id) => byId.get(id));
-        const ownsRelatedAsset = relatedAssets.some(
-          (related) =>
-            (related?.kind === "DASHBOARD" &&
-              related.payload.dashboardUrn === item.payload.assetUrn &&
-              related.payload.ownerUrns.includes(item.payload.ownerUrn)) ||
-            (related?.kind === "ML_MODEL" &&
-              related.payload.modelUrn === item.payload.assetUrn &&
-              related.payload.ownerUrns.includes(item.payload.ownerUrn)),
-        );
+        const relatedAssetId =
+          item.relatedEvidenceIds.length === 1 ? item.relatedEvidenceIds[0] : undefined;
+        const relatedAsset = relatedAssetId ? byId.get(relatedAssetId) : undefined;
+        const ownsRelatedAsset =
+          (relatedAsset?.kind === "DASHBOARD" &&
+            relatedAsset.payload.dashboardUrn === item.payload.assetUrn &&
+            relatedAsset.payload.ownerUrns.includes(item.payload.ownerUrn)) ||
+          (relatedAsset?.kind === "ML_MODEL" &&
+            relatedAsset.payload.modelUrn === item.payload.assetUrn &&
+            relatedAsset.payload.ownerUrns.includes(item.payload.ownerUrn));
         if (
           item.sourceUrn !== item.payload.assetUrn ||
           item.targetUrn !== item.payload.ownerUrn ||

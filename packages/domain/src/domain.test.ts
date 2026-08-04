@@ -556,6 +556,91 @@ describe("canonical impact evidence", () => {
     ).toBe(false);
   });
 
+  it("binds the canonical evidence graph to its exact required relations", () => {
+    const context = createCanonicalImpactContextFixture(canonicalChange().id);
+    const dashboardPath = required(
+      context.evidence.find(
+        (item) => item.kind === "LINEAGE_PATH" && item.targetUrn === canonicalDashboardUrn,
+      ),
+      "dashboard lineage path",
+    );
+    const modelPath = required(
+      context.evidence.find(
+        (item) => item.kind === "LINEAGE_PATH" && item.targetUrn === canonicalFraudModelUrn,
+      ),
+      "model lineage path",
+    );
+    const dashboard = required(
+      context.evidence.find((item) => item.kind === "DASHBOARD"),
+      "dashboard evidence",
+    );
+    const model = required(
+      context.evidence.find((item) => item.kind === "ML_MODEL"),
+      "model evidence",
+    );
+
+    for (const item of context.evidence) {
+      const expectedRelations =
+        item.kind === "DASHBOARD" || item.kind === "QUERY_USAGE"
+          ? [dashboardPath.id]
+          : item.kind === "ML_MODEL"
+            ? [modelPath.id]
+            : item.kind === "OWNER" && item.payload.assetUrn === canonicalDashboardUrn
+              ? [dashboard.id]
+              : item.kind === "OWNER" && item.payload.assetUrn === canonicalFraudModelUrn
+                ? [model.id]
+                : [];
+      expect(item.relatedEvidenceIds).toEqual(expectedRelations);
+    }
+    expect(impactContextSchema.safeParse(context).success).toBe(true);
+  });
+
+  it("rejects duplicate and extraneous existing evidence relations", () => {
+    const context = createCanonicalImpactContextFixture(canonicalChange().id);
+    const query = required(
+      context.evidence.find((item) => item.kind === "QUERY_USAGE"),
+      "query evidence",
+    );
+    const unrelatedPath = required(
+      context.evidence.find(
+        (item) => item.kind === "LINEAGE_PATH" && item.targetUrn === canonicalFraudModelUrn,
+      ),
+      "unrelated lineage path",
+    );
+    const relatedPathId = required(query.relatedEvidenceIds[0], "query lineage relation");
+    const { id: _queryId, fingerprint: _queryFingerprint, ...queryDraft } = query;
+    const duplicateRelation = {
+      ...queryDraft,
+      id: query.id,
+      fingerprint: query.fingerprint,
+      relatedEvidenceIds: [relatedPathId, relatedPathId],
+    };
+    expect(evidenceItemSchema.safeParse(duplicateRelation).success).toBe(false);
+    expect(
+      impactContextSchema.safeParse(
+        reboundContext(context, {
+          evidence: context.evidence.map((item) =>
+            item.id === query.id ? duplicateRelation : item,
+          ),
+        }),
+      ).success,
+    ).toBe(false);
+
+    const extraneousRelation = createEvidence({
+      ...queryDraft,
+      relatedEvidenceIds: [relatedPathId, unrelatedPath.id].sort(),
+    });
+    expect(
+      impactContextSchema.safeParse(
+        reboundContext(context, {
+          evidence: context.evidence.map((item) =>
+            item.id === query.id ? extraneousRelation : item,
+          ),
+        }),
+      ).success,
+    ).toBe(false);
+  });
+
   it("rejects empty/incomplete COMPLETE but permits observed critical assets without owners", () => {
     const context = createCanonicalImpactContextFixture(canonicalChange().id);
     expect(impactContextSchema.safeParse({ ...context, evidence: [] }).success).toBe(false);
