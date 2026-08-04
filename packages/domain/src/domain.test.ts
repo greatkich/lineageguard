@@ -2,10 +2,21 @@ import { describe, expect, it } from "vitest";
 import * as domainPublic from "./index.js";
 import { canonicalDatasetRef, parseProposedChange } from "./change.js";
 import {
+  canonicalAnalyticsRevenueUrn,
+  canonicalDashboardUrn,
+  canonicalDatasetUrn,
+  canonicalFraudModelUrn,
+  canonicalGlossaryTermUrn,
+  canonicalQueryUrn,
+  canonicalSchemaFieldUrn,
+  computeImpactCollectionFailureFingerprint,
+  computeImpactCollectionFingerprint,
   computeImpactContextFingerprint,
   createCanonicalImpactContext,
   createEvidence,
   evidenceItemSchema,
+  impactCollectionFailureReportSchema,
+  impactCollectionResultSchema,
   impactContextSchema,
 } from "./evidence.js";
 import { sha256 } from "./hash.js";
@@ -68,10 +79,17 @@ function canonicalChange(
 function reboundContext(
   context: ReturnType<typeof createCanonicalImpactContext>,
   overrides: Partial<
-    Omit<ReturnType<typeof createCanonicalImpactContext>, "impactContextFingerprint">
+    Omit<
+      ReturnType<typeof createCanonicalImpactContext>,
+      "impactContextFingerprint" | "collectionFingerprint"
+    >
   >,
 ) {
-  const { impactContextFingerprint: _fingerprint, ...identity } = context;
+  const {
+    impactContextFingerprint: _fingerprint,
+    collectionFingerprint: _collectionFingerprint,
+    ...identity
+  } = context;
   const rebound = {
     ...identity,
     ...overrides,
@@ -82,7 +100,35 @@ function reboundContext(
   return {
     ...rebound,
     impactContextFingerprint: computeImpactContextFingerprint(rebound),
+    collectionFingerprint: computeImpactCollectionFingerprint(rebound),
   };
+}
+
+function contextWithObservedOwnerAbsence(
+  context: ReturnType<typeof createCanonicalImpactContext>,
+  omittedOwnerUrns = context.evidence
+    .filter((item) => item.kind === "OWNER")
+    .map((item) => item.payload.ownerUrn),
+) {
+  const omitted = new Set(omittedOwnerUrns);
+  const evidence = context.evidence
+    .filter((item) => item.kind !== "OWNER" || !omitted.has(item.payload.ownerUrn))
+    .map((item) => {
+      if (item.kind === "DASHBOARD") {
+        const ownerUrns = item.payload.ownerUrns.filter((ownerUrn) => !omitted.has(ownerUrn));
+        if (ownerUrns.length === item.payload.ownerUrns.length) return item;
+        const { id: _id, fingerprint: _fingerprint, ...draft } = item;
+        return createEvidence({ ...draft, payload: { ...draft.payload, ownerUrns } });
+      }
+      if (item.kind === "ML_MODEL") {
+        const ownerUrns = item.payload.ownerUrns.filter((ownerUrn) => !omitted.has(ownerUrn));
+        if (ownerUrns.length === item.payload.ownerUrns.length) return item;
+        const { id: _id, fingerprint: _fingerprint, ...draft } = item;
+        return createEvidence({ ...draft, payload: { ...draft.payload, ownerUrns } });
+      }
+      return item;
+    });
+  return reboundContext(context, { evidence });
 }
 
 function canonicalBundle() {
@@ -99,6 +145,23 @@ describe("canonical impact evidence", () => {
     const first = createCanonicalImpactContext(change.id);
     const second = createCanonicalImpactContext(change.id);
     expect(first).toEqual(second);
+    expect(first.impactContextFingerprint).toBe(
+      "30e45ce427447fb4eae7ecc8dc8c4541d1011918917f05643bdd3541adc1988b",
+    );
+    expect(first.collectionFingerprint).toBe(
+      "582814b507f24c1d04d1b0c1d039b0ff269f060e83eb7b686c2e20d8ae8087a1",
+    );
+    expect(first.evidence.map((item) => `${item.kind}:${item.id}`)).toEqual([
+      "OWNER:ev_08aa48da75f2baf0dc211235",
+      "OWNER:ev_11f0757953e00a83255be79a",
+      "ML_MODEL:ev_14409b76116ab3001ee7be31",
+      "GLOSSARY_TERM:ev_1edae5fd4669d5e7dface1a1",
+      "LINEAGE_PATH:ev_468d07c74e695eee3736e0c3",
+      "SCHEMA:ev_627154c1f4fcaf7fe6396a4b",
+      "DASHBOARD:ev_8258054e653ca45a6096641d",
+      "QUERY_USAGE:ev_8648266e410b86e6f5b009c0",
+      "LINEAGE_PATH:ev_d30ca550c3fb2ba8acd10227",
+    ]);
     expect(first.evidence.some((item) => item.kind === "SCHEMA")).toBe(true);
     expect(first.evidence.filter((item) => item.kind === "LINEAGE_PATH")).toHaveLength(2);
     expect(first.evidence.some((item) => item.kind === "DASHBOARD")).toBe(true);
@@ -106,6 +169,27 @@ describe("canonical impact evidence", () => {
     expect(first.evidence.some((item) => item.kind === "QUERY_USAGE")).toBe(true);
     expect(first.evidence.filter((item) => item.kind === "OWNER")).toHaveLength(2);
     expect(first.evidence.some((item) => item.kind === "GLOSSARY_TERM")).toBe(true);
+    expect(first.datasetUrn).toBe(canonicalDatasetUrn);
+    expect(first.resolution.schemaFieldUrn).toBe(canonicalSchemaFieldUrn);
+    const paths = first.evidence.filter((item) => item.kind === "LINEAGE_PATH");
+    expect(paths.map((item) => item.targetUrn).sort()).toEqual(
+      [canonicalDashboardUrn, canonicalFraudModelUrn].sort(),
+    );
+    expect(paths.every((item) => item.payload.segments.at(-1)?.granularity === "ENTITY")).toBe(
+      true,
+    );
+    const query = first.evidence.find((item) => item.kind === "QUERY_USAGE");
+    expect(query?.payload).toMatchObject({
+      queryUrn: canonicalQueryUrn,
+      source: "SYSTEM",
+      observationBasis: "DATAHUB_QUERY_ENTITY",
+      subjectDatasetUrn: canonicalAnalyticsRevenueUrn,
+    });
+    const glossary = first.evidence.find((item) => item.kind === "GLOSSARY_TERM");
+    expect(glossary?.payload).toMatchObject({
+      termUrn: canonicalGlossaryTermUrn,
+      schemaFieldUrn: canonicalSchemaFieldUrn,
+    });
   });
 
   it("preserves the adapter-supplied raw response fingerprint separately", () => {
@@ -159,38 +243,126 @@ describe("canonical impact evidence", () => {
   it("rejects empty/incomplete COMPLETE but permits observed critical assets without owners", () => {
     const context = createCanonicalImpactContext(canonicalChange().id);
     expect(impactContextSchema.safeParse({ ...context, evidence: [] }).success).toBe(false);
-    const withoutOwners = reboundContext(context, {
-      evidence: context.evidence.filter((item) => item.kind !== "OWNER"),
-    });
+    const withoutOwners = contextWithObservedOwnerAbsence(context);
     expect(impactContextSchema.safeParse(withoutOwners).success).toBe(true);
   });
 
-  it("distinguishes partial and failed collection and rejects future query observations", () => {
+  it("distinguishes partial collection from a pre-resolution failure", () => {
     const context = createCanonicalImpactContext(canonicalChange().id);
     expect(
       impactContextSchema.safeParse({ ...context, collectionStatus: "PARTIAL", failures: [] })
         .success,
     ).toBe(false);
+    const partial = reboundContext(context, {
+      collectionStatus: "PARTIAL",
+      failures: [
+        {
+          tool: "get_lineage",
+          invocationId: "lineage-timeout",
+          code: "TIMEOUT",
+          message: "Timed out.",
+        },
+      ],
+    });
+    expect(impactContextSchema.safeParse(partial).success).toBe(true);
+    const failureIdentity = {
+      requested: context.resolution.requested,
+      failedAt: context.collectedAt,
+      failures: [
+        {
+          tool: "search" as const,
+          invocationId: "resolution-timeout",
+          code: "TIMEOUT" as const,
+          message: "Timed out.",
+        },
+      ],
+    };
     expect(
-      impactContextSchema.safeParse(
-        reboundContext(context, {
-          collectionStatus: "FAILED",
-          evidence: [],
-          failures: [{ tool: "get_lineage", code: "TIMEOUT", message: "Timed out." }],
-        }),
-      ).success,
+      impactCollectionFailureReportSchema.safeParse({
+        ...failureIdentity,
+        failureFingerprint: computeImpactCollectionFailureFingerprint(failureIdentity),
+      }).success,
     ).toBe(true);
-    const query = context.evidence.find((item) => item.kind === "QUERY_USAGE");
-    if (!query) throw new Error("fixture must have query evidence");
-    const { id: _id, fingerprint: _fingerprint, ...draft } = query;
-    const futureQuery = createEvidence({
-      ...draft,
-      payload: { ...draft.payload, lastSeenAt: "2026-08-04T08:00:00.001Z" },
+    const failureReport = impactCollectionFailureReportSchema.parse({
+      ...failureIdentity,
+      failureFingerprint: computeImpactCollectionFailureFingerprint(failureIdentity),
+    });
+    expect(
+      impactCollectionResultSchema.safeParse({ outcome: "FAILED", report: failureReport }).success,
+    ).toBe(true);
+    expect(
+      impactContextSchema.safeParse({
+        ...context,
+        collectionStatus: "FAILED",
+        evidence: [],
+      }).success,
+    ).toBe(false);
+  });
+
+  it("rejects forged canonical path, query, and classification semantics", () => {
+    const context = createCanonicalImpactContext(canonicalChange().id);
+    const path = required(
+      context.evidence.find((item) => item.kind === "LINEAGE_PATH"),
+      "lineage path",
+    );
+    const { id: _pathId, fingerprint: _pathFingerprint, ...pathDraft } = path;
+    const changedPath = createEvidence({
+      ...pathDraft,
+      payload: {
+        ...pathDraft.payload,
+        nodes: pathDraft.payload.nodes.map((node, index) =>
+          index === 1 ? canonicalAnalyticsRevenueUrn : node,
+        ),
+        segments: pathDraft.payload.segments.map((segment, index) =>
+          index === 0 ? { ...segment, targetUrn: canonicalAnalyticsRevenueUrn } : segment,
+        ),
+      },
     });
     expect(
       impactContextSchema.safeParse(
         reboundContext(context, {
-          evidence: context.evidence.map((item) => (item.id === query.id ? futureQuery : item)),
+          evidence: context.evidence.map((item) => (item.id === path.id ? changedPath : item)),
+        }),
+      ).success,
+    ).toBe(false);
+
+    const query = required(
+      context.evidence.find((item) => item.kind === "QUERY_USAGE"),
+      "query evidence",
+    );
+    const { id: _queryId, fingerprint: _queryFingerprint, ...queryDraft } = query;
+    const changedQuery = createEvidence({
+      ...queryDraft,
+      payload: { ...queryDraft.payload, normalizedStatementFingerprint: "a".repeat(64) },
+    });
+    expect(
+      impactContextSchema.safeParse(
+        reboundContext(context, {
+          evidence: context.evidence.map((item) => (item.id === query.id ? changedQuery : item)),
+        }),
+      ).success,
+    ).toBe(false);
+
+    const dashboard = required(
+      context.evidence.find((item) => item.kind === "DASHBOARD"),
+      "dashboard evidence",
+    );
+    const { id: _dashboardId, fingerprint: _dashboardFingerprint, ...dashboardDraft } = dashboard;
+    const changedDashboard = createEvidence({
+      ...dashboardDraft,
+      payload: {
+        ...dashboardDraft.payload,
+        classificationUrns: [
+          required(dashboardDraft.payload.classificationUrns[0], "dashboard classification"),
+        ],
+      },
+    });
+    expect(
+      impactContextSchema.safeParse(
+        reboundContext(context, {
+          evidence: context.evidence.map((item) =>
+            item.id === dashboard.id ? changedDashboard : item,
+          ),
         }),
       ).success,
     ).toBe(false);
@@ -229,38 +401,21 @@ describe("deterministic risk policy", () => {
     expect(() => evaluateGroundedRisk(otherChange, context, assessedAt)).toThrow(/not bound/);
   });
 
-  it("includes the exact 30-day query boundary and excludes one millisecond older", () => {
-    const { change, context } = canonicalBundle();
-    const query = context.evidence.find((item) => item.kind === "QUERY_USAGE");
-    if (!query) throw new Error("fixture must have query evidence");
-    const { id: _id, fingerprint: _fingerprint, ...draft } = query;
-    const replaceQuery = (lastSeenAt: string) => {
-      const replacement = createEvidence({ ...draft, payload: { ...draft.payload, lastSeenAt } });
-      return reboundContext(context, {
-        evidence: context.evidence.map((item) => (item.id === query.id ? replacement : item)),
-      });
-    };
-    expect(
-      evaluateGroundedRisk(
-        change,
-        replaceQuery("2026-07-05T09:00:00.000Z"),
-        assessedAt,
-      ).reasons.some((reason) => reason.ruleId === "LG003"),
-    ).toBe(true);
-    expect(
-      evaluateGroundedRisk(
-        change,
-        replaceQuery("2026-07-05T08:59:59.999Z"),
-        assessedAt,
-      ).reasons.some((reason) => reason.ruleId === "LG003"),
-    ).toBe(false);
+  it("binds LG003 to the exact observed SYSTEM query evidence", () => {
+    const { grounded, context } = canonicalBundle();
+    const query = required(
+      context.evidence.find((item) => item.kind === "QUERY_USAGE"),
+      "query evidence",
+    );
+    expect(grounded.reasons.find((reason) => reason.ruleId === "LG003")).toMatchObject({
+      message: "An observed system query references the renamed field.",
+      evidenceIds: [query.id],
+    });
   });
 
   it("triggers LG005 for complete collected critical assets without owners", () => {
     const { change, context } = canonicalBundle();
-    const withoutOwners = reboundContext(context, {
-      evidence: context.evidence.filter((item) => item.kind !== "OWNER"),
-    });
+    const withoutOwners = contextWithObservedOwnerAbsence(context);
     const assessment = evaluateGroundedRisk(change, withoutOwners, assessedAt);
     expect(
       assessment.reasons.find((reason) => reason.ruleId === "LG005")?.evidenceIds,
@@ -286,7 +441,9 @@ describe("deterministic risk policy", () => {
     };
     expect(impactContextSchema.safeParse(changedProvenance).success).toBe(false);
     const rebound = reboundContext(context, { evidence: changedProvenance.evidence });
-    expect(() => assertRiskEvidenceReferences(change, grounded, rebound)).toThrow(/identity/);
+    expect(rebound.impactContextFingerprint).toBe(context.impactContextFingerprint);
+    expect(rebound.collectionFingerprint).not.toBe(context.collectionFingerprint);
+    expect(() => assertRiskEvidenceReferences(change, grounded, rebound)).not.toThrow();
     expect(() => evaluateGroundedRisk(change, context, "2026-08-04T07:59:59.999Z")).toThrow(
       /precede context collection/,
     );
@@ -562,9 +719,7 @@ describe("migration contracts and binding", () => {
 
   it("binds exact owner reviewers and unresolved-owner fallbacks", () => {
     const canonical = canonicalBundle();
-    const withoutOwners = reboundContext(canonical.context, {
-      evidence: canonical.context.evidence.filter((item) => item.kind !== "OWNER"),
-    });
+    const withoutOwners = contextWithObservedOwnerAbsence(canonical.context);
     const zeroOwnerBundle = {
       ...canonical,
       context: withoutOwners,
@@ -584,9 +739,9 @@ describe("migration contracts and binding", () => {
       canonical.context.evidence.find((item) => item.kind === "OWNER"),
       "owner evidence",
     );
-    const partialOwners = reboundContext(canonical.context, {
-      evidence: canonical.context.evidence.filter((item) => item.id !== ownerToRemove.id),
-    });
+    const partialOwners = contextWithObservedOwnerAbsence(canonical.context, [
+      ownerToRemove.payload.ownerUrn,
+    ]);
     const partialBundle = {
       ...canonical,
       context: partialOwners,

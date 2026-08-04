@@ -286,12 +286,7 @@ export function evaluateGroundedRisk(
   const criticalDashboards = evidence.filter(
     (item) => item.kind === "DASHBOARD" && item.criticality === "CRITICAL",
   );
-  const recentUnmanagedQueries = evidence.filter((item) => {
-    if (item.kind !== "QUERY_USAGE" || item.payload.managed) return false;
-    const lastSeen = new Date(item.payload.lastSeenAt).getTime();
-    if (lastSeen > assessedTime) throw new Error("Query evidence cannot be observed in the future");
-    return assessedTime - lastSeen <= 30 * 24 * 60 * 60 * 1_000;
-  });
+  const observedSystemQueries = evidence.filter((item) => item.kind === "QUERY_USAGE");
   const ownerAssetUrns = new Set(
     evidence.filter((item) => item.kind === "OWNER").map((item) => item.payload.assetUrn),
   );
@@ -320,9 +315,9 @@ export function evaluateGroundedRisk(
     ),
     reason(
       "LG003",
-      "A recent unmanaged query references the renamed field.",
+      "An observed system query references the renamed field.",
       "HIGH",
-      recentUnmanagedQueries,
+      observedSystemQueries,
     ),
     reason(
       "LG004",
