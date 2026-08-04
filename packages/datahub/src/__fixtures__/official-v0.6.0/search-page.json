@@ -1,0 +1,13 @@
+{
+  "start": 0,
+  "count": 1,
+  "total": 1,
+  "searchResults": [
+    {
+      "entity": {
+        "urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,example.public.orders,PROD)",
+        "properties": { "name": "orders" }
+      }
+    }
+  ]
+}

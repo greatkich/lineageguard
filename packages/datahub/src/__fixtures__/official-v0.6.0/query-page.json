@@ -1,0 +1,23 @@
+{
+  "start": 0,
+  "total": 1,
+  "count": 1,
+  "queries": [
+    {
+      "urn": "urn:li:query:example-system-query",
+      "properties": {
+        "name": "example-monthly-close",
+        "source": "SYSTEM",
+        "statement": {
+          "value": "SELECT customer_id FROM example.analytics.customer_orders",
+          "language": "SQL"
+        },
+        "lastModified": { "actor": "urn:li:corpuser:datahub" }
+      },
+      "platform": { "urn": "urn:li:dataPlatform:snowflake", "name": "snowflake" },
+      "subjects": [
+        "urn:li:dataset:(urn:li:dataPlatform:snowflake,example.analytics.customer_orders,PROD)"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,40 @@
+{
+  "metadata": {
+    "queryType": "lineage-path-trace",
+    "direction": "downstream",
+    "pathType": "column-level"
+  },
+  "source": {
+    "urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,example.public.orders,PROD)",
+    "column": "customer_id"
+  },
+  "target": {
+    "urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,example.analytics.customer_orders,PROD)",
+    "column": "customer_id"
+  },
+  "pathCount": 1,
+  "paths": [
+    {
+      "path": [
+        {
+          "urn": "urn:li:schemaField:(urn:li:dataset:(urn:li:dataPlatform:snowflake,example.public.orders,PROD),customer_id)",
+          "type": "SCHEMA_FIELD",
+          "fieldPath": "customer_id",
+          "parent": {
+            "urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,example.public.orders,PROD)",
+            "type": "DATASET"
+          }
+        },
+        {
+          "urn": "urn:li:schemaField:(urn:li:dataset:(urn:li:dataPlatform:snowflake,example.analytics.customer_orders,PROD),customer_id)",
+          "type": "SCHEMA_FIELD",
+          "fieldPath": "customer_id",
+          "parent": {
+            "urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,example.analytics.customer_orders,PROD)",
+            "type": "DATASET"
+          }
+        }
+      ]
+    }
+  ]
+}
