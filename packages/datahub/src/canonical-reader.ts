@@ -67,12 +67,15 @@ export type OfficialObservation<T> = Readonly<{
 }>;
 
 export type CanonicalObservations = Readonly<{
+  dashboardDetails: OfficialObservation<readonly OfficialEntity[]>;
   dashboardEntityPath: OfficialObservation<OfficialPathResult>;
   dashboardFieldPath: OfficialObservation<OfficialPathResult>;
-  entityDetails: OfficialObservation<readonly OfficialEntity[]>;
   fraudEntityPath: OfficialObservation<OfficialPathResult>;
   fraudFieldPath: OfficialObservation<OfficialPathResult>;
+  glossaryDetails: OfficialObservation<readonly OfficialEntity[]>;
   lineageDiscovery: OfficialObservation<OfficialLineagePage>;
+  modelDetails: OfficialObservation<readonly OfficialEntity[]>;
+  queryDetails: OfficialObservation<readonly OfficialEntity[]>;
   queryDiscovery: OfficialObservation<OfficialQueryPage>;
   resolutionSearch: OfficialObservation<OfficialSearchPage>;
   schemaFields: OfficialObservation<OfficialSchemaFieldsPage>;
@@ -202,22 +205,41 @@ export async function collectCanonicalObservations(
     },
     parseQueryPage,
   );
-  const entityDetails = await observe(
+  const dashboardDetails = await observe(
     invoker,
     "get_entities",
-    {
-      urns: [targets.dashboardUrn, targets.modelUrn, targets.queryUrn, targets.glossaryTermUrn],
-    },
+    { urns: [targets.dashboardUrn] },
+    parseEntitiesResult,
+  );
+  const modelDetails = await observe(
+    invoker,
+    "get_entities",
+    { urns: [targets.modelUrn] },
+    parseEntitiesResult,
+  );
+  const queryDetails = await observe(
+    invoker,
+    "get_entities",
+    { urns: [targets.queryUrn] },
+    parseEntitiesResult,
+  );
+  const glossaryDetails = await observe(
+    invoker,
+    "get_entities",
+    { urns: [targets.glossaryTermUrn] },
     parseEntitiesResult,
   );
 
   return Object.freeze({
+    dashboardDetails,
     dashboardEntityPath,
     dashboardFieldPath,
-    entityDetails,
     fraudEntityPath,
     fraudFieldPath,
+    glossaryDetails,
     lineageDiscovery,
+    modelDetails,
+    queryDetails,
     queryDiscovery,
     resolutionSearch,
     schemaFields,

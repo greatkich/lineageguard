@@ -61,7 +61,8 @@ function payloadFor(tool: ReadToolName, call: number): RawToolInvocation["payloa
     };
   }
   if (tool === "get_dataset_queries") return { count: 0, start: 0, total: 0 };
-  return [{ urn: dashboardUrn }, { urn: modelUrn }, { urn: queryUrn }, { urn: glossaryTermUrn }];
+  const entityUrns = [dashboardUrn, modelUrn, queryUrn, glossaryTermUrn];
+  return [{ urn: entityUrns[call - 9] ?? dashboardUrn }];
 }
 
 describe("canonical official MCP reader", () => {
@@ -80,7 +81,10 @@ describe("canonical official MCP reader", () => {
 
     const result = await collectCanonicalObservations({ invoke }, targets);
 
-    expect(result.entityDetails.data).toHaveLength(4);
+    expect(result.dashboardDetails.data).toEqual([{ urn: dashboardUrn }]);
+    expect(result.modelDetails.data).toEqual([{ urn: modelUrn }]);
+    expect(result.queryDetails.data).toEqual([{ urn: queryUrn }]);
+    expect(result.glossaryDetails.data).toEqual([{ urn: glossaryTermUrn }]);
     expect(invoke.mock.calls).toEqual([
       [
         "search",
@@ -135,7 +139,10 @@ describe("canonical official MCP reader", () => {
         "get_dataset_queries",
         { column: "customer_id", count: 50, source: "SYSTEM", start: 0, urn: revenueUrn },
       ],
-      ["get_entities", { urns: [dashboardUrn, modelUrn, queryUrn, glossaryTermUrn] }],
+      ["get_entities", { urns: [dashboardUrn] }],
+      ["get_entities", { urns: [modelUrn] }],
+      ["get_entities", { urns: [queryUrn] }],
+      ["get_entities", { urns: [glossaryTermUrn] }],
     ]);
   });
 
