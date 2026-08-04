@@ -1,0 +1,72 @@
+{
+  "repository": {
+    "id": 101,
+    "full_name": "lineageguard/demo",
+    "private": true,
+    "permissions": { "admin": false, "maintain": false, "push": true, "triage": true, "pull": true }
+  },
+  "baseRef": {
+    "ref": "refs/heads/main",
+    "object": { "type": "commit", "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }
+  },
+  "notFound": { "message": "Not Found" },
+  "baseCommit": {
+    "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "tree": { "sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" }
+  },
+  "baseTree": {
+    "sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "truncated": false,
+    "tree": [
+      {
+        "path": "walkthrough/models/orders.sql",
+        "mode": "100644",
+        "type": "blob",
+        "sha": "9999999999999999999999999999999999999999"
+      }
+    ]
+  },
+  "blob": { "sha": "cccccccccccccccccccccccccccccccccccccccc" },
+  "tree": { "sha": "dddddddddddddddddddddddddddddddddddddddd" },
+  "commit": {
+    "sha": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "message": "LineageGuard migration for run_0123456789abcdef01234567\n\nLineageGuard-Effect: 1111111111111111111111111111111111111111111111111111111111111111",
+    "tree": { "sha": "dddddddddddddddddddddddddddddddddddddddd" },
+    "parents": [{ "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }]
+  },
+  "ref": {
+    "ref": "refs/heads/lineageguard/run_0123456789abcdef01234567",
+    "object": { "type": "commit", "sha": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee" }
+  },
+  "noPulls": [],
+  "pull": {
+    "number": 17,
+    "html_url": "https://github.com/lineageguard/demo/pull/17",
+    "state": "open",
+    "draft": true,
+    "base": { "ref": "main", "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
+    "head": {
+      "ref": "lineageguard/run_0123456789abcdef01234567",
+      "sha": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+    },
+    "body": "<!-- lineageguard-effect:1111111111111111111111111111111111111111111111111111111111111111 -->",
+    "created_at": "2026-08-04T12:00:00.000Z",
+    "updated_at": "2026-08-04T12:00:00.000Z"
+  },
+  "pullList": [
+    {
+      "number": 17,
+      "html_url": "https://github.com/lineageguard/demo/pull/17",
+      "state": "open",
+      "draft": true,
+      "base": { "ref": "main", "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
+      "head": {
+        "ref": "lineageguard/run_0123456789abcdef01234567",
+        "sha": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+      },
+      "body": "<!-- lineageguard-effect:1111111111111111111111111111111111111111111111111111111111111111 -->",
+      "created_at": "2026-08-04T12:00:00.000Z",
+      "updated_at": "2026-08-04T12:00:00.000Z"
+    }
+  ]
+}

@@ -11,6 +11,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run --root ../.. packages/github/src",
     "typecheck": "tsc --noEmit"
   }
 }

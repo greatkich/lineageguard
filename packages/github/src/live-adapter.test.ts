@@ -1,0 +1,285 @@
+import { readFile } from "node:fs/promises";
+import { describe, expect, it } from "vitest";
+import {
+  GitHubEffectError,
+  type GitHubHttpRequest,
+  type GitHubHttpResponse,
+  type GitHubHttpTransport,
+  type GitHubReviewRequest,
+  LiveGitHubPort,
+  sha256Bytes,
+} from "./index.js";
+
+const fixture = JSON.parse(
+  await readFile(new URL("./fixtures/github-contract.json", import.meta.url), "utf8"),
+) as Record<string, unknown>;
+
+const hex = (character: string) => character.repeat(64);
+const sha = (character: string) => character.repeat(40);
+
+function request(): GitHubReviewRequest {
+  const content = "select customer_id as buyer_id\n";
+  return {
+    runId: "run_0123456789abcdef01234567",
+    effectKind: "GITHUB_WRITE",
+    target: "github:lineageguard/demo:main",
+    inputFingerprint: hex("1"),
+    repository: "lineageguard/demo",
+    baseBranch: "main",
+    baseSha: sha("a"),
+    candidateFingerprint: hex("2"),
+    artifactSetFingerprint: hex("3"),
+    validationReceiptFingerprint: hex("4"),
+    validation: {
+      runId: "run_0123456789abcdef01234567",
+      candidateFingerprint: hex("2"),
+      artifactSetFingerprint: hex("3"),
+      receiptFingerprint: hex("4"),
+      status: "PASS",
+      artifacts: [
+        {
+          path: "walkthrough/models/orders.sql",
+          candidateArtifactFingerprint: hex("5"),
+          materializedSha256: sha256Bytes(content),
+        },
+      ],
+    },
+    artifacts: [
+      {
+        path: "walkthrough/models/orders.sql",
+        content,
+        candidateArtifactFingerprint: hex("5"),
+        operation: "MODIFY",
+        expectedBaseSha: sha("a"),
+      },
+    ],
+    title: "Safe customer identifier migration",
+    body: {
+      summary: "Expand, migrate, and contract safely.",
+      reasonEvidenceIds: ["ev_0123456789abcdef01234567"],
+      rolloutSteps: ["Deploy additive field", "Migrate consumers"],
+      rollbackSteps: ["Run the validated rollback artifact"],
+    },
+  };
+}
+
+class ScriptedTransport implements GitHubHttpTransport {
+  readonly calls: GitHubHttpRequest[] = [];
+  constructor(private readonly responses: Array<GitHubHttpResponse | Error>) {}
+  async request(input: GitHubHttpRequest): Promise<GitHubHttpResponse> {
+    this.calls.push(structuredClone(input));
+    const next = this.responses.shift();
+    if (!next) throw new Error(`unexpected request ${input.method} ${input.url}`);
+    if (next instanceof Error) throw next;
+    return structuredClone(next);
+  }
+}
+
+const response = (status: number, body: unknown): GitHubHttpResponse => ({
+  status,
+  headers: {},
+  body,
+});
+
+function createPort(transport: GitHubHttpTransport) {
+  return new LiveGitHubPort({
+    owner: "lineageguard",
+    repository: "demo",
+    baseBranch: "main",
+    apiBaseUrl: "https://api.github.com",
+    token: "test-sensitive-value",
+    timeoutMs: 2_000,
+    maxAttempts: 2,
+    transport,
+  });
+}
+
+function successScript(): Array<GitHubHttpResponse | Error> {
+  return [
+    response(200, fixture.repository),
+    response(200, fixture.baseRef),
+    response(404, fixture.notFound),
+    response(200, fixture.baseCommit),
+    response(200, fixture.baseTree),
+    response(201, fixture.blob),
+    response(201, fixture.tree),
+    response(201, fixture.commit),
+    response(201, fixture.ref),
+    response(200, fixture.noPulls),
+    response(201, fixture.pull),
+  ];
+}
+
+describe("LiveGitHubPort", () => {
+  it("creates only validated bytes on a deterministic non-force branch and one draft PR", async () => {
+    const transport = new ScriptedTransport(successScript());
+    const receipt = await createPort(transport).createMigrationReview(request());
+
+    expect(receipt).toMatchObject({
+      mode: "LIVE",
+      repository: "lineageguard/demo",
+      baseBranch: "main",
+      baseSha: sha("a"),
+      headBranch: "lineageguard/run_0123456789abcdef01234567",
+      headSha: sha("e"),
+      prNumber: 17,
+      prUrl: "https://github.com/lineageguard/demo/pull/17",
+      prState: "OPEN_DRAFT",
+      candidateFingerprint: hex("2"),
+      artifactSetFingerprint: hex("3"),
+      validationReceiptFingerprint: hex("4"),
+      inputFingerprint: hex("1"),
+    });
+    expect(transport.calls.map(({ method, url }) => `${method} ${url}`)).toEqual([
+      "GET https://api.github.com/repos/lineageguard/demo",
+      "GET https://api.github.com/repos/lineageguard/demo/git/ref/heads/main",
+      "GET https://api.github.com/repos/lineageguard/demo/git/ref/heads/lineageguard%2Frun_0123456789abcdef01234567",
+      `GET https://api.github.com/repos/lineageguard/demo/git/commits/${sha("a")}`,
+      `GET https://api.github.com/repos/lineageguard/demo/git/trees/${sha("b")}?recursive=1`,
+      "POST https://api.github.com/repos/lineageguard/demo/git/blobs",
+      "POST https://api.github.com/repos/lineageguard/demo/git/trees",
+      "POST https://api.github.com/repos/lineageguard/demo/git/commits",
+      "POST https://api.github.com/repos/lineageguard/demo/git/refs",
+      "GET https://api.github.com/repos/lineageguard/demo/pulls?state=all&head=lineageguard%3Alineageguard%2Frun_0123456789abcdef01234567&base=main&per_page=2",
+      "POST https://api.github.com/repos/lineageguard/demo/pulls",
+    ]);
+    expect(transport.calls.find((call) => call.url.endsWith("/git/refs"))?.body).toEqual({
+      ref: "refs/heads/lineageguard/run_0123456789abcdef01234567",
+      sha: sha("e"),
+    });
+    expect(
+      transport.calls.find((call) => call.url.endsWith("/pulls") && call.method === "POST")?.body,
+    ).toMatchObject({
+      draft: true,
+      base: "main",
+      head: "lineageguard/run_0123456789abcdef01234567",
+    });
+  });
+
+  it.each([
+    ["wrong repository", { repository: "attacker/demo" }],
+    ["wrong base", { baseBranch: "release" }],
+    ["wrong target", { target: "github:lineageguard/demo:release" }],
+  ])("fails closed for %s before network", async (_name, change) => {
+    const transport = new ScriptedTransport([]);
+    await expect(
+      createPort(transport).createMigrationReview({ ...request(), ...change }),
+    ).rejects.toMatchObject({ code: "POLICY_REJECTED", retry: "NEVER" });
+    expect(transport.calls).toHaveLength(0);
+  });
+
+  it("rejects artifact bytes that do not match the validated observation", async () => {
+    const transport = new ScriptedTransport([]);
+    const input = request();
+    const artifact = input.artifacts[0];
+    if (!artifact) throw new Error("test fixture is missing its artifact");
+    input.artifacts[0] = { ...artifact, content: "tampered\n" };
+    await expect(createPort(transport).createMigrationReview(input)).rejects.toMatchObject({
+      code: "VALIDATION_BINDING_MISMATCH",
+      retry: "NEVER",
+    });
+    expect(transport.calls).toHaveLength(0);
+  });
+
+  it("rejects redirects without following them", async () => {
+    const transport = new ScriptedTransport([response(302, { location: "https://evil.invalid" })]);
+    await expect(createPort(transport).createMigrationReview(request())).rejects.toMatchObject({
+      code: "REDIRECT_REJECTED",
+      retry: "NEVER",
+    });
+    expect(transport.calls[0]?.redirect).toBe("error");
+  });
+
+  it("retries safe reads only within the configured attempt bound", async () => {
+    const transport = new ScriptedTransport([
+      response(503, fixture.notFound),
+      response(200, fixture.repository),
+      response(200, fixture.baseRef),
+      response(200, fixture.ref),
+      response(200, fixture.commit),
+      response(200, fixture.pullList),
+    ]);
+    await expect(createPort(transport).createMigrationReview(request())).resolves.toMatchObject({
+      prNumber: 17,
+      reconciled: true,
+    });
+    expect(
+      transport.calls.filter(
+        (call) => call.url === "https://api.github.com/repos/lineageguard/demo",
+      ),
+    ).toHaveLength(2);
+  });
+
+  it("enforces its own bounded deadline even when an injected transport stalls", async () => {
+    const transport: GitHubHttpTransport = {
+      request: async () => new Promise<GitHubHttpResponse>(() => undefined),
+    };
+    const port = new LiveGitHubPort({
+      owner: "lineageguard",
+      repository: "demo",
+      baseBranch: "main",
+      apiBaseUrl: "https://api.github.com",
+      token: "test-sensitive-value",
+      timeoutMs: 100,
+      maxAttempts: 1,
+      transport,
+    });
+    const startedAt = Date.now();
+    await expect(port.createMigrationReview(request())).rejects.toMatchObject({
+      code: "TRANSPORT_RETRYABLE",
+      retry: "RETRY",
+    });
+    expect(Date.now() - startedAt).toBeLessThan(1_000);
+  });
+
+  it("reconciles an existing exact branch and PR before creating anything", async () => {
+    const transport = new ScriptedTransport([
+      response(200, fixture.repository),
+      response(200, fixture.baseRef),
+      response(200, fixture.ref),
+      response(200, fixture.commit),
+      response(200, fixture.pullList),
+    ]);
+    const receipt = await createPort(transport).createMigrationReview(request());
+    expect(receipt.reconciled).toBe(true);
+    expect(transport.calls.every((call) => call.method === "GET")).toBe(true);
+  });
+
+  it("reconciles after an ambiguous PR response and never creates a second PR", async () => {
+    const ambiguous = new GitHubEffectError({
+      code: "TRANSPORT_AMBIGUOUS",
+      operation: "CREATE_PULL_REQUEST",
+      retry: "RECONCILE",
+      message: "response status is unknown",
+    });
+    const script = successScript();
+    script[10] = ambiguous;
+    const transport = new ScriptedTransport([
+      ...script,
+      response(200, fixture.ref),
+      response(200, fixture.commit),
+      response(200, fixture.pullList),
+    ]);
+    const receipt = await createPort(transport).createMigrationReview(request());
+    expect(receipt.reconciled).toBe(true);
+    expect(
+      transport.calls.filter((call) => call.method === "POST" && call.url.endsWith("/pulls")),
+    ).toHaveLength(1);
+  });
+
+  it("returns structured secret-safe permission failures", async () => {
+    const transport = new ScriptedTransport([
+      response(403, { message: "credential sensitive-value denied" }),
+    ]);
+    let failure: unknown;
+    try {
+      await createPort(transport).createMigrationReview(request());
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toBeInstanceOf(GitHubEffectError);
+    expect(failure).toMatchObject({ code: "PERMISSION_DENIED", retry: "NEVER", status: 403 });
+    expect(JSON.stringify(failure)).not.toContain("sensitive-value");
+    expect((failure as Error).message).not.toContain("sensitive-value");
+  });
+});

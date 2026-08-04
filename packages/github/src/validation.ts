@@ -1,0 +1,166 @@
+import { GitHubEffectError } from "./errors.js";
+import { sha256Bytes } from "./hash.js";
+import type { GitHubReviewRequest, LiveGitHubOptions } from "./types.js";
+
+const fingerprint = /^[a-f0-9]{64}$/;
+const gitSha = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/;
+const runId = /^run_[a-f0-9]{24}$/;
+const name = /^[A-Za-z0-9_.-]+$/;
+const branch = /^[A-Za-z0-9._/-]+$/;
+const evidenceId = /^ev_[a-f0-9]{24}$/;
+
+function reject(
+  message: string,
+  code: "INVALID_INPUT" | "POLICY_REJECTED" | "VALIDATION_BINDING_MISMATCH" = "INVALID_INPUT",
+): never {
+  throw new GitHubEffectError({ code, operation: "VERIFY_REPOSITORY", retry: "NEVER", message });
+}
+
+export function validateOptions(options: LiveGitHubOptions): void {
+  if (!name.test(options.owner) || !name.test(options.repository))
+    reject("invalid repository allowlist");
+  if (
+    !branch.test(options.baseBranch) ||
+    options.baseBranch.includes("..") ||
+    options.baseBranch.startsWith("lineageguard/")
+  )
+    reject("invalid base branch allowlist");
+  if (options.apiBaseUrl !== "https://api.github.com")
+    reject("GitHub API host is not allowlisted", "POLICY_REJECTED");
+  if (!options.token.trim()) reject("GitHub credential is missing");
+  if (
+    !Number.isSafeInteger(options.timeoutMs) ||
+    options.timeoutMs < 100 ||
+    options.timeoutMs > 30_000
+  )
+    reject("timeout must be between 100 and 30000 ms");
+  if (![1, 2, 3].includes(options.maxAttempts)) reject("max attempts must be between 1 and 3");
+}
+
+function safePath(path: string): boolean {
+  if (
+    path.length < 1 ||
+    path.length > 240 ||
+    path.startsWith("/") ||
+    path.includes("\\") ||
+    !path.split("/").every((segment) => segment !== "" && segment !== "." && segment !== "..")
+  )
+    return false;
+  return [
+    /^walkthrough\/migrations\/[A-Za-z0-9._-]+\.sql$/,
+    /^walkthrough\/models\/[A-Za-z0-9_./-]+\.sql$/,
+    /^walkthrough\/tests\/[A-Za-z0-9_./-]+\.sql$/,
+    /^docs\/migrations\/[A-Za-z0-9._-]+\.md$/,
+  ].some((pattern) => pattern.test(path));
+}
+
+export function validateRequest(input: GitHubReviewRequest, options: LiveGitHubOptions): void {
+  const expectedRepository = `${options.owner}/${options.repository}`;
+  const expectedTarget = `github:${expectedRepository}:${options.baseBranch}`;
+  if (
+    input.repository !== expectedRepository ||
+    input.baseBranch !== options.baseBranch ||
+    input.target !== expectedTarget ||
+    input.effectKind !== "GITHUB_WRITE"
+  ) {
+    reject(
+      "effect target is outside the exact repository, owner, or base allowlist",
+      "POLICY_REJECTED",
+    );
+  }
+  if (!runId.test(input.runId) || !gitSha.test(input.baseSha))
+    reject("invalid run or base commit identity");
+  for (const value of [
+    input.inputFingerprint,
+    input.candidateFingerprint,
+    input.artifactSetFingerprint,
+    input.validationReceiptFingerprint,
+  ]) {
+    if (!fingerprint.test(value)) reject("invalid effect fingerprint");
+  }
+  if (
+    input.validation.status !== "PASS" ||
+    input.validation.runId !== input.runId ||
+    input.validation.candidateFingerprint !== input.candidateFingerprint ||
+    input.validation.artifactSetFingerprint !== input.artifactSetFingerprint ||
+    input.validation.receiptFingerprint !== input.validationReceiptFingerprint
+  ) {
+    reject(
+      "validation receipt is not bound to this run, candidate, artifact set, and effect",
+      "VALIDATION_BINDING_MISMATCH",
+    );
+  }
+  if (
+    !input.title.trim() ||
+    input.title.length > 160 ||
+    !input.body.summary.trim() ||
+    input.body.summary.length > 2_000
+  )
+    reject("invalid review title or summary");
+  if (
+    input.body.reasonEvidenceIds.length < 1 ||
+    input.body.reasonEvidenceIds.length > 200 ||
+    input.body.reasonEvidenceIds.some((id) => !evidenceId.test(id)) ||
+    new Set(input.body.reasonEvidenceIds).size !== input.body.reasonEvidenceIds.length
+  )
+    reject("review must cite valid evidence IDs");
+  if (
+    input.body.rolloutSteps.length < 1 ||
+    input.body.rolloutSteps.length > 20 ||
+    input.body.rollbackSteps.length < 1 ||
+    input.body.rollbackSteps.length > 20 ||
+    [...input.body.rolloutSteps, ...input.body.rollbackSteps].some(
+      (step) => !step.trim() || step.length > 1_000,
+    )
+  )
+    reject("review requires bounded rollout and rollback steps");
+  if (
+    input.artifacts.length < 1 ||
+    input.artifacts.length > 20 ||
+    input.validation.artifacts.length !== input.artifacts.length
+  )
+    reject("artifact set is incomplete", "VALIDATION_BINDING_MISMATCH");
+  const observed = new Map(input.validation.artifacts.map((artifact) => [artifact.path, artifact]));
+  if (observed.size !== input.validation.artifacts.length)
+    reject("validated artifact paths must be unique", "VALIDATION_BINDING_MISMATCH");
+  const seen = new Set<string>();
+  const validatedPaths = input.validation.artifacts.map((artifact) => artifact.path);
+  if (JSON.stringify(validatedPaths) !== JSON.stringify([...validatedPaths].sort()))
+    reject("validated artifact paths must be canonical", "VALIDATION_BINDING_MISMATCH");
+  for (const artifact of input.artifacts) {
+    if (
+      !safePath(artifact.path) ||
+      artifact.content.length < 1 ||
+      Buffer.byteLength(artifact.content, "utf8") > 100_000 ||
+      !fingerprint.test(artifact.candidateArtifactFingerprint) ||
+      (artifact.operation !== "CREATE" && artifact.operation !== "MODIFY") ||
+      (artifact.operation === "MODIFY" && artifact.expectedBaseSha !== input.baseSha) ||
+      seen.has(artifact.path)
+    )
+      reject("artifact input is invalid");
+    seen.add(artifact.path);
+    const observation = observed.get(artifact.path);
+    if (
+      !observation ||
+      observation.candidateArtifactFingerprint !== artifact.candidateArtifactFingerprint ||
+      observation.materializedSha256 !== sha256Bytes(artifact.content)
+    ) {
+      reject(
+        "artifact bytes or candidate fingerprint differ from signed validation",
+        "VALIDATION_BINDING_MISMATCH",
+      );
+    }
+  }
+  if (seen.size !== observed.size)
+    reject("artifact paths differ from signed validation", "VALIDATION_BINDING_MISMATCH");
+  if (
+    JSON.stringify(input.artifacts.map((artifact) => artifact.path)) !==
+    JSON.stringify(validatedPaths)
+  )
+    reject("artifact order differs from signed validation", "VALIDATION_BINDING_MISMATCH");
+}
+
+export function deterministicHead(run: string): string {
+  if (!runId.test(run)) reject("invalid run identity");
+  return `lineageguard/${run}`;
+}
