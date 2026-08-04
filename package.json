@@ -10,16 +10,18 @@
   "packageManager": "pnpm@11.20.0",
   "scripts": {
     "build": "pnpm --recursive --if-present build",
+    "check:boundaries": "node scripts/check-boundaries.mjs",
     "check:environment": "sh scripts/check-environment.sh",
     "dev": "pnpm --filter @lineageguard/web dev",
     "dev:worker": "pnpm --filter @lineageguard/worker build && pnpm --filter @lineageguard/worker start",
     "format": "biome format --write .",
     "format:check": "biome format .",
     "lint": "biome lint .",
-    "test": "node --test scripts/*.test.mjs && vitest run",
+    "setup:browsers": "sh scripts/setup-playwright.sh",
+    "test": "node --test scripts/*.test.mjs && pnpm check:boundaries && vitest run",
     "test:e2e": "playwright test",
     "typecheck": "pnpm --recursive --if-present typecheck",
-    "walkthrough:verify": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build"
+    "walkthrough:verify": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build && pnpm test:e2e"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.7",

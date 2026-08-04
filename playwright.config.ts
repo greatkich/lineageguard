@@ -7,13 +7,14 @@ export default defineConfig({
   retries: process.env.CI ? 2 : 0,
   reporter: process.env.CI ? "github" : "list",
   use: {
-    baseURL: "http://127.0.0.1:3000",
+    baseURL: "http://127.0.0.1:4317",
     trace: "on-first-retry",
   },
   webServer: {
-    command: "pnpm --filter @lineageguard/web dev",
-    reuseExistingServer: !process.env.CI,
-    url: "http://127.0.0.1:3000",
+    command:
+      "pnpm --filter @lineageguard/web build && pnpm --filter @lineageguard/web exec next start --hostname 127.0.0.1 --port 4317",
+    reuseExistingServer: false,
+    url: "http://127.0.0.1:4317",
   },
   projects: [
     {
