@@ -23,6 +23,28 @@ class GraphContractError(ValueError):
     """The checked graph manifest violates the canonical contract."""
 
 
+CANONICAL_PREFIX = "lineageguard-canonical"
+CANONICAL_QUERY_SHA256 = "e4bbe7075754d05de68f76ff0a9b127532e044da8ab0a357bce7e0d41f7ad22c"
+CANONICAL_ENTITY_TYPES = {
+    "commerce.orders": EntityType.DATASET,
+    "analytics.stg_orders": EntityType.DATASET,
+    "analytics.customer_revenue": EntityType.DATASET,
+    "fraud.customer_features": EntityType.DATASET,
+    "finance.revenue-dashboard": EntityType.DASHBOARD,
+    "fraud.model-v3": EntityType.MLMODEL,
+}
+CANONICAL_NON_DATASET_URNS = {
+    "urn:li:corpGroup:lineageguard-canonical.finance-analytics",
+    "urn:li:corpGroup:lineageguard-canonical.risk-ml",
+    "urn:li:dashboard:(looker,lineageguard-canonical.finance-revenue-dashboard)",
+    "urn:li:glossaryTerm:lineageguard-canonical.CustomerIdentifier",
+    "urn:li:mlModel:(urn:li:dataPlatform:mlflow,lineageguard-canonical.fraud-model-v3,PROD)",
+    f"urn:li:query:{CANONICAL_PREFIX}.{CANONICAL_QUERY_SHA256}",
+    "urn:li:tag:lineageguard-canonical.Critical",
+    "urn:li:tag:lineageguard-canonical.Production",
+}
+
+
 ROOT_KEYS = {
     "schemaVersion",
     "scenarioId",
@@ -237,6 +259,37 @@ def _validate_references(graph: ExpectedGraph) -> None:
         raise GraphContractError("lineageIntermediates references an unknown logical key")
 
 
+def _validate_canonical_allowlist(graph: ExpectedGraph) -> None:
+    if graph.scenario_id != "canonical-customer-id-rename":
+        raise GraphContractError("scenarioId is not the immutable canonical scenario")
+    if graph.platform_instance != CANONICAL_PREFIX or graph.environment != "PROD":
+        raise GraphContractError("canonical target identity mismatch")
+    node_types = {node.logical_key: node.entity_type for node in graph.nodes}
+    if node_types != CANONICAL_ENTITY_TYPES:
+        raise GraphContractError("canonical node/type allowlist mismatch")
+    dataset_urns = {node.urn for node in graph.nodes if node.entity_type is EntityType.DATASET}
+    expected_dataset_urns = {
+        (
+            "urn:li:dataset:(urn:li:dataPlatform:postgres,"
+            f"{CANONICAL_PREFIX}.lineageguard.{logical_key},PROD)"
+        )
+        for logical_key, entity_type in CANONICAL_ENTITY_TYPES.items()
+        if entity_type is EntityType.DATASET
+    }
+    if dataset_urns != expected_dataset_urns:
+        raise GraphContractError("canonical dataset URN allowlist mismatch")
+    actual_non_dataset = set(graph.managed_urns) - dataset_urns
+    if actual_non_dataset != CANONICAL_NON_DATASET_URNS:
+        raise GraphContractError("canonical non-dataset URN allowlist mismatch")
+    if len(graph.query_evidence) != 1:
+        raise GraphContractError("canonical query evidence count must equal one")
+    query = graph.query_evidence[0]
+    if query.sha256 != CANONICAL_QUERY_SHA256:
+        raise GraphContractError("canonical query digest mismatch")
+    if query.query_urn != f"urn:li:query:{CANONICAL_PREFIX}.{CANONICAL_QUERY_SHA256}":
+        raise GraphContractError("canonical recorded query URN mismatch")
+
+
 def load_expected_graph(path: Path) -> ExpectedGraph:
     raw = _object(json.loads(path.read_text(encoding="utf-8")), "root")
     _exact_keys(raw, ROOT_KEYS, "root")
@@ -268,6 +321,7 @@ def load_expected_graph(path: Path) -> ExpectedGraph:
     ):
         _unique(values, key, context)
     _validate_references(graph)
+    _validate_canonical_allowlist(graph)
     return graph
 
 

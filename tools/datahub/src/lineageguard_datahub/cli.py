@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import subprocess
@@ -19,8 +20,14 @@ from lineageguard_datahub.config import (
     redact,
 )
 from lineageguard_datahub.expected_graph import graph_fingerprint, load_expected_graph
+from lineageguard_datahub.live_query import emit_live_query_evidence
 from lineageguard_datahub.paths import canonical_manifest_path, repository_root
 from lineageguard_datahub.query_history import execute_query, plan_query_execution
+from lineageguard_datahub.receipts import (
+    OperationReceipt,
+    ReceiptStatus,
+    ReceiptStore,
+)
 from lineageguard_datahub.reset import build_reset_plan, execute_reset
 from lineageguard_datahub.seed import build_seed_plan, seed_metadata
 from lineageguard_datahub.verify import compare_observed_graph, observe_live, verify_query_files
@@ -49,6 +56,10 @@ def _parser() -> argparse.ArgumentParser:
 def _require_environment_gate() -> None:
     if os.environ.get("LINEAGEGUARD_WALKTHROUGH_ENV") != "canonical":
         raise RuntimeError("CANONICAL_ENV_REQUIRED")
+
+
+def _receipt_store(root: Path) -> ReceiptStore:
+    return ReceiptStore(root / "walkthrough/.state/operations.jsonl")
 
 
 def _run(command: list[str], *, cwd: Path) -> None:
@@ -85,7 +96,7 @@ def _warehouse_seed(execute: bool, root: Path) -> dict[str, object]:
 def _query(execute: bool, root: Path) -> dict[str, object]:
     graph = load_expected_graph(canonical_manifest_path(root))
     query = graph.query_evidence[0]
-    plan = plan_query_execution(root / query.sql_path, query)
+    plan = plan_query_execution(root, query)
     result: dict[str, object] = {
         "executed": execute,
         "marker": plan.marker,
@@ -94,10 +105,43 @@ def _query(execute: bool, root: Path) -> dict[str, object]:
     }
     if execute:
         _require_environment_gate()
-        config = load_postgres_config()
-        with psycopg.connect(config.dsn) as connection, connection.cursor() as cursor:
-            receipt = execute_query(cursor, plan)
+        config = load_postgres_config(query_role=True)
+        try:
+            with psycopg.connect(config.dsn) as connection, connection.cursor() as cursor:
+                receipt = execute_query(cursor, plan)
+        except Exception as error:
+            _receipt_store(root).append(
+                OperationReceipt.create(
+                    scenario_id=graph.scenario_id,
+                    operation_kind="query",
+                    entity_urn=None,
+                    aspect_name="pg_stat_statements",
+                    idempotency_key=plan.normalized_fingerprint,
+                    status=ReceiptStatus.FAILURE,
+                    detail_code=type(error).__name__,
+                )
+            )
+            raise
         result["rowCount"] = receipt.row_count
+        result["pgStatQueryId"] = receipt.query_id
+        result["executionCount"] = receipt.execution_count
+        result["totalExecTimeMs"] = receipt.total_exec_time_ms
+        _receipt_store(root).append(
+            OperationReceipt.create(
+                scenario_id=graph.scenario_id,
+                operation_kind="query",
+                entity_urn=None,
+                aspect_name="pg_stat_statements",
+                idempotency_key=plan.normalized_fingerprint,
+                status=ReceiptStatus.SUCCESS,
+                detail_code="PG_STAT_OBSERVED",
+                metrics={
+                    "queryId": receipt.query_id,
+                    "executionCount": receipt.execution_count,
+                    "totalExecTimeMs": receipt.total_exec_time_ms,
+                },
+            )
+        )
     return result
 
 
@@ -107,11 +151,49 @@ def _ingest(execute: bool, root: Path) -> dict[str, object]:
         root / "walkthrough/metadata/dbt-ingestion.yml",
     )
     commands = [["datahub", "ingest", "run", "-c", str(path.relative_to(root))] for path in recipes]
+    live_query_upserts = 0
     if execute:
         _require_environment_gate()
-        for command in commands:
-            _run(command, cwd=root)
-    return {"executed": execute, "commands": commands}
+        store = _receipt_store(root)
+        for command, recipe in zip(commands, recipes, strict=True):
+            digest = hashlib.sha256(recipe.read_bytes()).hexdigest()
+            try:
+                _run(command, cwd=root)
+            except subprocess.CalledProcessError as error:
+                store.append(
+                    OperationReceipt.create(
+                        scenario_id="canonical-customer-id-rename",
+                        operation_kind="ingest",
+                        entity_urn=None,
+                        aspect_name=str(recipe.relative_to(root)),
+                        idempotency_key=digest,
+                        status=ReceiptStatus.FAILURE,
+                        detail_code=f"EXIT_{error.returncode}",
+                    )
+                )
+                raise
+            store.append(
+                OperationReceipt.create(
+                    scenario_id="canonical-customer-id-rename",
+                    operation_kind="ingest",
+                    entity_urn=None,
+                    aspect_name=str(recipe.relative_to(root)),
+                    idempotency_key=digest,
+                    status=ReceiptStatus.SUCCESS,
+                    detail_code="INGESTED",
+                )
+            )
+            if recipe.name == "postgres-ingestion.yml":
+                graph = load_expected_graph(canonical_manifest_path(root))
+                config = load_datahub_config(ingest=True)
+                emitter = DatahubRestEmitter(gms_server=config.server, token=config.token)
+                client = DataHubGraph(DatahubClientConfig(server=config.server, token=config.token))
+                live_query_upserts = emit_live_query_evidence(emitter, client, store, graph, root)
+    return {
+        "executed": execute,
+        "commands": commands,
+        "liveQueryUpserts": live_query_upserts,
+    }
 
 
 def _metadata_seed(execute: bool, root: Path) -> dict[str, object]:
@@ -126,10 +208,12 @@ def _metadata_seed(execute: bool, root: Path) -> dict[str, object]:
     }
     if execute:
         _require_environment_gate()
-        config = load_datahub_config()
+        config = load_datahub_config(write=True)
         emitter = DatahubRestEmitter(gms_server=config.server, token=config.token)
-        receipt = seed_metadata(emitter, graph, root)
+        client = DataHubGraph(DatahubClientConfig(server=config.server, token=config.token))
+        receipt = seed_metadata(emitter, client, _receipt_store(root), graph, root)
         result["emitted"] = receipt.emitted
+        result["skipped"] = receipt.skipped
     return result
 
 
@@ -139,22 +223,27 @@ def _reset(execute: bool, confirmation: str | None, root: Path) -> dict[str, obj
         graph,
         environment_gate=os.environ.get("LINEAGEGUARD_WALKTHROUGH_ENV"),
         platform_instance=os.environ.get("LINEAGEGUARD_PLATFORM_INSTANCE"),
+        creation_receipts=_receipt_store(root).read_all(),
     )
     if execute and confirmation != graph.scenario_id:
         raise RuntimeError("SCENARIO_CONFIRMATION_REQUIRED")
     if execute:
-        config = load_datahub_config()
+        config = load_datahub_config(write=True)
         client = DataHubGraph(DatahubClientConfig(server=config.server, token=config.token))
-        execute_reset(client, plan)
+        execute_reset(client, client, _receipt_store(root), plan)
     return {"executed": execute, "scenarioId": graph.scenario_id, "urns": list(plan.urns)}
 
 
 def _verify(root: Path) -> tuple[dict[str, object], bool]:
     graph = load_expected_graph(canonical_manifest_path(root))
     verify_query_files(graph, root)
-    config = load_datahub_config()
+    config = load_datahub_config(write=False)
     client = DataHubGraph(DatahubClientConfig(server=config.server, token=config.token))
-    report = compare_observed_graph(graph, observe_live(client, graph))
+    report = compare_observed_graph(
+        graph,
+        observe_live(client, graph),
+        _receipt_store(root).read_all(),
+    )
     return asdict(report), report.ok
 
 
@@ -204,7 +293,10 @@ def main(argv: list[str] | None = None) -> int:
     ) as error:
         secrets = (
             os.environ.get("DATAHUB_TOKEN"),
+            os.environ.get("DATAHUB_READ_TOKEN"),
+            os.environ.get("DATAHUB_WRITE_TOKEN"),
             os.environ.get("WALKTHROUGH_POSTGRES_PASSWORD"),
+            os.environ.get("WALKTHROUGH_QUERY_POSTGRES_PASSWORD"),
         )
         print(redact(str(error), secrets), file=sys.stderr)
         return 2

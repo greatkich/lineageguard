@@ -11,4 +11,4 @@ lineageguard_walkthrough:
       schema: analytics
       threads: 2
       connect_timeout: 10
-      sslmode: prefer
+      sslmode: "{{ env_var('WALKTHROUGH_POSTGRES_SSLMODE') }}"

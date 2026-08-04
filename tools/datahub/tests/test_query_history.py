@@ -15,9 +15,11 @@ from lineageguard_datahub.query_history import (
 
 
 class RecordingCursor:
-    def __init__(self, *, observed: bool) -> None:
+    def __init__(self, *, observed: bool, read_only_role: bool = True) -> None:
         self.observed = observed
+        self.read_only_role = read_only_role
         self.commands: list[tuple[str, tuple[object, ...] | None]] = []
+        self.fetchone_calls = 0
 
     @property
     def rowcount(self) -> int:
@@ -31,14 +33,19 @@ class RecordingCursor:
         return [("customer-1", 200), ("customer-2", 100)]
 
     def fetchone(self) -> tuple[object, ...]:
-        return (self.observed,)
+        self.fetchone_calls += 1
+        if self.fetchone_calls == 1:
+            return (self.read_only_role,) * 5
+        if self.observed:
+            return ("48291", 3, 1.25, self.commands[3][0])
+        return ()
 
 
 def test_only_checked_read_query_is_planned(
     expected_graph: ExpectedGraph, repository_root: Path
 ) -> None:
     expected = expected_graph.query_evidence[0]
-    plan = plan_query_execution(repository_root / expected.sql_path, expected)
+    plan = plan_query_execution(repository_root, expected)
     assert plan.marker == "lineageguard:finance-monthly-close"
     assert plan.sha256 == expected.sha256
     assert len(plan.normalized_fingerprint) == 64
@@ -50,24 +57,28 @@ def test_mutating_query_is_rejected(expected_graph: ExpectedGraph, tmp_path: Pat
     path.write_text(statement)
     expected = replace(
         expected_graph.query_evidence[0],
+        sql_path="unsafe.sql",
         sha256=hashlib.sha256(statement.encode()).hexdigest(),
     )
     with pytest.raises(QueryPolicyError, match="QUERY_NOT_READ_ONLY"):
-        plan_query_execution(path, expected)
+        plan_query_execution(tmp_path, expected)
 
 
 def test_query_digest_change_is_rejected(expected_graph: ExpectedGraph, tmp_path: Path) -> None:
     path = tmp_path / "changed.sql"
     path.write_text("-- lineageguard:finance-monthly-close\nSELECT 1;\n")
-    with pytest.raises(QueryPolicyError, match="QUERY_DIGEST_MISMATCH"):
-        plan_query_execution(path, expected_graph.query_evidence[0])
+    with pytest.raises(QueryPolicyError, match="CHECKED_FILE_DIGEST_MISMATCH"):
+        plan_query_execution(
+            tmp_path,
+            replace(expected_graph.query_evidence[0], sql_path="changed.sql"),
+        )
 
 
 def test_execution_requires_pg_stat_statements_evidence(
     expected_graph: ExpectedGraph, repository_root: Path
 ) -> None:
     expected = expected_graph.query_evidence[0]
-    plan = plan_query_execution(repository_root / expected.sql_path, expected)
+    plan = plan_query_execution(repository_root, expected)
     missing = RecordingCursor(observed=False)
     with pytest.raises(QueryPolicyError, match="QUERY_HISTORY_NOT_OBSERVED"):
         execute_query(missing, plan)
@@ -75,3 +86,13 @@ def test_execution_requires_pg_stat_statements_evidence(
     receipt = execute_query(observed, plan)
     assert receipt.row_count == 2
     assert observed.commands[-1][1] == (f"%{plan.marker}%",)
+    assert receipt.execution_count == 3
+    assert receipt.total_exec_time_ms == 1.25
+
+
+def test_execution_rejects_privileged_role(
+    expected_graph: ExpectedGraph, repository_root: Path
+) -> None:
+    plan = plan_query_execution(repository_root, expected_graph.query_evidence[0])
+    with pytest.raises(QueryPolicyError, match="QUERY_ROLE_NOT_READ_ONLY"):
+        execute_query(RecordingCursor(observed=True, read_only_role=False), plan)

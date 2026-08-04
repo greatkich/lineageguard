@@ -4,8 +4,9 @@ import hashlib
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import Protocol, TypeVar
 
+from datahub._codegen.aspect import _Aspect
 from datahub.emitter.mce_builder import make_schema_field_urn
 from datahub.emitter.mcp import MetadataChangeProposalWrapper
 from datahub.metadata.schema_classes import (
@@ -47,13 +48,30 @@ from datahub.metadata.schema_classes import (
 
 from lineageguard_datahub.lineage import edges_by_downstream
 from lineageguard_datahub.models import EntityType, ExpectedGraph, Granularity, GraphNode
+from lineageguard_datahub.receipts import (
+    OperationReceipt,
+    ReceiptStatus,
+    ReceiptStore,
+)
 
 ACTOR_URN = "urn:li:corpuser:lineageguard"
 AUDIT_STAMP = AuditStampClass(time=0, actor=ACTOR_URN)
+SCENARIO_MARKER_KEY = "lineageguard.scenario"
+SCENARIO_MARKER_VALUE = "canonical-customer-id-rename"
+SCENARIO_MARKER_TEXT = f"[{SCENARIO_MARKER_KEY}={SCENARIO_MARKER_VALUE}]"
+Aspect = TypeVar("Aspect", bound=_Aspect)
 
 
 class McpEmitter(Protocol):
     def emit_mcp(self, mcp: MetadataChangeProposalWrapper) -> object: ...
+
+
+class EntityReader(Protocol):
+    def exists(self, entity_urn: str) -> bool: ...
+
+    def get_aspect(
+        self, entity_urn: str, aspect_type: type[Aspect], version: int = 0
+    ) -> Aspect | None: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,6 +85,7 @@ class PlannedUpsert:
 class SeedReceipt:
     scenario_id: str
     emitted: int
+    skipped: int
     idempotency_keys: tuple[str, ...]
 
 
@@ -175,7 +194,7 @@ def _node_aspects(node: GraphNode, graph: ExpectedGraph) -> list[PlannedUpsert]:
                         name=node.name,
                         qualifiedName=node.logical_key,
                         description=f"Canonical LineageGuard asset: {node.logical_key}.",
-                        customProperties={"lineageguard.scenario": graph.scenario_id},
+                        customProperties={SCENARIO_MARKER_KEY: SCENARIO_MARKER_VALUE},
                     ),
                 ),
                 _upsert(
@@ -202,7 +221,7 @@ def _node_aspects(node: GraphNode, graph: ExpectedGraph) -> list[PlannedUpsert]:
                         created=AUDIT_STAMP, lastModified=AUDIT_STAMP
                     ),
                     datasets=[revenue_urn],
-                    customProperties={"lineageguard.scenario": graph.scenario_id},
+                    customProperties={SCENARIO_MARKER_KEY: SCENARIO_MARKER_VALUE},
                 ),
             )
         )
@@ -221,7 +240,7 @@ def _node_aspects(node: GraphNode, graph: ExpectedGraph) -> list[PlannedUpsert]:
                         description="Production fraud scoring model using customer order features.",
                         version=None,
                         type="classification",
-                        customProperties={"lineageguard.scenario": graph.scenario_id},
+                        customProperties={SCENARIO_MARKER_KEY: SCENARIO_MARKER_VALUE},
                     ),
                 ),
                 _upsert(
@@ -294,7 +313,9 @@ def build_seed_plan(graph: ExpectedGraph, root: Path) -> tuple[PlannedUpsert, ..
                     members=[],
                     groups=[],
                     displayName=owner.display_name,
-                    description=f"Canonical owner group: {owner.display_name}.",
+                    description=(
+                        f"Canonical owner group: {owner.display_name}. {SCENARIO_MARKER_TEXT}"
+                    ),
                 ),
             )
         )
@@ -306,7 +327,10 @@ def build_seed_plan(graph: ExpectedGraph, root: Path) -> tuple[PlannedUpsert, ..
                 "tag",
                 TagPropertiesClass(
                     name=tag.display_name,
-                    description=f"LineageGuard {tag.display_name.lower()} asset classification.",
+                    description=(
+                        f"LineageGuard {tag.display_name.lower()} asset classification. "
+                        f"{SCENARIO_MARKER_TEXT}"
+                    ),
                 ),
             )
         )
@@ -321,7 +345,7 @@ def build_seed_plan(graph: ExpectedGraph, root: Path) -> tuple[PlannedUpsert, ..
                     "Stable identifier that joins customer activity across controlled systems."
                 ),
                 termSource="INTERNAL",
-                customProperties={"lineageguard.scenario": graph.scenario_id},
+                customProperties={SCENARIO_MARKER_KEY: SCENARIO_MARKER_VALUE},
             ),
         )
     )
@@ -360,7 +384,8 @@ def build_seed_plan(graph: ExpectedGraph, root: Path) -> tuple[PlannedUpsert, ..
                             "lineageguard.marker": query.marker,
                             "lineageguard.sha256": query.sha256,
                             "lineageguard.fieldPath": query.field_path,
-                            "lineageguard.ownerUrn": query.owner_urn,
+                            SCENARIO_MARKER_KEY: SCENARIO_MARKER_VALUE,
+                            "lineageguard.mode": "RECORDED_FALLBACK",
                         },
                     ),
                 ),
@@ -378,12 +403,105 @@ def build_seed_plan(graph: ExpectedGraph, root: Path) -> tuple[PlannedUpsert, ..
     return tuple(upserts)
 
 
-def seed_metadata(emitter: McpEmitter, graph: ExpectedGraph, root: Path) -> SeedReceipt:
+def _marker_aspect(entity_type: str) -> type[_Aspect]:
+    return {
+        "corpGroup": CorpGroupInfoClass,
+        "dashboard": DashboardInfoClass,
+        "dataset": DatasetPropertiesClass,
+        "glossaryTerm": GlossaryTermInfoClass,
+        "mlModel": MLModelPropertiesClass,
+        "query": QueryPropertiesClass,
+        "tag": TagPropertiesClass,
+    }[entity_type]
+
+
+def entity_has_scenario_marker(reader: EntityReader, urn: str, entity_type: str) -> bool:
+    aspect = reader.get_aspect(urn, _marker_aspect(entity_type))
+    if aspect is None:
+        return False
+    if isinstance(aspect, CorpGroupInfoClass | TagPropertiesClass):
+        return SCENARIO_MARKER_TEXT in (aspect.description or "")
+    custom_properties = getattr(aspect, "customProperties", None) or {}
+    return custom_properties.get(SCENARIO_MARKER_KEY) == SCENARIO_MARKER_VALUE
+
+
+def seed_metadata(
+    emitter: McpEmitter,
+    reader: EntityReader,
+    receipt_store: ReceiptStore,
+    graph: ExpectedGraph,
+    root: Path,
+) -> SeedReceipt:
     plan = build_seed_plan(graph, root)
+    entities = {(item.proposal.entityUrn, item.proposal.entityType) for item in plan}
+    for urn, entity_type in entities:
+        if (
+            urn is not None
+            and reader.exists(urn)
+            and not entity_has_scenario_marker(reader, urn, entity_type)
+        ):
+            raise ValueError(f"EXISTING_ENTITY_MARKER_MISMATCH:{urn}")
+    successful = receipt_store.latest_success(graph.scenario_id, "seed")
+    emitted = 0
+    skipped = 0
     for operation in plan:
-        emitter.emit_mcp(operation.proposal)
+        proposal = operation.proposal
+        existing_receipt = successful.get(operation.idempotency_key)
+        aspect = proposal.aspect
+        current = (
+            reader.get_aspect(proposal.entityUrn, type(aspect))
+            if proposal.entityUrn is not None and aspect is not None
+            else None
+        )
+        if (
+            existing_receipt is not None
+            and current is not None
+            and aspect is not None
+            and current.to_obj() == aspect.to_obj()
+        ):
+            skipped += 1
+            receipt_store.append(
+                OperationReceipt.create(
+                    scenario_id=graph.scenario_id,
+                    operation_kind="seed",
+                    entity_urn=proposal.entityUrn,
+                    aspect_name=proposal.aspectName,
+                    idempotency_key=operation.idempotency_key,
+                    status=ReceiptStatus.SKIPPED,
+                    detail_code="RECONCILED_EXACT_SUCCESS",
+                )
+            )
+            continue
+        try:
+            emitter.emit_mcp(proposal)
+        except Exception as error:
+            receipt_store.append(
+                OperationReceipt.create(
+                    scenario_id=graph.scenario_id,
+                    operation_kind="seed",
+                    entity_urn=proposal.entityUrn,
+                    aspect_name=proposal.aspectName,
+                    idempotency_key=operation.idempotency_key,
+                    status=ReceiptStatus.FAILURE,
+                    detail_code=type(error).__name__,
+                )
+            )
+            raise
+        emitted += 1
+        receipt_store.append(
+            OperationReceipt.create(
+                scenario_id=graph.scenario_id,
+                operation_kind="seed",
+                entity_urn=proposal.entityUrn,
+                aspect_name=proposal.aspectName,
+                idempotency_key=operation.idempotency_key,
+                status=ReceiptStatus.SUCCESS,
+                detail_code="EMITTED",
+            )
+        )
     return SeedReceipt(
         scenario_id=graph.scenario_id,
-        emitted=len(plan),
+        emitted=emitted,
+        skipped=skipped,
         idempotency_keys=tuple(operation.idempotency_key for operation in plan),
     )

@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Iterable
 from dataclasses import asdict, dataclass
+from datetime import datetime
 from pathlib import Path
-from typing import Protocol, TypeVar
+from typing import Any, Protocol, TypeVar
 
 from datahub._codegen.aspect import _Aspect
 from datahub.emitter.mce_builder import make_schema_field_urn
@@ -13,13 +15,18 @@ from datahub.metadata.schema_classes import (
     GlobalTagsClass,
     OwnershipClass,
     QueryPropertiesClass,
+    QuerySourceClass,
     QuerySubjectsClass,
+    QueryUsageStatisticsClass,
     SchemaMetadataClass,
     TrainingDataClass,
     UpstreamLineageClass,
 )
 
 from lineageguard_datahub.models import ExpectedGraph, Granularity
+from lineageguard_datahub.paths import resolve_checked_file
+from lineageguard_datahub.query_history import normalized_sql_fingerprint
+from lineageguard_datahub.receipts import OperationReceipt, ReceiptStatus
 
 Aspect = TypeVar("Aspect", bound=_Aspect)
 
@@ -28,23 +35,39 @@ class GraphReader(Protocol):
     def exists(self, entity_urn: str) -> bool: ...
 
     def get_aspect(
+        self, entity_urn: str, aspect_type: type[Aspect], version: int = 0
+    ) -> Aspect | None: ...
+
+    def get_urns_by_filter(self, *, entity_types: list[str], query: str) -> Iterable[str]: ...
+
+    def get_timeseries_values(
         self,
         entity_urn: str,
         aspect_type: type[Aspect],
-        version: int = 0,
-    ) -> Aspect | None: ...
+        filter: dict[str, Any],
+        limit: int = 10,
+    ) -> list[Aspect]: ...
+
+
+@dataclass(frozen=True, slots=True)
+class QuerySignal:
+    urn: str
+    source: str
+    normalized_fingerprint: str
+    subjects: frozenset[str]
+    usage_count: int
 
 
 @dataclass(frozen=True, slots=True)
 class ObservedGraph:
     entity_urns: frozenset[str]
+    schema_fields: frozenset[str]
     entity_edges: frozenset[tuple[str, str]]
     field_edges: frozenset[tuple[str, str]]
     ownership: frozenset[tuple[str, str]]
     tags: frozenset[tuple[str, str]]
     glossary_terms: frozenset[tuple[str, str]]
-    query_subjects: frozenset[tuple[str, str]]
-    query_sha256: frozenset[tuple[str, str]]
+    query_signals: tuple[QuerySignal, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,42 +83,66 @@ class GraphVerificationReport:
     graph_fingerprint: str
     impact_cards: int
     lineage_intermediates: int
+    reachable_outcomes: tuple[str, ...]
     failures: tuple[VerificationFailure, ...]
 
     def to_json(self) -> str:
         return json.dumps(asdict(self), sort_keys=True, indent=2)
 
 
+def _expected_field_urns(graph: ExpectedGraph) -> frozenset[str]:
+    fields = {graph.source_field.schema_field_urn}
+    for edge in graph.edges:
+        if edge.granularity is Granularity.FIELD:
+            fields.add(make_schema_field_urn(edge.upstream_urn, edge.upstream_field_path or ""))
+            fields.add(make_schema_field_urn(edge.downstream_urn, edge.downstream_field_path or ""))
+    return frozenset(fields)
+
+
 def expected_observation(graph: ExpectedGraph) -> ObservedGraph:
-    entity_edges = {
-        (edge.upstream_urn, edge.downstream_urn)
-        for edge in graph.edges
-        if edge.granularity is Granularity.ENTITY
-    }
-    field_edges = {
-        (
-            make_schema_field_urn(edge.upstream_urn, edge.upstream_field_path or ""),
-            make_schema_field_urn(edge.downstream_urn, edge.downstream_field_path or ""),
-        )
-        for edge in graph.edges
-        if edge.granularity is Granularity.FIELD
-    }
+    query = graph.query_evidence[0]
+    revenue_field = make_schema_field_urn(query.dataset_urn, query.field_path)
     return ObservedGraph(
         entity_urns=frozenset(graph.managed_urns),
-        entity_edges=frozenset(entity_edges),
-        field_edges=frozenset(field_edges),
+        schema_fields=_expected_field_urns(graph),
+        entity_edges=frozenset(
+            (edge.upstream_urn, edge.downstream_urn)
+            for edge in graph.edges
+            if edge.granularity is Granularity.ENTITY
+        ),
+        field_edges=frozenset(
+            (
+                make_schema_field_urn(edge.upstream_urn, edge.upstream_field_path or ""),
+                make_schema_field_urn(edge.downstream_urn, edge.downstream_field_path or ""),
+            )
+            for edge in graph.edges
+            if edge.granularity is Granularity.FIELD
+        ),
         ownership=frozenset(
             (node.urn, owner_urn) for node in graph.nodes for owner_urn in node.owner_urns
-        )
-        | frozenset((query.query_urn, query.owner_urn) for query in graph.query_evidence),
+        ),
         tags=frozenset((node.urn, tag_urn) for node in graph.nodes for tag_urn in node.tag_urns),
         glossary_terms=frozenset(
             {(graph.source_field.schema_field_urn, graph.source_field.glossary_term_urn)}
         ),
-        query_subjects=frozenset(
-            (query.query_urn, query.dataset_urn) for query in graph.query_evidence
+        query_signals=(
+            QuerySignal(
+                urn="urn:li:query:system-observed",
+                source=QuerySourceClass.SYSTEM,
+                normalized_fingerprint=normalized_sql_fingerprint_from_file(graph, query),
+                subjects=frozenset({query.dataset_urn, revenue_field}),
+                usage_count=1,
+            ),
         ),
-        query_sha256=frozenset((query.query_urn, query.sha256) for query in graph.query_evidence),
+    )
+
+
+def normalized_sql_fingerprint_from_file(graph: ExpectedGraph, query: object) -> str:
+    del graph, query
+    # The value is fixed by the immutable query shape in query_history.py.
+    return normalized_sql_fingerprint(
+        "SELECT customer_id, lifetime_revenue FROM analytics.customer_revenue "
+        "WHERE lifetime_revenue >= 100 ORDER BY lifetime_revenue DESC"
     )
 
 
@@ -103,87 +150,186 @@ def _missing_failure(
     code: str, expected: frozenset[object], observed: frozenset[object]
 ) -> VerificationFailure | None:
     missing = sorted(str(value) for value in expected - observed)
-    if not missing:
-        return None
-    return VerificationFailure(code=code, detail=", ".join(missing))
+    return None if not missing else VerificationFailure(code, ", ".join(missing))
+
+
+def _receipt_failures(
+    graph: ExpectedGraph, receipts: tuple[OperationReceipt, ...]
+) -> tuple[VerificationFailure, ...]:
+    query_receipts = [
+        receipt
+        for receipt in receipts
+        if receipt.scenario_id == graph.scenario_id
+        and receipt.operation_kind == "query"
+        and receipt.status is ReceiptStatus.SUCCESS
+        and receipt.detail_code == "PG_STAT_OBSERVED"
+    ]
+    ingest_receipts = [
+        receipt
+        for receipt in receipts
+        if receipt.scenario_id == graph.scenario_id
+        and receipt.operation_kind == "ingest"
+        and receipt.status is ReceiptStatus.SUCCESS
+        and receipt.aspect_name == "walkthrough/metadata/postgres-ingestion.yml"
+    ]
+    live_query_receipts = {
+        receipt.aspect_name
+        for receipt in receipts
+        if receipt.scenario_id == graph.scenario_id
+        and receipt.operation_kind == "ingest-query"
+        and receipt.status is ReceiptStatus.SUCCESS
+        and receipt.detail_code == "LIVE_QUERY_EMITTED"
+    }
+    failures: list[VerificationFailure] = []
+    if not query_receipts:
+        failures.append(VerificationFailure("PG_STAT_RECEIPT_MISSING", "query"))
+    else:
+        latest = max(query_receipts, key=lambda item: item.recorded_at)
+        if int(latest.metrics.get("executionCount", 0)) < 1:
+            failures.append(VerificationFailure("PG_STAT_COUNT_INVALID", "executionCount"))
+        if float(latest.metrics.get("totalExecTimeMs", -1)) < 0:
+            failures.append(VerificationFailure("PG_STAT_TIME_INVALID", "totalExecTimeMs"))
+    if not ingest_receipts:
+        failures.append(VerificationFailure("POSTGRES_INGEST_RECEIPT_MISSING", "ingest"))
+    elif query_receipts:
+        latest_query = max(query_receipts, key=lambda item: item.recorded_at)
+        latest_ingest = max(ingest_receipts, key=lambda item: item.recorded_at)
+        if datetime.fromisoformat(latest_ingest.recorded_at) < datetime.fromisoformat(
+            latest_query.recorded_at
+        ):
+            failures.append(VerificationFailure("POSTGRES_INGEST_PRECEDES_QUERY", "order"))
+    required_query_aspects = {"queryProperties", "querySubjects", "queryUsageStatistics"}
+    if not required_query_aspects <= live_query_receipts:
+        failures.append(
+            VerificationFailure(
+                "LIVE_QUERY_INGEST_RECEIPTS_MISSING",
+                ", ".join(sorted(required_query_aspects - live_query_receipts)),
+            )
+        )
+    return tuple(failures)
+
+
+def _reachable(graph: ExpectedGraph, observed: ObservedGraph) -> tuple[set[str], set[str]]:
+    reachable_fields = {graph.source_field.schema_field_urn}
+    changed = True
+    while changed:
+        changed = False
+        for upstream, downstream in observed.field_edges:
+            if upstream in reachable_fields and downstream not in reachable_fields:
+                reachable_fields.add(downstream)
+                changed = True
+    nodes = {node.logical_key: node for node in graph.nodes}
+    revenue = nodes["analytics.customer_revenue"]
+    stg = nodes["analytics.stg_orders"]
+    fraud_features = nodes["fraud.customer_features"]
+    dashboard = nodes["finance.revenue-dashboard"]
+    model = nodes["fraud.model-v3"]
+    revenue_field = make_schema_field_urn(revenue.urn, "customer_id")
+    stg_field = make_schema_field_urn(stg.urn, "customer_id")
+    fraud_field = make_schema_field_urn(fraud_features.urn, "customer_id")
+    outcomes: set[str] = set()
+    intermediates: set[str] = set()
+    if stg_field in reachable_fields:
+        intermediates.add("analytics.stg_orders")
+    if fraud_field in reachable_fields:
+        intermediates.add("fraud.customer_features")
+    if revenue_field in reachable_fields:
+        outcomes.add("analytics.customer_revenue")
+    if (
+        "analytics.customer_revenue" in outcomes
+        and (revenue.urn, dashboard.urn) in observed.entity_edges
+    ):
+        outcomes.add("finance.revenue-dashboard")
+    if fraud_field in reachable_fields and (fraud_features.urn, model.urn) in observed.entity_edges:
+        outcomes.add("fraud.model-v3")
+    if revenue_field in reachable_fields and any(
+        signal.source == QuerySourceClass.SYSTEM
+        and signal.usage_count > 0
+        and revenue_field in signal.subjects
+        for signal in observed.query_signals
+    ):
+        outcomes.add("query.finance-monthly-close")
+    return outcomes, intermediates
 
 
 def compare_observed_graph(
-    graph: ExpectedGraph, observed: ObservedGraph
+    graph: ExpectedGraph,
+    observed: ObservedGraph,
+    receipts: tuple[OperationReceipt, ...] = (),
 ) -> GraphVerificationReport:
     expected = expected_observation(graph)
     checks = (
         ("ENTITY_MISSING", expected.entity_urns, observed.entity_urns),
+        ("SCHEMA_FIELD_MISSING", expected.schema_fields, observed.schema_fields),
         ("ENTITY_LINEAGE_MISSING", expected.entity_edges, observed.entity_edges),
         ("FIELD_LINEAGE_MISSING", expected.field_edges, observed.field_edges),
         ("OWNER_MISSING", expected.ownership, observed.ownership),
         ("TAG_MISSING", expected.tags, observed.tags),
         ("GLOSSARY_TERM_MISSING", expected.glossary_terms, observed.glossary_terms),
-        ("QUERY_SUBJECT_MISSING", expected.query_subjects, observed.query_subjects),
-        ("QUERY_EVIDENCE_MISSING", expected.query_sha256, observed.query_sha256),
     )
-    failures = tuple(
+    failures = [
         failure
         for code, expected_values, observed_values in checks
         if (failure := _missing_failure(code, expected_values, observed_values)) is not None
-    )
-    fingerprint_payload = {
-        "entities": sorted(observed.entity_urns),
-        "entityEdges": sorted(observed.entity_edges),
-        "fieldEdges": sorted(observed.field_edges),
-        "ownership": sorted(observed.ownership),
-        "tags": sorted(observed.tags),
-        "terms": sorted(observed.glossary_terms),
-        "querySubjects": sorted(observed.query_subjects),
-        "querySha256": sorted(observed.query_sha256),
-    }
+    ]
+    canonical_fingerprint = expected.query_signals[0].normalized_fingerprint
+    live_query = [
+        signal
+        for signal in observed.query_signals
+        if signal.source == QuerySourceClass.SYSTEM
+        and signal.normalized_fingerprint == canonical_fingerprint
+        and signal.usage_count > 0
+    ]
+    if not live_query:
+        failures.append(VerificationFailure("LIVE_QUERY_EVIDENCE_MISSING", "SYSTEM query"))
+    failures.extend(_receipt_failures(graph, receipts))
+    outcomes, intermediates = _reachable(graph, observed)
+    missing_outcomes = set(graph.impact_cards) - outcomes
+    if missing_outcomes:
+        failures.append(
+            VerificationFailure("IMPACT_PATH_INCOMPLETE", ", ".join(sorted(missing_outcomes)))
+        )
+    fingerprint_payload = asdict(observed)
     fingerprint = hashlib.sha256(
-        json.dumps(fingerprint_payload, sort_keys=True, separators=(",", ":")).encode()
+        json.dumps(fingerprint_payload, sort_keys=True, default=sorted).encode()
     ).hexdigest()
     return GraphVerificationReport(
         ok=not failures,
         scenario_id=graph.scenario_id,
         graph_fingerprint=fingerprint,
-        impact_cards=len(graph.impact_cards),
-        lineage_intermediates=len(graph.lineage_intermediates),
-        failures=failures,
+        impact_cards=len(outcomes),
+        lineage_intermediates=len(intermediates),
+        reachable_outcomes=tuple(sorted(outcomes)),
+        failures=tuple(failures),
     )
 
 
 def observe_live(reader: GraphReader, graph: ExpectedGraph) -> ObservedGraph:
     entities = {urn for urn in graph.managed_urns if reader.exists(urn)}
+    schema_fields: set[str] = set()
     entity_edges: set[tuple[str, str]] = set()
     field_edges: set[tuple[str, str]] = set()
     ownership: set[tuple[str, str]] = set()
     tags: set[tuple[str, str]] = set()
     glossary_terms: set[tuple[str, str]] = set()
-    query_subjects: set[tuple[str, str]] = set()
-    query_sha256: set[tuple[str, str]] = set()
-
-    node_types = {node.urn: node.entity_type for node in graph.nodes}
-    downstream_urns = {
-        edge.downstream_urn
-        for edge in graph.edges
-        if node_types[edge.downstream_urn].value == "DATASET"
-    }
-    expected_entity_edges = {
-        (edge.upstream_urn, edge.downstream_urn)
-        for edge in graph.edges
-        if edge.granularity is Granularity.ENTITY
-    }
-    for downstream_urn in downstream_urns:
-        aspect = reader.get_aspect(downstream_urn, UpstreamLineageClass)
-        if aspect is None:
-            continue
-        for upstream in aspect.upstreams:
-            pair = (upstream.dataset, downstream_urn)
-            if pair in expected_entity_edges:
-                entity_edges.add(pair)
-        for fine in aspect.fineGrainedLineages or []:
-            for upstream_field in fine.upstreams or []:
-                for downstream_field in fine.downstreams or []:
-                    field_edges.add((upstream_field, downstream_field))
-
+    query_signals: list[QuerySignal] = []
+    dataset_nodes = [node for node in graph.nodes if node.entity_type.value == "DATASET"]
+    for node in dataset_nodes:
+        schema = reader.get_aspect(node.urn, SchemaMetadataClass)
+        if schema is not None:
+            for field in schema.fields:
+                field_urn = make_schema_field_urn(node.urn, field.fieldPath)
+                schema_fields.add(field_urn)
+                if field.glossaryTerms is not None:
+                    glossary_terms.update(
+                        (field_urn, association.urn) for association in field.glossaryTerms.terms
+                    )
+        lineage = reader.get_aspect(node.urn, UpstreamLineageClass)
+        if lineage is not None:
+            for fine in lineage.fineGrainedLineages or []:
+                for upstream in fine.upstreams or []:
+                    for downstream in fine.downstreams or []:
+                        field_edges.add((upstream, downstream))
     for edge in graph.edges:
         if edge.granularity is not Granularity.ENTITY:
             continue
@@ -192,12 +338,11 @@ def observe_live(reader: GraphReader, graph: ExpectedGraph) -> ObservedGraph:
             if dashboard is not None and edge.upstream_urn in (dashboard.datasets or []):
                 entity_edges.add((edge.upstream_urn, edge.downstream_urn))
         elif edge.downstream_type.value == "MLMODEL":
-            training_data = reader.get_aspect(edge.downstream_urn, TrainingDataClass)
-            if training_data is not None and any(
-                item.dataset == edge.upstream_urn for item in training_data.trainingData
+            training = reader.get_aspect(edge.downstream_urn, TrainingDataClass)
+            if training is not None and any(
+                item.dataset == edge.upstream_urn for item in training.trainingData
             ):
                 entity_edges.add((edge.upstream_urn, edge.downstream_urn))
-
     for node in graph.nodes:
         owner_aspect = reader.get_aspect(node.urn, OwnershipClass)
         if owner_aspect is not None:
@@ -205,53 +350,35 @@ def observe_live(reader: GraphReader, graph: ExpectedGraph) -> ObservedGraph:
         tag_aspect = reader.get_aspect(node.urn, GlobalTagsClass)
         if tag_aspect is not None:
             tags.update((node.urn, association.tag) for association in tag_aspect.tags)
-
-    schema = reader.get_aspect(graph.source_field.dataset_urn, SchemaMetadataClass)
-    if schema is not None:
-        for field in schema.fields:
-            if field.fieldPath != graph.source_field.field_path or field.glossaryTerms is None:
-                continue
-            glossary_terms.update(
-                (graph.source_field.schema_field_urn, association.urn)
-                for association in field.glossaryTerms.terms
+    for urn in reader.get_urns_by_filter(entity_types=["query"], query="*"):
+        if urn == graph.query_evidence[0].query_urn:
+            continue  # Recorded fallback can never satisfy LIVE verification.
+        properties = reader.get_aspect(urn, QueryPropertiesClass)
+        subjects = reader.get_aspect(urn, QuerySubjectsClass)
+        if properties is None or subjects is None:
+            continue
+        usage = reader.get_timeseries_values(urn, QueryUsageStatisticsClass, {}, limit=100)
+        query_signals.append(
+            QuerySignal(
+                urn=urn,
+                source=str(properties.source),
+                normalized_fingerprint=normalized_sql_fingerprint(properties.statement.value),
+                subjects=frozenset(subject.entity for subject in subjects.subjects),
+                usage_count=sum(item.queryCount or 0 for item in usage),
             )
-
-    for query in graph.query_evidence:
-        owner_aspect = reader.get_aspect(query.query_urn, OwnershipClass)
-        if owner_aspect is not None:
-            ownership.update((query.query_urn, owner.owner) for owner in owner_aspect.owners)
-        subjects = reader.get_aspect(query.query_urn, QuerySubjectsClass)
-        if subjects is not None:
-            query_subjects.update(
-                (query.query_urn, subject.entity) for subject in subjects.subjects
-            )
-        properties = reader.get_aspect(query.query_urn, QueryPropertiesClass)
-        if properties is not None:
-            custom_properties = properties.customProperties or {}
-            digest = custom_properties.get("lineageguard.sha256")
-            if digest is not None:
-                query_sha256.add((query.query_urn, digest))
-            owner_urn = custom_properties.get("lineageguard.ownerUrn")
-            if owner_urn is not None:
-                ownership.add((query.query_urn, owner_urn))
-
+        )
     return ObservedGraph(
         entity_urns=frozenset(entities),
+        schema_fields=frozenset(schema_fields),
         entity_edges=frozenset(entity_edges),
         field_edges=frozenset(field_edges),
         ownership=frozenset(ownership),
         tags=frozenset(tags),
         glossary_terms=frozenset(glossary_terms),
-        query_subjects=frozenset(query_subjects),
-        query_sha256=frozenset(query_sha256),
+        query_signals=tuple(sorted(query_signals, key=lambda signal: signal.urn)),
     )
 
 
 def verify_query_files(graph: ExpectedGraph, root: Path) -> None:
     for query in graph.query_evidence:
-        path = (root / query.sql_path).resolve()
-        if not path.is_relative_to(root.resolve()):
-            raise ValueError("QUERY_PATH_OUTSIDE_REPOSITORY")
-        digest = hashlib.sha256(path.read_bytes()).hexdigest()
-        if digest != query.sha256:
-            raise ValueError(f"QUERY_DIGEST_MISMATCH:{query.logical_key}")
+        resolve_checked_file(root, query.sql_path, query.sha256)

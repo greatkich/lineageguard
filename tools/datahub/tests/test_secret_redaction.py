@@ -10,26 +10,66 @@ from lineageguard_datahub.config import (
 )
 
 
-def test_secret_values_are_redacted() -> None:
+def _local_postgres() -> dict[str, str]:
+    return {
+        "WALKTHROUGH_POSTGRES_HOST": "127.0.0.1",
+        "WALKTHROUGH_POSTGRES_PORT": "5432",
+        "WALKTHROUGH_POSTGRES_USER": "lineageguard",
+        "WALKTHROUGH_POSTGRES_PASSWORD": "secret",
+        "WALKTHROUGH_POSTGRES_DATABASE": "lineageguard",
+        "LINEAGEGUARD_POSTGRES_MODE": "local",
+        "WALKTHROUGH_POSTGRES_SSLMODE": "disable",
+    }
+
+
+def test_secret_values_are_redacted_and_hidden_from_repr() -> None:
     assert redact("token=abc password=xyz", ("abc", "xyz")) == (
         "token=[REDACTED] password=[REDACTED]"
     )
+    config = load_postgres_config(_local_postgres())
+    assert "secret" not in repr(config)
 
 
 def test_postgres_password_has_no_default() -> None:
+    values = _local_postgres()
+    del values["WALKTHROUGH_POSTGRES_PASSWORD"]
     with pytest.raises(ConfigurationError, match="WALKTHROUGH_POSTGRES_PASSWORD"):
-        load_postgres_config(
-            {
-                "WALKTHROUGH_POSTGRES_HOST": "127.0.0.1",
-                "WALKTHROUGH_POSTGRES_PORT": "5432",
-                "WALKTHROUGH_POSTGRES_USER": "lineageguard",
-                "WALKTHROUGH_POSTGRES_DATABASE": "lineageguard",
-            }
-        )
+        load_postgres_config(values)
 
 
-def test_datahub_token_is_optional_but_server_is_not() -> None:
-    config = load_datahub_config({"DATAHUB_GMS_URL": "http://localhost:8080"})
-    assert config.token is None
-    with pytest.raises(ConfigurationError, match="MISSING_ENV:DATAHUB_GMS_URL"):
-        load_datahub_config({})
+def test_query_role_uses_separate_credentials() -> None:
+    values = _local_postgres()
+    with pytest.raises(ConfigurationError, match="WALKTHROUGH_QUERY_POSTGRES_USER"):
+        load_postgres_config(values, query_role=True)
+
+
+def test_remote_postgres_requires_verify_full_and_opt_in() -> None:
+    values = _local_postgres() | {
+        "WALKTHROUGH_POSTGRES_HOST": "db.example.com",
+        "LINEAGEGUARD_POSTGRES_MODE": "remote",
+        "WALKTHROUGH_POSTGRES_SSLMODE": "require",
+    }
+    with pytest.raises(ConfigurationError, match="REMOTE_POSTGRES_VERIFY_FULL_REQUIRED"):
+        load_postgres_config(values)
+    values["WALKTHROUGH_POSTGRES_SSLMODE"] = "verify-full"
+    values["LINEAGEGUARD_REMOTE_POSTGRES"] = "approved"
+    assert load_postgres_config(values).remote is True
+
+
+def test_datahub_target_policy_and_separate_write_token() -> None:
+    local = load_datahub_config({"DATAHUB_GMS_URL": "http://localhost:8080"})
+    assert local.token is None
+    assert "token=" not in repr(local)
+    with pytest.raises(ConfigurationError, match="DATAHUB_WRITE_TOKEN_REQUIRED"):
+        load_datahub_config({"DATAHUB_GMS_URL": "http://localhost:8080"}, write=True)
+    with pytest.raises(ConfigurationError, match="REMOTE_DATAHUB_HTTPS_REQUIRED"):
+        load_datahub_config({"DATAHUB_GMS_URL": "http://datahub.example.com"})
+    with pytest.raises(ConfigurationError, match="DATAHUB_GMS_URL_UNSAFE_COMPONENT"):
+        load_datahub_config({"DATAHUB_GMS_URL": "https://user@datahub.example.com/#fragment"})
+    remote = {
+        "DATAHUB_GMS_URL": "https://datahub.example.com",
+        "LINEAGEGUARD_REMOTE_DATAHUB": "approved",
+        "LINEAGEGUARD_REMOTE_DATAHUB_WRITE": "approved",
+        "DATAHUB_WRITE_TOKEN": "hidden",
+    }
+    assert load_datahub_config(remote, write=True).remote is True

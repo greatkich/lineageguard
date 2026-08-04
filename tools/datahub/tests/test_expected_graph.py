@@ -62,3 +62,19 @@ def test_loader_forbids_unknown_keys(repository_root: Path, tmp_path: Path) -> N
     invalid.write_text(json.dumps(manifest))
     with pytest.raises(GraphContractError, match="keys mismatch"):
         load_expected_graph(invalid)
+
+
+def test_loader_forbids_manifest_target_expansion(repository_root: Path, tmp_path: Path) -> None:
+    manifest = json.loads(
+        (
+            repository_root / "walkthrough/scenarios/canonical/expected-datahub-graph.json"
+        ).read_text()
+    )
+    manifest["owners"][0]["urn"] = "urn:li:corpGroup:shared-finance"
+    manifest["nodes"][2]["ownerUrns"] = ["urn:li:corpGroup:shared-finance"]
+    manifest["nodes"][4]["ownerUrns"] = ["urn:li:corpGroup:shared-finance"]
+    manifest["queryEvidence"][0]["ownerUrn"] = "urn:li:corpGroup:shared-finance"
+    invalid = tmp_path / "expanded.json"
+    invalid.write_text(json.dumps(manifest))
+    with pytest.raises(GraphContractError, match="URN allowlist mismatch"):
+        load_expected_graph(invalid)

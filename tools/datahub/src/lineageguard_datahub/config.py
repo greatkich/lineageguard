@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
-from urllib.parse import quote
+from dataclasses import dataclass, field
+from ipaddress import ip_address
+from urllib.parse import quote, urlsplit
 
 
 class ConfigurationError(ValueError):
@@ -12,7 +13,9 @@ class ConfigurationError(ValueError):
 @dataclass(frozen=True, slots=True)
 class DataHubConfig:
     server: str
-    token: str | None
+    token: str | None = field(repr=False)
+    remote: bool = False
+    credential_kind: str = "read"
 
 
 @dataclass(frozen=True, slots=True)
@@ -20,14 +23,17 @@ class PostgresConfig:
     host: str
     port: int
     user: str
-    password: str
+    password: str = field(repr=False)
     database: str
+    sslmode: str
+    remote: bool = False
 
     @property
     def dsn(self) -> str:
         return (
             f"postgresql://{quote(self.user, safe='')}:{quote(self.password, safe='')}"
             f"@{self.host}:{self.port}/{quote(self.database, safe='')}"
+            f"?sslmode={quote(self.sslmode, safe='')}"
         )
 
 
@@ -38,15 +44,65 @@ def _required(name: str, environ: dict[str, str]) -> str:
     return value
 
 
-def load_datahub_config(environ: dict[str, str] | None = None) -> DataHubConfig:
+def _is_loopback(host: str | None) -> bool:
+    if host is None:
+        return False
+    if host.lower() == "localhost":
+        return True
+    try:
+        return ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def load_datahub_config(
+    environ: dict[str, str] | None = None,
+    *,
+    write: bool = False,
+    ingest: bool = False,
+) -> DataHubConfig:
+    if write and ingest:
+        raise ConfigurationError("DATAHUB_CREDENTIAL_PURPOSE_CONFLICT")
     values = dict(os.environ if environ is None else environ)
     server = _required("DATAHUB_GMS_URL", values)
-    if not server.startswith(("http://", "https://")):
+    parsed = urlsplit(server)
+    if parsed.scheme not in {"http", "https"} or parsed.hostname is None:
         raise ConfigurationError("DATAHUB_GMS_URL_INVALID")
-    return DataHubConfig(server=server.rstrip("/"), token=values.get("DATAHUB_TOKEN") or None)
+    if parsed.username is not None or parsed.password is not None or parsed.fragment:
+        raise ConfigurationError("DATAHUB_GMS_URL_UNSAFE_COMPONENT")
+    local = _is_loopback(parsed.hostname)
+    if parsed.scheme == "http" and not local:
+        raise ConfigurationError("REMOTE_DATAHUB_HTTPS_REQUIRED")
+    if not local and values.get("LINEAGEGUARD_REMOTE_DATAHUB") != "approved":
+        raise ConfigurationError("REMOTE_DATAHUB_OPT_IN_REQUIRED")
+    credential_kind = "ingest" if ingest else ("write" if write else "read")
+    token_name = {
+        "read": "DATAHUB_READ_TOKEN",
+        "write": "DATAHUB_WRITE_TOKEN",
+        "ingest": "DATAHUB_INGEST_TOKEN",
+    }[credential_kind]
+    token = values.get(token_name) or None
+    if credential_kind != "read" and token is None:
+        raise ConfigurationError(f"{token_name}_REQUIRED")
+    if (
+        credential_kind != "read"
+        and not local
+        and values.get("LINEAGEGUARD_REMOTE_DATAHUB_WRITE") != "approved"
+    ):
+        raise ConfigurationError("REMOTE_DATAHUB_WRITE_OPT_IN_REQUIRED")
+    return DataHubConfig(
+        server=server.rstrip("/"),
+        token=token,
+        remote=not local,
+        credential_kind=credential_kind,
+    )
 
 
-def load_postgres_config(environ: dict[str, str] | None = None) -> PostgresConfig:
+def load_postgres_config(
+    environ: dict[str, str] | None = None,
+    *,
+    query_role: bool = False,
+) -> PostgresConfig:
     values = dict(os.environ if environ is None else environ)
     raw_port = _required("WALKTHROUGH_POSTGRES_PORT", values)
     try:
@@ -55,12 +111,30 @@ def load_postgres_config(environ: dict[str, str] | None = None) -> PostgresConfi
         raise ConfigurationError("WALKTHROUGH_POSTGRES_PORT_INVALID") from error
     if not 1 <= port <= 65535:
         raise ConfigurationError("WALKTHROUGH_POSTGRES_PORT_INVALID")
+    host = _required("WALKTHROUGH_POSTGRES_HOST", values)
+    local = _is_loopback(host)
+    mode = _required("LINEAGEGUARD_POSTGRES_MODE", values)
+    sslmode = _required("WALKTHROUGH_POSTGRES_SSLMODE", values)
+    if local and (mode != "local" or sslmode != "disable"):
+        raise ConfigurationError("LOCAL_POSTGRES_MODE_MISMATCH")
+    if not local and (
+        mode != "remote"
+        or sslmode != "verify-full"
+        or values.get("LINEAGEGUARD_REMOTE_POSTGRES") != "approved"
+    ):
+        raise ConfigurationError("REMOTE_POSTGRES_VERIFY_FULL_REQUIRED")
+    user_name = "WALKTHROUGH_QUERY_POSTGRES_USER" if query_role else "WALKTHROUGH_POSTGRES_USER"
+    password_name = (
+        "WALKTHROUGH_QUERY_POSTGRES_PASSWORD" if query_role else "WALKTHROUGH_POSTGRES_PASSWORD"
+    )
     return PostgresConfig(
-        host=_required("WALKTHROUGH_POSTGRES_HOST", values),
+        host=host,
         port=port,
-        user=_required("WALKTHROUGH_POSTGRES_USER", values),
-        password=_required("WALKTHROUGH_POSTGRES_PASSWORD", values),
+        user=_required(user_name, values),
+        password=_required(password_name, values),
         database=_required("WALKTHROUGH_POSTGRES_DATABASE", values),
+        sslmode=sslmode,
+        remote=not local,
     )
 
 
