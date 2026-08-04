@@ -11,6 +11,7 @@ from datahub.metadata.schema_classes import (
     QuerySourceClass,
     QuerySubjectsClass,
     QueryUsageStatisticsClass,
+    StatusClass,
 )
 
 from lineageguard_datahub.ingestion import RECIPE_DIGESTS
@@ -140,8 +141,8 @@ def test_live_query_partial_failure_reconciles_successful_aspects(
     before = len(catalog.emitted)
     emitted = emit_live_query_evidence(catalog, catalog, store, expected_graph, repository_root)
     assert before == 2
-    assert emitted == 2
-    assert len(catalog.emitted) == 4
+    assert emitted == 3
+    assert len(catalog.emitted) == 5
     assert sum(receipt.status is ReceiptStatus.FAILURE for receipt in store.read_all()) == 1
 
 
@@ -187,6 +188,39 @@ def test_owned_live_query_static_aspect_drift_is_refused(
         emit_live_query_evidence(catalog, catalog, store, expected_graph, repository_root)
 
 
+def test_owned_soft_deleted_query_is_undeleted_but_unowned_query_is_not(
+    expected_graph: ExpectedGraph, repository_root: Path, tmp_path: Path
+) -> None:
+    store = ReceiptStore(tmp_path / "operations.jsonl")
+    _prepare_store(store, expected_graph, repository_root)
+    catalog = FakeCatalog()
+    emit_live_query_evidence(catalog, catalog, store, expected_graph, repository_root)
+    urn = expected_graph.query_evidence[0].query_urn
+    catalog.aspects[(urn, StatusClass)] = StatusClass(removed=True)
+    before = len(catalog.emitted)
+    assert emit_live_query_evidence(catalog, catalog, store, expected_graph, repository_root) == 1
+    assert catalog.emitted[before].aspectName == "status"
+    assert catalog.aspects[(urn, StatusClass)].removed is False
+
+    fresh_store = ReceiptStore(tmp_path / "unowned.jsonl")
+    _prepare_store(fresh_store, expected_graph, repository_root)
+    unowned = FakeCatalog()
+    plan = build_live_query_plan(
+        expected_graph,
+        repository_root,
+        _query_receipt(expected_graph, repository_root),
+        fresh_store.ownership_nonce,
+    )
+    for item in plan[:-1]:
+        assert item.proposal.entityUrn is not None and item.proposal.aspect is not None
+        unowned.aspects[(item.proposal.entityUrn, type(item.proposal.aspect))] = (
+            item.proposal.aspect
+        )
+    unowned.aspects[(urn, StatusClass)] = StatusClass(removed=True)
+    with pytest.raises(ValueError, match="LIVE_QUERY_EXISTING_ENTITY_NOT_OWNED"):
+        emit_live_query_evidence(unowned, unowned, fresh_store, expected_graph, repository_root)
+
+
 def test_later_observation_updates_only_monotonic_usage(
     expected_graph: ExpectedGraph, repository_root: Path, tmp_path: Path
 ) -> None:
@@ -215,7 +249,7 @@ def test_ambiguous_usage_apply_is_reconciled_from_live_state(
 ) -> None:
     store = ReceiptStore(tmp_path / "operations.jsonl")
     _prepare_store(store, expected_graph, repository_root)
-    catalog = FakeCatalog(fail_after_at=3)
+    catalog = FakeCatalog(fail_after_at=4)
     with pytest.raises(RuntimeError, match="ambiguous-after-apply"):
         emit_live_query_evidence(catalog, catalog, store, expected_graph, repository_root)
     catalog.fail_after_at = None

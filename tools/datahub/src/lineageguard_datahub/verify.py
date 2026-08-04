@@ -23,11 +23,12 @@ from datahub.metadata.schema_classes import (
     QuerySubjectsClass,
     QueryUsageStatisticsClass,
     SchemaMetadataClass,
+    StatusClass,
     TrainingDataClass,
     UpstreamLineageClass,
 )
 
-from lineageguard_datahub.ingestion import RECIPE_DIGESTS
+from lineageguard_datahub.ingestion import RECIPE_DIGESTS, ingestion_prerequisite_failures
 from lineageguard_datahub.models import ExpectedGraph, Granularity
 from lineageguard_datahub.paths import resolve_checked_file
 from lineageguard_datahub.query_history import normalized_sql_fingerprint
@@ -181,6 +182,9 @@ def _receipt_failures(
     graph: ExpectedGraph,
     signals: tuple[QuerySignal, ...],
     receipts: tuple[OperationReceipt, ...],
+    *,
+    target_attestation: str,
+    target_fingerprint: str,
 ) -> tuple[VerificationFailure, ...]:
     query_receipts = [
         receipt
@@ -190,7 +194,7 @@ def _receipt_failures(
         and receipt.status is ReceiptStatus.SUCCESS
         and receipt.detail_code == "PG_STAT_OBSERVED"
     ]
-    ingest_receipts = [
+    postgres_ingest_receipts = [
         receipt
         for receipt in receipts
         if receipt.scenario_id == graph.scenario_id
@@ -199,6 +203,8 @@ def _receipt_failures(
         and receipt.aspect_name == "walkthrough/metadata/postgres-ingestion.yml"
         and receipt.idempotency_key == RECIPE_DIGESTS["walkthrough/metadata/postgres-ingestion.yml"]
         and receipt.proposal_hash == RECIPE_DIGESTS["walkthrough/metadata/postgres-ingestion.yml"]
+        and receipt.metrics.get("targetAttestation") == target_attestation
+        and receipt.metrics.get("targetFingerprint") == target_fingerprint
     ]
     live_query_candidates = [
         receipt
@@ -224,7 +230,16 @@ def _receipt_failures(
         if current is None or receipt.recorded_at > current.recorded_at:
             latest_live_by_aspect[receipt.aspect_name] = receipt
     live_query_receipts = list(latest_live_by_aspect.values())
-    failures: list[VerificationFailure] = []
+    failures = [
+        VerificationFailure(item.split(":", 1)[0], item)
+        for item in ingestion_prerequisite_failures(
+            receipts,
+            scenario_id=graph.scenario_id,
+            target_attestation=target_attestation,
+            target_fingerprint=target_fingerprint,
+            require_seed_after=True,
+        )
+    ]
     if not query_receipts:
         failures.append(VerificationFailure("PG_STAT_RECEIPT_MISSING", "query"))
     else:
@@ -242,11 +257,11 @@ def _receipt_failures(
             failures.append(VerificationFailure("PG_STAT_COUNT_INVALID", "executionCount"))
         if float(latest.metrics.get("totalExecTimeMs", -1)) < 0:
             failures.append(VerificationFailure("PG_STAT_TIME_INVALID", "totalExecTimeMs"))
-    if not ingest_receipts:
+    if not postgres_ingest_receipts:
         failures.append(VerificationFailure("POSTGRES_INGEST_RECEIPT_MISSING", "ingest"))
     elif query_receipts:
         latest_query = max(query_receipts, key=lambda item: item.recorded_at)
-        latest_ingest = max(ingest_receipts, key=lambda item: item.recorded_at)
+        latest_ingest = max(postgres_ingest_receipts, key=lambda item: item.recorded_at)
         if datetime.fromisoformat(latest_ingest.recorded_at) < datetime.fromisoformat(
             latest_query.recorded_at
         ):
@@ -365,6 +380,9 @@ def compare_observed_graph(
     graph: ExpectedGraph,
     observed: ObservedGraph,
     receipts: tuple[OperationReceipt, ...] = (),
+    *,
+    target_attestation: str,
+    target_fingerprint: str,
 ) -> GraphVerificationReport:
     expected = expected_observation(graph)
     checks = (
@@ -404,7 +422,15 @@ def compare_observed_graph(
         failures.append(VerificationFailure("LIVE_QUERY_EVIDENCE_MISSING", "SYSTEM query"))
     if len(live_query) != 1:
         failures.append(VerificationFailure("LIVE_QUERY_SIGNAL_SPLIT", str(len(live_query))))
-    failures.extend(_receipt_failures(graph, tuple(live_query), receipts))
+    failures.extend(
+        _receipt_failures(
+            graph,
+            tuple(live_query),
+            receipts,
+            target_attestation=target_attestation,
+            target_fingerprint=target_fingerprint,
+        )
+    )
     outcomes, intermediates = _reachable(graph, observed)
     missing_outcomes = set(graph.impact_cards) - outcomes
     if missing_outcomes:
@@ -427,7 +453,12 @@ def compare_observed_graph(
 
 
 def observe_live(reader: GraphReader, graph: ExpectedGraph) -> ObservedGraph:
-    entities = {urn for urn in graph.managed_urns if reader.exists(urn)}
+    removed_urns = {
+        urn
+        for urn in graph.managed_urns
+        if (status := reader.get_aspect(urn, StatusClass)) is not None and status.removed is True
+    }
+    entities = {urn for urn in graph.managed_urns if reader.exists(urn) and urn not in removed_urns}
     schema_fields: set[str] = set()
     entity_edges: set[tuple[str, str]] = set()
     field_edges: set[tuple[str, str]] = set()
@@ -437,6 +468,8 @@ def observe_live(reader: GraphReader, graph: ExpectedGraph) -> ObservedGraph:
     query_signals: list[QuerySignal] = []
     dataset_nodes = [node for node in graph.nodes if node.entity_type.value == "DATASET"]
     for node in dataset_nodes:
+        if node.urn not in entities:
+            continue
         schema = reader.get_aspect(node.urn, SchemaMetadataClass)
         if schema is not None:
             for field in schema.fields:
@@ -455,6 +488,8 @@ def observe_live(reader: GraphReader, graph: ExpectedGraph) -> ObservedGraph:
     for edge in graph.edges:
         if edge.granularity is not Granularity.ENTITY:
             continue
+        if edge.upstream_urn not in entities or edge.downstream_urn not in entities:
+            continue
         if edge.downstream_type.value == "DASHBOARD":
             dashboard = reader.get_aspect(edge.downstream_urn, DashboardInfoClass)
             if dashboard is not None and edge.upstream_urn in (dashboard.datasets or []):
@@ -466,6 +501,8 @@ def observe_live(reader: GraphReader, graph: ExpectedGraph) -> ObservedGraph:
             ):
                 entity_edges.add((edge.upstream_urn, edge.downstream_urn))
     for node in graph.nodes:
+        if node.urn not in entities:
+            continue
         owner_aspect = reader.get_aspect(node.urn, OwnershipClass)
         if owner_aspect is not None:
             ownership.update((node.urn, owner.owner) for owner in owner_aspect.owners)
@@ -479,7 +516,7 @@ def observe_live(reader: GraphReader, graph: ExpectedGraph) -> ObservedGraph:
             for association in source_terms.terms
         )
     urn = graph.query_evidence[0].query_urn
-    if reader.exists(urn):
+    if urn in entities:
         properties = reader.get_aspect(urn, QueryPropertiesClass)
         subjects = reader.get_aspect(urn, QuerySubjectsClass)
         instance = reader.get_aspect(urn, DataPlatformInstanceClass)
@@ -488,7 +525,12 @@ def observe_live(reader: GraphReader, graph: ExpectedGraph) -> ObservedGraph:
             latest_usage = max(usage, key=lambda item: item.timestampMillis)
             from datahub.emitter.mcp import MetadataChangeProposalWrapper
 
-            aspects = (properties, subjects, instance, latest_usage)
+            status = reader.get_aspect(urn, StatusClass)
+            aspects = (
+                (properties, subjects, instance, latest_usage)
+                if status is None
+                else (properties, subjects, instance, status, latest_usage)
+            )
             aspect_keys = tuple(
                 (
                     MetadataChangeProposalWrapper(entityUrn=urn, aspect=aspect).aspectName or "",

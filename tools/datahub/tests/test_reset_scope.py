@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from datahub.metadata.schema_classes import StatusClass
 
 from lineageguard_datahub.models import ExpectedGraph
 from lineageguard_datahub.receipts import OperationReceipt, ReceiptStatus, ReceiptStore
@@ -29,7 +30,7 @@ class CatalogDeleter:
         if self.fail_at is not None and len(self.deleted) == self.fail_at:
             raise RuntimeError("injected")
         self.deleted.append((urn, hard))
-        self.aspects = {key: value for key, value in self.aspects.items() if key[0] != urn}
+        self.aspects[(urn, StatusClass)] = StatusClass(removed=True)
 
 
 def _creation_state(

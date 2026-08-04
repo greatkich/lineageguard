@@ -13,6 +13,7 @@ from datahub.emitter.rest_emitter import DatahubRestEmitter
 from datahub.ingestion.graph.client import DatahubClientConfig, DataHubGraph
 
 from lineageguard_datahub.config import (
+    CANONICAL_TARGET_ATTESTATION,
     ConfigurationError,
     load_datahub_config,
     load_postgres_config,
@@ -22,6 +23,9 @@ from lineageguard_datahub.expected_graph import graph_fingerprint, load_expected
 from lineageguard_datahub.ingestion import (
     build_ingestion_plan,
     ingestion_environment,
+    ingestion_prerequisite_failures,
+    require_ingestion_prerequisites,
+    verify_dbt_ingestion_artifacts,
     verify_ingestion_role,
 )
 from lineageguard_datahub.live_query import emit_live_query_evidence
@@ -191,8 +195,13 @@ def _ingest(execute: bool, root: Path) -> dict[str, object]:
         _require_environment_gate()
         store = _receipt_store(root)
         datahub_config = load_datahub_config(ingest=True)
+        verify_dbt_ingestion_artifacts(root)
         postgres_config = load_postgres_config(ingest_role=True)
         child_env = ingestion_environment(datahub_config, postgres_config)
+        target_metrics: dict[str, int | float | str] = {
+            "targetAttestation": datahub_config.target_attestation or "",
+            "targetFingerprint": datahub_config.target_fingerprint,
+        }
         with psycopg.connect(postgres_config.dsn) as connection, connection.cursor() as cursor:
             verify_ingestion_role(cursor)
         for command, recipe in zip(commands, recipes, strict=True):
@@ -206,6 +215,7 @@ def _ingest(execute: bool, root: Path) -> dict[str, object]:
                     status=ReceiptStatus.PLANNED,
                     detail_code="OPERATION_PLANNED",
                     proposal_hash=recipe.sha256,
+                    metrics=target_metrics,
                 )
             )
             try:
@@ -220,6 +230,8 @@ def _ingest(execute: bool, root: Path) -> dict[str, object]:
                         idempotency_key=recipe.sha256,
                         status=ReceiptStatus.FAILURE,
                         detail_code=f"EXIT_{error.returncode}",
+                        proposal_hash=recipe.sha256,
+                        metrics=target_metrics,
                     )
                 )
                 raise
@@ -232,6 +244,8 @@ def _ingest(execute: bool, root: Path) -> dict[str, object]:
                     idempotency_key=recipe.sha256,
                     status=ReceiptStatus.SUCCESS,
                     detail_code="INGESTED",
+                    proposal_hash=recipe.sha256,
+                    metrics=target_metrics,
                 )
             )
             if recipe.path.name == "postgres-ingestion.yml":
@@ -254,18 +268,50 @@ def _metadata_seed(execute: bool, root: Path) -> dict[str, object]:
     graph = load_expected_graph(canonical_manifest_path(root))
     verify_query_files(graph, root)
     plan = build_seed_plan(graph, root)
+    store = _receipt_store(root)
+    target_attestation = os.environ.get("LINEAGEGUARD_DATAHUB_TARGET_ATTESTATION", "")
+    target_fingerprint = ""
+    try:
+        read_config = load_datahub_config(write=False)
+        if target_attestation:
+            target_fingerprint = read_config.target_fingerprint
+    except ConfigurationError:
+        pass
+    prerequisite_failures = ingestion_prerequisite_failures(
+        store.read_all(),
+        scenario_id=graph.scenario_id,
+        target_attestation=target_attestation,
+        target_fingerprint=target_fingerprint,
+    )
     result: dict[str, object] = {
         "executed": execute,
         "scenarioId": graph.scenario_id,
         "upserts": len(plan),
         "idempotencyKeys": [operation.idempotency_key for operation in plan],
+        "prerequisitesReady": not prerequisite_failures,
+        "prerequisiteFailures": list(prerequisite_failures),
     }
     if execute:
         _require_environment_gate()
         config = load_datahub_config(write=True)
+        target_attestation = config.target_attestation or CANONICAL_TARGET_ATTESTATION
+        require_ingestion_prerequisites(
+            store.read_all(),
+            scenario_id=graph.scenario_id,
+            target_attestation=target_attestation,
+            target_fingerprint=config.target_fingerprint,
+        )
         emitter = DatahubRestEmitter(gms_server=config.server, token=config.token)
         client = DataHubGraph(DatahubClientConfig(server=config.server, token=config.token))
-        receipt = seed_metadata(emitter, client, _receipt_store(root), graph, root)
+        receipt = seed_metadata(
+            emitter,
+            client,
+            store,
+            graph,
+            root,
+            target_attestation=target_attestation,
+            target_fingerprint=config.target_fingerprint,
+        )
         result["emitted"] = receipt.emitted
         result["skipped"] = receipt.skipped
     return result
@@ -294,11 +340,15 @@ def _verify(root: Path) -> tuple[dict[str, object], bool]:
     graph = load_expected_graph(canonical_manifest_path(root))
     verify_query_files(graph, root)
     config = load_datahub_config(write=False)
+    if config.target_attestation != CANONICAL_TARGET_ATTESTATION:
+        raise ConfigurationError("DATAHUB_TARGET_ATTESTATION_REQUIRED")
     client = DataHubGraph(DatahubClientConfig(server=config.server, token=config.token))
     report = compare_observed_graph(
         graph,
         observe_live(client, graph),
         _receipt_store(root).read_all(),
+        target_attestation=config.target_attestation,
+        target_fingerprint=config.target_fingerprint,
     )
     return asdict(report), report.ok
 

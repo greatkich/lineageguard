@@ -101,6 +101,7 @@ def test_ingestion_environment_is_purpose_bound_and_minimal(repository_root: Pat
         "PATH": "/bin",
         "DATAHUB_GMS_URL": "http://127.0.0.1:8080",
         "DATAHUB_INGEST_TOKEN": "ingest-secret",
+        "LINEAGEGUARD_DATAHUB_TARGET_ATTESTATION": "canonical-local-lineageguard-v1",
         "DATAHUB_READ_TOKEN": "read-secret",
         "DATAHUB_WRITE_TOKEN": "write-secret",
         "LINEAGEGUARD_POSTGRES_MODE": "local",

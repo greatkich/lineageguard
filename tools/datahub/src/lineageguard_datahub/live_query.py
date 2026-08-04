@@ -22,6 +22,7 @@ from datahub.metadata.schema_classes import (
     QuerySubjectClass,
     QuerySubjectsClass,
     QueryUsageStatisticsClass,
+    StatusClass,
 )
 
 from lineageguard_datahub.ingestion import RECIPE_DIGESTS
@@ -143,6 +144,7 @@ def build_live_query_plan(
                 instance=make_dataplatform_instance_urn("postgres", graph.platform_instance),
             ),
         ),
+        MetadataChangeProposalWrapper(entityUrn=urn, aspect=StatusClass(removed=False)),
         MetadataChangeProposalWrapper(
             entityUrn=urn,
             aspect=QueryUsageStatisticsClass(
@@ -218,9 +220,10 @@ def emit_live_query_evidence(
         ),
         None,
     )
-    existed = reader.exists(urn)
+    existing_properties = reader.get_aspect(urn, QueryPropertiesClass)
+    existed = reader.exists(urn) or existing_properties is not None
     if existed:
-        properties = reader.get_aspect(urn, QueryPropertiesClass)
+        properties = existing_properties
         expected = plan[0].proposal.aspect
         if (
             creation is None
@@ -252,6 +255,13 @@ def emit_live_query_evidence(
                 raise ValueError("LIVE_QUERY_ASPECT_MISSING")
             current = reader.get_aspect(urn, type(aspect))
             if current is not None and current.to_obj() != aspect.to_obj():
+                if (
+                    isinstance(aspect, StatusClass)
+                    and isinstance(current, StatusClass)
+                    and current.removed is True
+                    and aspect.removed is False
+                ):
+                    continue
                 store.append(
                     OperationReceipt.create(
                         scenario_id=graph.scenario_id,

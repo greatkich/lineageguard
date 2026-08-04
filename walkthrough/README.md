@@ -76,18 +76,26 @@ After PostgreSQL is available, the canonical live sequence is:
 ```bash
 uv run --project tools/datahub lineageguard-datahub warehouse-seed --execute
 uv run --project tools/datahub dbt build --project-dir walkthrough/dbt --profiles-dir walkthrough/dbt
+uv run --project tools/datahub dbt docs generate --project-dir walkthrough/dbt --profiles-dir walkthrough/dbt
 uv run --project tools/datahub lineageguard-datahub query --execute
 uv run --project tools/datahub lineageguard-datahub ingest --execute
 uv run --project tools/datahub lineageguard-datahub metadata-seed --execute
 uv run --project tools/datahub lineageguard-datahub verify
 ```
 
+The build followed by `dbt docs generate` is the exact supported artifact sequence. Ingestion fails
+closed unless the clean target contains a successful `manifest.json`, `run_results.json`, and
+`catalog.json` covering all three canonical dbt models.
+
 The PostgreSQL and dbt connectors own the four Dataset entities and their base schema metadata.
 `metadata-seed` runs only after those connectors and adds controlled ownership, tag, glossary, and
-lineage overlays; it never replaces connector-owned DatasetProperties or SchemaMetadata. Repeating
-connector ingestion and metadata seeding must preserve both the connector schema and the controlled
-overlays. Reset therefore deletes only immutable, namespaced entities created by this tool and never
-deletes connector-owned Dataset URNs.
+exact canonical lineage overlays; it never replaces connector-owned DatasetProperties or
+SchemaMetadata. PostgreSQL query/view lineage and dbt column lineage are disabled in the pinned
+recipes so they cannot compete with those overlays. If a connector still returns an allowlisted
+UpstreamLineage aspect, the seed reconciles that aspect to the exact canonical edge set without
+byte-comparing connector audit fields. Repeating connector ingestion and metadata seeding preserves
+both connector schema and controlled overlays. Reset therefore deletes only immutable, namespaced
+entities created by this tool and never deletes connector-owned Dataset URNs.
 
 `metadata-seed` does not emit a MANUAL Query. The pinned PostgreSQL recipe is restricted to exactly
 `commerce.orders`, `analytics.stg_orders`, `analytics.customer_revenue`, and
@@ -122,3 +130,9 @@ successful, failed, skipped, and reconciliation-required outcomes. They are stri
 validated, chained with HMAC, and bound to a separate `0600` local ownership state. A checked-in
 manifest or unit test is not a live DataHub receipt; live verification must be observed separately
 against the pinned server.
+
+`metadata-seed --execute` requires current successful receipts for both exact pinned connector
+recipes, in PostgreSQL-then-dbt order and bound to the same canonical target attestation. `verify`
+also requires those receipts and a later successful metadata overlay. Reset uses DataHub's soft
+delete; verification rejects `Status.removed=true`, while a later seed may emit `removed=false` only
+for an entity whose private creation receipt and retained server-side ownership marker both match.

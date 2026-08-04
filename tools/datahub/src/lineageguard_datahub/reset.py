@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
+from datahub.metadata.schema_classes import StatusClass
+
 from lineageguard_datahub.models import ExpectedGraph
 from lineageguard_datahub.receipts import OperationReceipt, ReceiptStatus, ReceiptStore
 from lineageguard_datahub.seed import (
@@ -98,7 +100,12 @@ def build_reset_plan(
                         and item.status is ReceiptStatus.SUCCESS
                         and item.aspect_name is not None
                         and item.aspect_name
-                        in {"queryProperties", "querySubjects", "dataPlatformInstance"}
+                        in {
+                            "queryProperties",
+                            "querySubjects",
+                            "dataPlatformInstance",
+                            "status",
+                        }
                     ):
                         first_aspect_keys.setdefault(item.aspect_name, item.idempotency_key)
                 aspect_keys = sorted(first_aspect_keys.values())
@@ -159,7 +166,8 @@ def execute_reset(
                 metrics={"beforeStatus": "UNKNOWN", "afterStatus": "PLANNED"},
             )
         )
-        if target.idempotency_key in successful and not reader.exists(target.urn):
+        status = reader.get_aspect(target.urn, StatusClass)
+        if target.idempotency_key in successful and status is not None and status.removed is True:
             receipt_store.append(
                 OperationReceipt.create(
                     scenario_id=plan.scenario_id,

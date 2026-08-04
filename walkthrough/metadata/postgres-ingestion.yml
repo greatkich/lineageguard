@@ -9,15 +9,11 @@ source:
       sslmode: "${WALKTHROUGH_POSTGRES_SSLMODE}"
     platform_instance: lineageguard-canonical
     env: PROD
-    include_usage_statistics: true
-    include_query_lineage: true
-    min_query_calls: 1
-    top_n_queries: 20
-    max_queries_to_extract: 20
-    query_exclude_patterns:
-      - "%pg_catalog%"
-      - "%information_schema%"
-      - "%pg_temp%"
+    include_usage_statistics: false
+    include_query_lineage: false
+    include_view_lineage: false
+    include_view_column_lineage: false
+    include_table_location_lineage: false
     schema_pattern:
       allow:
         - commerce

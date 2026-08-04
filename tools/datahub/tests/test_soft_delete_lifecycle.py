@@ -1,0 +1,214 @@
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
+from datahub.emitter.mcp import MetadataChangeProposalWrapper
+from datahub.metadata.schema_classes import (
+    DatasetPropertiesClass,
+    OtherSchemaClass,
+    SchemaFieldClass,
+    SchemaFieldDataTypeClass,
+    SchemaMetadataClass,
+    StatusClass,
+    StringTypeClass,
+)
+
+from lineageguard_datahub.ingestion import RECIPE_DIGESTS
+from lineageguard_datahub.live_query import emit_live_query_evidence
+from lineageguard_datahub.models import ExpectedGraph
+from lineageguard_datahub.query_history import plan_query_execution
+from lineageguard_datahub.receipts import OperationReceipt, ReceiptStatus, ReceiptStore
+from lineageguard_datahub.reset import build_reset_plan, execute_reset
+from lineageguard_datahub.seed import seed_metadata
+from lineageguard_datahub.verify import compare_observed_graph, observe_live
+
+ATTESTATION = "canonical-local-lineageguard-v1"
+TARGET = "f" * 64
+TARGET_METRICS = {"targetAttestation": ATTESTATION, "targetFingerprint": TARGET}
+
+
+class LifecycleCatalog:
+    def __init__(self) -> None:
+        self.aspects: dict[tuple[str, type[object]], Any] = {}
+
+    def exists(self, entity_urn: str) -> bool:
+        return any(urn == entity_urn for urn, _ in self.aspects)
+
+    def get_aspect(self, entity_urn: str, aspect_type: type[Any], version: int = 0) -> Any | None:
+        del version
+        return self.aspects.get((entity_urn, aspect_type))
+
+    def get_timeseries_values(
+        self,
+        entity_urn: str,
+        aspect_type: type[Any],
+        filter: dict[str, Any],
+        limit: int = 10,
+    ) -> list[Any]:
+        del filter, limit
+        aspect = self.get_aspect(entity_urn, aspect_type)
+        return [] if aspect is None else [aspect]
+
+    def emit_mcp(self, proposal: MetadataChangeProposalWrapper) -> None:
+        assert proposal.entityUrn is not None and proposal.aspect is not None
+        self.aspects[(proposal.entityUrn, type(proposal.aspect))] = proposal.aspect
+
+    def delete_entity(self, urn: str, hard: bool = False) -> None:
+        assert hard is False
+        self.aspects[(urn, StatusClass)] = StatusClass(removed=True)
+
+
+def _add_connector_schemas(catalog: LifecycleCatalog, graph: ExpectedGraph) -> None:
+    for node in graph.nodes:
+        if node.urn not in graph.connector_dataset_urns:
+            continue
+        catalog.emit_mcp(
+            MetadataChangeProposalWrapper(
+                entityUrn=node.urn,
+                aspect=DatasetPropertiesClass(name=node.name),
+            )
+        )
+        fields = [
+            SchemaFieldClass(
+                fieldPath=field,
+                type=SchemaFieldDataTypeClass(type=StringTypeClass()),
+                nativeDataType="text",
+                nullable=False,
+            )
+            for field in node.schema_fields
+        ]
+        catalog.emit_mcp(
+            MetadataChangeProposalWrapper(
+                entityUrn=node.urn,
+                aspect=SchemaMetadataClass(
+                    schemaName=node.logical_key,
+                    platform="urn:li:dataPlatform:postgres",
+                    version=0,
+                    hash="connector",
+                    platformSchema=OtherSchemaClass(rawSchema="{}"),
+                    fields=fields,
+                ),
+            )
+        )
+    catalog.aspects[(graph.source_field.schema_field_urn, StatusClass)] = StatusClass(removed=False)
+
+
+def _append_live_prerequisites(store: ReceiptStore, graph: ExpectedGraph, root: Path) -> None:
+    execution = plan_query_execution(root, graph.query_evidence[0])
+    store.append(
+        OperationReceipt.create(
+            scenario_id=graph.scenario_id,
+            operation_kind="query",
+            entity_urn=None,
+            aspect_name="pg_stat_statements",
+            idempotency_key=execution.normalized_fingerprint,
+            proposal_hash=execution.normalized_fingerprint,
+            status=ReceiptStatus.SUCCESS,
+            detail_code="PG_STAT_OBSERVED",
+            metrics={
+                "queryId": "48291",
+                "executionCount": 2,
+                "totalExecTimeMs": 1.5,
+                "normalizedFingerprint": execution.normalized_fingerprint,
+                "statementSha256": execution.sha256,
+            },
+        )
+    )
+    postgres = "walkthrough/metadata/postgres-ingestion.yml"
+    digest = RECIPE_DIGESTS[postgres]
+    store.append(
+        OperationReceipt.create(
+            scenario_id=graph.scenario_id,
+            operation_kind="ingest",
+            entity_urn=None,
+            aspect_name=postgres,
+            idempotency_key=digest,
+            proposal_hash=digest,
+            status=ReceiptStatus.SUCCESS,
+            detail_code="INGESTED",
+            metrics=TARGET_METRICS,
+        )
+    )
+
+
+def _append_dbt_ingest(store: ReceiptStore, graph: ExpectedGraph) -> None:
+    relative = "walkthrough/metadata/dbt-ingestion.yml"
+    digest = RECIPE_DIGESTS[relative]
+    store.append(
+        OperationReceipt.create(
+            scenario_id=graph.scenario_id,
+            operation_kind="ingest",
+            entity_urn=None,
+            aspect_name=relative,
+            idempotency_key=digest,
+            proposal_hash=digest,
+            status=ReceiptStatus.SUCCESS,
+            detail_code="INGESTED",
+            metrics=TARGET_METRICS,
+        )
+    )
+
+
+def _verify(
+    catalog: LifecycleCatalog, store: ReceiptStore, graph: ExpectedGraph
+) -> tuple[bool, tuple[str, ...]]:
+    report = compare_observed_graph(
+        graph,
+        observe_live(catalog, graph),
+        store.read_all(),
+        target_attestation=ATTESTATION,
+        target_fingerprint=TARGET,
+    )
+    return report.ok, tuple(f"{item.code}:{item.detail}" for item in report.failures)
+
+
+def test_reset_verify_reseed_soft_delete_lifecycle(
+    expected_graph: ExpectedGraph, repository_root: Path, tmp_path: Path
+) -> None:
+    catalog = LifecycleCatalog()
+    _add_connector_schemas(catalog, expected_graph)
+    store = ReceiptStore(tmp_path / "operations.jsonl")
+    _append_live_prerequisites(store, expected_graph, repository_root)
+    emit_live_query_evidence(catalog, catalog, store, expected_graph, repository_root)
+    _append_dbt_ingest(store, expected_graph)
+    seed_metadata(
+        catalog,
+        catalog,
+        store,
+        expected_graph,
+        repository_root,
+        target_attestation=ATTESTATION,
+        target_fingerprint=TARGET,
+    )
+    initial = _verify(catalog, store, expected_graph)
+    assert initial[0], initial[1]
+
+    plan = build_reset_plan(
+        expected_graph,
+        environment_gate="canonical",
+        platform_instance=expected_graph.platform_instance,
+        creation_receipts=store.read_all(),
+        root=repository_root,
+        ownership_nonce=store.ownership_nonce,
+    )
+    execute_reset(catalog, catalog, store, plan)
+    assert not set(plan.urns) & set(expected_graph.connector_dataset_urns)
+    assert _verify(catalog, store, expected_graph)[0] is False
+
+    emit_live_query_evidence(catalog, catalog, store, expected_graph, repository_root)
+    seed_metadata(
+        catalog,
+        catalog,
+        store,
+        expected_graph,
+        repository_root,
+        target_attestation=ATTESTATION,
+        target_fingerprint=TARGET,
+    )
+    assert all(
+        (status := catalog.get_aspect(urn, StatusClass)) is None or status.removed is False
+        for urn in expected_graph.owned_urns
+    )
+    restored = _verify(catalog, store, expected_graph)
+    assert restored[0], restored[1]

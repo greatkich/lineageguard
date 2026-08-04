@@ -115,3 +115,11 @@ def test_datahub_target_policy_and_separate_mutation_token() -> None:
         "LINEAGEGUARD_DATAHUB_TARGET_ATTESTATION": "canonical-local-lineageguard-v1",
     }
     assert load_datahub_config(local_mutation, write=True).credential_kind == "mutation"
+    with pytest.raises(ConfigurationError, match="TARGET_ATTESTATION_REQUIRED"):
+        load_datahub_config(
+            {
+                "DATAHUB_GMS_URL": "http://localhost:8080",
+                "DATAHUB_INGEST_TOKEN": "hidden",
+            },
+            ingest=True,
+        )

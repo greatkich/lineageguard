@@ -9,7 +9,7 @@ source:
     platform_instance: lineageguard-canonical
     target_platform_instance: lineageguard-canonical
     env: PROD
-    include_column_lineage: true
+    include_column_lineage: false
     infer_dbt_schemas: true
 sink:
   type: datahub-rest

@@ -13,18 +13,76 @@ from datahub.metadata.schema_classes import (
     DatasetPropertiesClass,
     GlossaryTermKeyClass,
     MLModelKeyClass,
+    OtherSchemaClass,
     QueryKeyClass,
     SchemaFieldKeyClass,
+    SchemaMetadataClass,
+    StatusClass,
     TagKeyClass,
+    UpstreamLineageClass,
 )
 
+from lineageguard_datahub.ingestion import RECIPE_DIGESTS
 from lineageguard_datahub.models import ExpectedGraph
-from lineageguard_datahub.receipts import ReceiptStatus, ReceiptStore
+from lineageguard_datahub.receipts import OperationReceipt, ReceiptStatus, ReceiptStore
 from lineageguard_datahub.seed import (
+    SeedReceipt,
     build_seed_plan,
     entity_has_scenario_marker,
-    seed_metadata,
 )
+from lineageguard_datahub.seed import (
+    seed_metadata as _seed_metadata,
+)
+
+TARGET_ATTESTATION = "canonical-local-lineageguard-v1"
+TARGET_FINGERPRINT = "f" * 64
+
+
+def _add_ingestion_prerequisites(store: ReceiptStore, graph: ExpectedGraph) -> None:
+    existing = store.read_all()
+    for relative, digest in RECIPE_DIGESTS.items():
+        if any(
+            item.operation_kind == "ingest"
+            and item.aspect_name == relative
+            and item.status is ReceiptStatus.SUCCESS
+            for item in existing
+        ):
+            continue
+        store.append(
+            OperationReceipt.create(
+                scenario_id=graph.scenario_id,
+                operation_kind="ingest",
+                entity_urn=None,
+                aspect_name=relative,
+                idempotency_key=digest,
+                proposal_hash=digest,
+                status=ReceiptStatus.SUCCESS,
+                detail_code="INGESTED",
+                metrics={
+                    "targetAttestation": TARGET_ATTESTATION,
+                    "targetFingerprint": TARGET_FINGERPRINT,
+                },
+            )
+        )
+
+
+def seed_metadata(
+    emitter: RecordingEmitter,
+    reader: FakeCatalog,
+    store: ReceiptStore,
+    graph: ExpectedGraph,
+    root: Path,
+) -> SeedReceipt:
+    _add_ingestion_prerequisites(store, graph)
+    return _seed_metadata(
+        emitter,
+        reader,
+        store,
+        graph,
+        root,
+        target_attestation=TARGET_ATTESTATION,
+        target_fingerprint=TARGET_FINGERPRINT,
+    )
 
 
 class FakeCatalog:
@@ -62,6 +120,29 @@ def _add_connector_entities(catalog: FakeCatalog, graph: ExpectedGraph) -> None:
         catalog.aspects[(urn, ConnectorPresence)] = ConnectorPresence()
 
 
+def _emit_connector_base(catalog: FakeCatalog, graph: ExpectedGraph) -> None:
+    emitter = RecordingEmitter(catalog)
+    for node in graph.nodes:
+        if node.urn not in graph.connector_dataset_urns:
+            continue
+        for aspect in (
+            DatasetPropertiesClass(name=node.name),
+            SchemaMetadataClass(
+                schemaName=node.logical_key,
+                platform="urn:li:dataPlatform:postgres",
+                version=0,
+                hash="connector",
+                platformSchema=OtherSchemaClass(rawSchema="{}"),
+                fields=[],
+            ),
+        ):
+            emitter.emit_mcp(MetadataChangeProposalWrapper(entityUrn=node.urn, aspect=aspect))
+    assert not any(
+        isinstance(proposal.aspect, UpstreamLineageClass) for proposal in emitter.proposals
+    )
+    catalog.aspects[(graph.source_field.schema_field_urn, ConnectorPresence)] = ConnectorPresence()
+
+
 def test_seed_plan_is_stable_and_idempotent(
     expected_graph: ExpectedGraph, repository_root: Path
 ) -> None:
@@ -90,6 +171,23 @@ def test_repeated_seed_emits_same_upsert_sequence(
     assert first.emitted == len(emitter.proposals)
     assert second.emitted == 0
     assert second.skipped == first.emitted
+
+
+def test_metadata_seed_rejects_missing_ingestion_prerequisites(
+    expected_graph: ExpectedGraph, repository_root: Path, tmp_path: Path
+) -> None:
+    catalog = FakeCatalog()
+    _add_connector_entities(catalog, expected_graph)
+    with pytest.raises(ValueError, match="INGEST_PREREQUISITE_MISSING"):
+        _seed_metadata(
+            RecordingEmitter(catalog),
+            catalog,
+            ReceiptStore(tmp_path / "operations.jsonl"),
+            expected_graph,
+            repository_root,
+            target_attestation=TARGET_ATTESTATION,
+            target_fingerprint=TARGET_FINGERPRINT,
+        )
 
 
 def test_partial_failure_is_durable_and_retry_reconciles_exact_successes(
@@ -221,7 +319,7 @@ def test_repeat_connector_refresh_preserves_overlays_and_owned_markers(
 ) -> None:
     store = ReceiptStore(tmp_path / "operations.jsonl")
     catalog = FakeCatalog()
-    _add_connector_entities(catalog, expected_graph)
+    _emit_connector_base(catalog, expected_graph)
     seed_metadata(RecordingEmitter(catalog), catalog, store, expected_graph, repository_root)
     source_terms = next(
         item
@@ -234,13 +332,60 @@ def test_repeat_connector_refresh_preserves_overlays_and_owned_markers(
         type(source_terms.proposal.aspect),
     )
     before_terms = catalog.aspects[overlay_key]
-    for urn in expected_graph.connector_dataset_urns:
-        catalog.aspects[(urn, DatasetPropertiesClass)] = DatasetPropertiesClass(
-            name="connector-refreshed"
-        )
+    lineage_before = {
+        urn: catalog.get_aspect(urn, UpstreamLineageClass)
+        for urn in expected_graph.connector_dataset_urns
+    }
+    _emit_connector_base(catalog, expected_graph)
+    repeated = seed_metadata(
+        RecordingEmitter(catalog), catalog, store, expected_graph, repository_root
+    )
+    assert repeated.emitted == 0
     assert catalog.aspects[overlay_key] is before_terms
+    assert {
+        urn: catalog.get_aspect(urn, UpstreamLineageClass)
+        for urn in expected_graph.connector_dataset_urns
+    } == lineage_before
     dashboard = next(
         node for node in expected_graph.nodes if node.logical_key == "finance.revenue-dashboard"
     )
     assert isinstance(catalog.get_aspect(dashboard.urn, DashboardInfoClass), DashboardInfoClass)
     assert entity_has_scenario_marker(catalog, dashboard.urn, "dashboard", store.ownership_nonce)
+
+
+def test_reseed_undeletes_only_receipt_owned_entity(
+    expected_graph: ExpectedGraph, repository_root: Path, tmp_path: Path
+) -> None:
+    store = ReceiptStore(tmp_path / "operations.jsonl")
+    catalog = FakeCatalog()
+    _add_connector_entities(catalog, expected_graph)
+    seed_metadata(RecordingEmitter(catalog), catalog, store, expected_graph, repository_root)
+    dashboard = next(
+        node for node in expected_graph.nodes if node.logical_key == "finance.revenue-dashboard"
+    )
+    retained_info = catalog.get_aspect(dashboard.urn, DashboardInfoClass)
+    catalog.aspects[(dashboard.urn, StatusClass)] = StatusClass(removed=True)
+    emitter = RecordingEmitter(catalog)
+    receipt = seed_metadata(emitter, catalog, store, expected_graph, repository_root)
+    assert receipt.emitted == 1
+    assert [item.aspectName for item in emitter.proposals] == ["status"]
+    assert catalog.get_aspect(dashboard.urn, StatusClass).removed is False
+    assert catalog.get_aspect(dashboard.urn, DashboardInfoClass) is retained_info
+
+    unowned = FakeCatalog()
+    _add_connector_entities(unowned, expected_graph)
+    for operation in build_seed_plan(expected_graph, repository_root, store.ownership_nonce):
+        if operation.proposal.entityUrn == dashboard.urn and operation.proposal.aspect is not None:
+            unowned.aspects[(dashboard.urn, type(operation.proposal.aspect))] = (
+                operation.proposal.aspect
+            )
+    unowned.aspects[(dashboard.urn, StatusClass)] = StatusClass(removed=True)
+    fresh_store = ReceiptStore(tmp_path / "unowned.jsonl")
+    with pytest.raises(ValueError, match="EXISTING_ENTITY_NOT_OWNED"):
+        seed_metadata(
+            RecordingEmitter(unowned),
+            unowned,
+            fresh_store,
+            expected_graph,
+            repository_root,
+        )

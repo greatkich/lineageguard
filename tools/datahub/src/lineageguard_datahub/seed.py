@@ -29,6 +29,7 @@ from datahub.metadata.schema_classes import (
     OwnershipClass,
     OwnershipTypeClass,
     QueryPropertiesClass,
+    StatusClass,
     TagAssociationClass,
     TagPropertiesClass,
     TrainingDataClass,
@@ -36,6 +37,7 @@ from datahub.metadata.schema_classes import (
     UpstreamLineageClass,
 )
 
+from lineageguard_datahub.ingestion import require_ingestion_prerequisites
 from lineageguard_datahub.lineage import edges_by_downstream
 from lineageguard_datahub.models import EntityType, ExpectedGraph, Granularity, GraphNode
 from lineageguard_datahub.receipts import (
@@ -301,6 +303,22 @@ def build_seed_plan(
                 _lineage_aspect(graph, downstream_urn),
             )
         )
+    seeded_entity_types = {
+        operation.proposal.entityUrn: operation.proposal.entityType
+        for operation in upserts
+        if operation.proposal.entityUrn in graph.owned_urns
+    }
+    for urn, entity_type in sorted(seeded_entity_types.items()):
+        if urn is None:
+            raise ValueError("SEED_ENTITY_URN_MISSING")
+        upserts.append(
+            _upsert(
+                f"status:{urn}",
+                urn,
+                entity_type,
+                StatusClass(removed=False),
+            )
+        )
     keys = [item.idempotency_key for item in upserts]
     if len(keys) != len(set(keys)):
         raise ValueError("DUPLICATE_METADATA_UPSERT")
@@ -340,9 +358,22 @@ def seed_metadata(
     receipt_store: ReceiptStore,
     graph: ExpectedGraph,
     root: Path,
+    *,
+    target_attestation: str,
+    target_fingerprint: str,
 ) -> SeedReceipt:
+    require_ingestion_prerequisites(
+        receipt_store.read_all(),
+        scenario_id=graph.scenario_id,
+        target_attestation=target_attestation,
+        target_fingerprint=target_fingerprint,
+    )
     nonce = receipt_store.ownership_nonce
     plan = build_seed_plan(graph, root, nonce)
+    target_metrics: dict[str, int | float | str] = {
+        "targetAttestation": target_attestation,
+        "targetFingerprint": target_fingerprint,
+    }
     for operation in plan:
         receipt_store.append(
             OperationReceipt.create(
@@ -355,7 +386,7 @@ def seed_metadata(
                 detail_code="OPERATION_PLANNED",
                 proposal_hash=operation.idempotency_key,
                 ownership_nonce=nonce,
-                metrics={"beforeStatus": "UNKNOWN", "afterStatus": "PLANNED"},
+                metrics=target_metrics | {"beforeStatus": "UNKNOWN", "afterStatus": "PLANNED"},
             )
         )
     by_entity: dict[tuple[str, str], list[PlannedUpsert]] = {}
@@ -395,6 +426,7 @@ def seed_metadata(
                         detail_code="CONNECTOR_ENTITY_REQUIRED",
                         proposal_hash=operation.idempotency_key,
                         ownership_nonce=nonce,
+                        metrics=target_metrics,
                     )
                 )
                 raise ValueError(f"CONNECTOR_ENTITY_REQUIRED:{urn}")
@@ -404,6 +436,8 @@ def seed_metadata(
                     raise ValueError("SEED_ASPECT_MISSING")
                 current = reader.get_aspect(urn, type(aspect))
                 if current is not None and current.to_obj() != aspect.to_obj():
+                    if isinstance(aspect, UpstreamLineageClass):
+                        continue
                     receipt_store.append(
                         OperationReceipt.create(
                             scenario_id=graph.scenario_id,
@@ -415,6 +449,7 @@ def seed_metadata(
                             detail_code="CONNECTOR_OVERLAY_CONFLICT",
                             proposal_hash=operation.idempotency_key,
                             ownership_nonce=nonce,
+                            metrics=target_metrics,
                         )
                     )
                     raise ValueError(
@@ -451,6 +486,7 @@ def seed_metadata(
                     detail_code="EXISTING_ENTITY_NOT_OWNED",
                     proposal_hash=operation.idempotency_key,
                     ownership_nonce=nonce,
+                    metrics=target_metrics,
                 )
             )
             raise ValueError(f"EXISTING_ENTITY_NOT_OWNED:{urn}")
@@ -461,6 +497,13 @@ def seed_metadata(
                 raise ValueError("SEED_ASPECT_MISSING")
             current = reader.get_aspect(urn, type(aspect))
             if current is not None and current.to_obj() != aspect.to_obj():
+                if (
+                    isinstance(aspect, StatusClass)
+                    and isinstance(current, StatusClass)
+                    and current.removed is True
+                    and aspect.removed is False
+                ):
+                    continue
                 receipt_store.append(
                     OperationReceipt.create(
                         scenario_id=graph.scenario_id,
@@ -472,6 +515,7 @@ def seed_metadata(
                         detail_code="OWNED_ASPECT_DRIFT",
                         proposal_hash=operation.idempotency_key,
                         ownership_nonce=nonce,
+                        metrics=target_metrics,
                     )
                 )
                 raise ValueError(f"OWNED_ASPECT_DRIFT:{urn}:{operation.proposal.aspectName}")
@@ -499,7 +543,7 @@ def seed_metadata(
                     detail_code="ASPECT_SKIPPED_EXACT",
                     proposal_hash=operation.idempotency_key,
                     ownership_nonce=nonce,
-                    metrics={"beforeStatus": "EXACT", "afterStatus": "UNCHANGED"},
+                    metrics=target_metrics | {"beforeStatus": "EXACT", "afterStatus": "UNCHANGED"},
                 )
             )
             continue
@@ -517,7 +561,7 @@ def seed_metadata(
                     detail_code=type(error).__name__,
                     proposal_hash=operation.idempotency_key,
                     ownership_nonce=nonce,
-                    metrics={"beforeStatus": "MISSING", "afterStatus": "FAILED"},
+                    metrics=target_metrics | {"beforeStatus": "MISSING", "afterStatus": "FAILED"},
                 )
             )
             raise
@@ -533,7 +577,7 @@ def seed_metadata(
                 detail_code="ASPECT_RECONCILED" if urn in owned else "ASPECT_EMITTED",
                 proposal_hash=operation.idempotency_key,
                 ownership_nonce=nonce,
-                metrics={"beforeStatus": "MISSING", "afterStatus": "EMITTED"},
+                metrics=target_metrics | {"beforeStatus": "MISSING", "afterStatus": "EMITTED"},
             )
         )
         if urn not in connector_references and urn not in preexisting_exact and urn not in owned:
@@ -551,7 +595,7 @@ def seed_metadata(
                     detail_code="ENTITY_CREATED",
                     proposal_hash=_entity_proposal_hash(operations),
                     ownership_nonce=nonce,
-                    metrics={"beforeStatus": "ABSENT", "afterStatus": "CREATED"},
+                    metrics=target_metrics | {"beforeStatus": "ABSENT", "afterStatus": "CREATED"},
                 )
             )
             owned.add(urn)

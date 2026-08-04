@@ -3,15 +3,41 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
 import pytest
+from datahub.metadata.schema_classes import StatusClass
 
 from lineageguard_datahub.ingestion import RECIPE_DIGESTS
 from lineageguard_datahub.live_query import build_live_query_plan
 from lineageguard_datahub.models import ExpectedGraph
 from lineageguard_datahub.query_history import plan_query_execution
 from lineageguard_datahub.receipts import OperationReceipt, ReceiptStatus
-from lineageguard_datahub.verify import ObservedGraph, compare_observed_graph, expected_observation
+from lineageguard_datahub.verify import (
+    ObservedGraph,
+    expected_observation,
+    observe_live,
+)
+from lineageguard_datahub.verify import (
+    compare_observed_graph as _compare_observed_graph,
+)
+
+TARGET_ATTESTATION = "canonical-local-lineageguard-v1"
+TARGET_FINGERPRINT = "f" * 64
+
+
+def compare_observed_graph(
+    graph: ExpectedGraph,
+    observed: ObservedGraph,
+    receipts: tuple[OperationReceipt, ...] = (),
+):
+    return _compare_observed_graph(
+        graph,
+        observed,
+        receipts,
+        target_attestation=TARGET_ATTESTATION,
+        target_fingerprint=TARGET_FINGERPRINT,
+    )
 
 
 def _live_bundle(
@@ -36,6 +62,10 @@ def _live_bundle(
         },
     )
     recipe_digest = RECIPE_DIGESTS["walkthrough/metadata/postgres-ingestion.yml"]
+    target_metrics = {
+        "targetAttestation": TARGET_ATTESTATION,
+        "targetFingerprint": TARGET_FINGERPRINT,
+    }
     ingest = OperationReceipt.create(
         scenario_id=graph.scenario_id,
         operation_kind="ingest",
@@ -45,6 +75,7 @@ def _live_bundle(
         status=ReceiptStatus.SUCCESS,
         detail_code="INGESTED",
         recorded_at="2026-08-04T10:01:00+00:00",
+        metrics=target_metrics,
     )
     plan = build_live_query_plan(graph, repository_root, query, "nonce")
     metrics = {
@@ -79,7 +110,38 @@ def _live_bundle(
         observation_timestamp_ms=1785837600000,
         aspect_keys=tuple((item.proposal.aspectName or "", item.idempotency_key) for item in plan),
     )
-    return replace(observed, query_signals=(signal,)), (query, ingest, *live)
+    dbt_digest = RECIPE_DIGESTS["walkthrough/metadata/dbt-ingestion.yml"]
+    dbt_ingest = OperationReceipt.create(
+        scenario_id=graph.scenario_id,
+        operation_kind="ingest",
+        entity_urn=None,
+        aspect_name="walkthrough/metadata/dbt-ingestion.yml",
+        idempotency_key=dbt_digest,
+        proposal_hash=dbt_digest,
+        status=ReceiptStatus.SUCCESS,
+        detail_code="INGESTED",
+        recorded_at="2026-08-04T10:02:00+00:00",
+        metrics=target_metrics,
+    )
+    seed = OperationReceipt.create(
+        scenario_id=graph.scenario_id,
+        operation_kind="seed",
+        entity_urn=graph.owned_urns[0],
+        aspect_name="status",
+        idempotency_key="c" * 64,
+        proposal_hash="c" * 64,
+        status=ReceiptStatus.SUCCESS,
+        detail_code="ASPECT_EMITTED",
+        recorded_at="2026-08-04T10:03:00+00:00",
+        metrics=target_metrics,
+    )
+    return replace(observed, query_signals=(signal,)), (
+        query,
+        ingest,
+        *live,
+        dbt_ingest,
+        seed,
+    )
 
 
 def test_exact_live_observation_verifies(
@@ -148,6 +210,7 @@ def test_missing_receipts_cannot_report_live_success(expected_graph: ExpectedGra
     report = compare_observed_graph(expected_graph, expected_observation(expected_graph))
     assert report.ok is False
     assert {failure.code for failure in report.failures} == {
+        "INGEST_PREREQUISITE_MISSING",
         "PG_STAT_RECEIPT_MISSING",
         "POSTGRES_INGEST_RECEIPT_MISSING",
         "LIVE_QUERY_INGEST_RECEIPTS_MISSING",
@@ -203,3 +266,39 @@ def test_manual_signal_and_extra_schema_field_are_rejected(
         "LIVE_QUERY_EVIDENCE_MISSING",
         "SCHEMA_FIELD_INVENTORY_MISMATCH",
     }
+
+
+class RemovedEntityReader:
+    def __init__(self, removed_urn: str) -> None:
+        self.removed_urn = removed_urn
+
+    def exists(self, entity_urn: str) -> bool:
+        return True
+
+    def get_aspect(self, entity_urn: str, aspect_type: type[Any], version: int = 0) -> Any | None:
+        del version
+        if entity_urn == self.removed_urn and aspect_type is StatusClass:
+            return StatusClass(removed=True)
+        return None
+
+    def get_timeseries_values(
+        self,
+        entity_urn: str,
+        aspect_type: type[Any],
+        filter: dict[str, Any],
+        limit: int = 10,
+    ) -> list[Any]:
+        del entity_urn, aspect_type, filter, limit
+        return []
+
+
+def test_soft_removed_entity_is_excluded_from_live_verification(
+    expected_graph: ExpectedGraph,
+) -> None:
+    removed = next(
+        node.urn for node in expected_graph.nodes if node.logical_key == "finance.revenue-dashboard"
+    )
+    observed = observe_live(RemovedEntityReader(removed), expected_graph)
+    assert removed not in observed.entity_urns
+    report = compare_observed_graph(expected_graph, observed)
+    assert "ENTITY_INVENTORY_MISMATCH" in {item.code for item in report.failures}

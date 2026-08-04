@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import os
 from dataclasses import dataclass, field
 from ipaddress import ip_address
@@ -10,12 +11,22 @@ class ConfigurationError(ValueError):
     """Required configuration is missing or unsafe."""
 
 
+CANONICAL_TARGET_ATTESTATION = "canonical-local-lineageguard-v1"
+
+
 @dataclass(frozen=True, slots=True)
 class DataHubConfig:
     server: str
     token: str | None = field(repr=False)
     remote: bool = False
     credential_kind: str = "read"
+    target_attestation: str | None = None
+
+    @property
+    def target_fingerprint(self) -> str:
+        if self.target_attestation is None:
+            raise ConfigurationError("DATAHUB_TARGET_ATTESTATION_REQUIRED")
+        return hashlib.sha256(f"{self.server}|{self.target_attestation}".encode()).hexdigest()
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,22 +98,27 @@ def load_datahub_config(
     token = values.get(token_name) or None
     if credential_kind != "read" and token is None:
         raise ConfigurationError(f"{token_name}_REQUIRED")
+    target_attestation = values.get("LINEAGEGUARD_DATAHUB_TARGET_ATTESTATION")
     if credential_kind == "mutation":
         if not local:
             raise ConfigurationError("REMOTE_DATAHUB_MUTATION_DENIED")
-        if (
-            values.get("LINEAGEGUARD_DATAHUB_TARGET_ATTESTATION")
-            != "canonical-local-lineageguard-v1"
-        ):
+        if target_attestation != CANONICAL_TARGET_ATTESTATION:
             raise ConfigurationError("DATAHUB_TARGET_ATTESTATION_REQUIRED")
-    elif credential_kind == "ingest" and not local:
-        if values.get("LINEAGEGUARD_REMOTE_DATAHUB_WRITE") != "approved":
+    elif credential_kind == "ingest":
+        if target_attestation is None or not target_attestation.strip():
+            raise ConfigurationError("DATAHUB_TARGET_ATTESTATION_REQUIRED")
+        if len(target_attestation) > 4096:
+            raise ConfigurationError("ENV_TOO_LARGE:LINEAGEGUARD_DATAHUB_TARGET_ATTESTATION")
+        if local and target_attestation != CANONICAL_TARGET_ATTESTATION:
+            raise ConfigurationError("DATAHUB_TARGET_ATTESTATION_REQUIRED")
+        if not local and values.get("LINEAGEGUARD_REMOTE_DATAHUB_WRITE") != "approved":
             raise ConfigurationError("REMOTE_DATAHUB_WRITE_OPT_IN_REQUIRED")
     return DataHubConfig(
         server=server.rstrip("/"),
         token=token,
         remote=not local,
         credential_kind=credential_kind,
+        target_attestation=target_attestation,
     )
 
 
