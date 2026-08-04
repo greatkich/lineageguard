@@ -622,6 +622,63 @@ describe("canonical impact evidence", () => {
     ).toBe(false);
   });
 
+  it("rejects duplicate terminal-failure invocation IDs in contexts and failure reports", () => {
+    const context = createCanonicalImpactContextFixture(canonicalChange().id);
+    const duplicateFailures = [
+      {
+        tool: "get_entities" as const,
+        invocationId: "shared-terminal-invocation",
+        code: "MALFORMED_RESPONSE" as const,
+        message: "Entity response was malformed.",
+      },
+      {
+        tool: "get_lineage" as const,
+        invocationId: "shared-terminal-invocation",
+        code: "TIMEOUT" as const,
+        message: "Lineage request timed out.",
+      },
+    ];
+    const partial = reboundContext(context, {
+      collectionStatus: "PARTIAL",
+      failures: duplicateFailures,
+    });
+    expect(impactContextSchema.safeParse(partial).success).toBe(false);
+
+    const failureIdentity = {
+      requested: context.resolution.requested,
+      failedAt: context.collectedAt,
+      failures: duplicateFailures,
+    };
+    expect(
+      impactCollectionFailureReportSchema.safeParse({
+        ...failureIdentity,
+        failureFingerprint: computeImpactCollectionFailureFingerprint(failureIdentity),
+      }).success,
+    ).toBe(false);
+  });
+
+  it("rejects one invocation ID representing both provenance and terminal failure", () => {
+    const context = createCanonicalImpactContextFixture(canonicalChange().id);
+    const schema = required(
+      context.evidence.find((item) => item.kind === "SCHEMA"),
+      "schema evidence",
+    );
+    const schemaInvocation = required(schema.provenance[0], "schema provenance");
+    const responseFailureCollision = reboundContext(context, {
+      collectionStatus: "PARTIAL",
+      failures: [
+        {
+          tool: schemaInvocation.tool,
+          invocationId: schemaInvocation.invocationId,
+          code: "TERMINATED",
+          message: "Invocation was also recorded as a terminal failure.",
+        },
+      ],
+    });
+
+    expect(impactContextSchema.safeParse(responseFailureCollision).success).toBe(false);
+  });
+
   it("rejects forged canonical path, query, and classification semantics", () => {
     const context = createCanonicalImpactContextFixture(canonicalChange().id);
     const path = required(

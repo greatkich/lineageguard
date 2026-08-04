@@ -417,15 +417,17 @@ export const impactCollectionFailureReportSchema = z
   })
   .strict()
   .superRefine((report, refinement) => {
+    const invocationIds = report.failures.map((failure) => failure.invocationId);
+    if (new Set(invocationIds).size !== invocationIds.length) {
+      issue(refinement, "Collection failure invocation IDs must be unique", ["failures"]);
+    }
     const keys = report.failures.map(
       (failure) =>
         `${failure.tool}\u0000${failure.invocationId}\u0000${failure.code}\u0000${failure.message}`,
     );
-    if (
-      new Set(keys).size !== keys.length ||
-      keys.some((key, index) => key !== [...keys].sort()[index])
-    ) {
-      issue(refinement, "Collection failures must be unique and canonically ordered", ["failures"]);
+    const sortedKeys = [...keys].sort();
+    if (keys.some((key, index) => key !== sortedKeys[index])) {
+      issue(refinement, "Collection failures must be canonically ordered", ["failures"]);
     }
     const { failureFingerprint, ...identity } = report;
     if (failureFingerprint !== sha256(identity)) {
@@ -532,11 +534,12 @@ export const impactContextSchema = z
       (failure) =>
         `${failure.tool}\u0000${failure.invocationId}\u0000${failure.code}\u0000${failure.message}`,
     );
+    const failureInvocationIds = context.failures.map((failure) => failure.invocationId);
+    if (new Set(failureInvocationIds).size !== failureInvocationIds.length) {
+      issue(refinement, "Collection failure invocation IDs must be unique", ["failures"]);
+    }
     const sortedFailureKeys = [...failureKeys].sort();
-    if (
-      new Set(failureKeys).size !== failureKeys.length ||
-      failureKeys.some((key, index) => key !== sortedFailureKeys[index])
-    ) {
+    if (failureKeys.some((key, index) => key !== sortedFailureKeys[index])) {
       issue(refinement, "Collection failures must use canonical order", ["failures"]);
     }
     const byId = new Map(context.evidence.map((item) => [item.id, item]));
