@@ -38,7 +38,7 @@ The patch prevents secrets from entering chat or command output, limits token-fi
 2. Review the selected commit, its Apache-2.0 licensing, every changed skill instruction, and any executable helper before copying files.
 3. Copy only the eight declared roots above. Do not run `npx skills add` against the working tree.
 4. Reapply and independently review the local `datahub-setup` security patch. Record its new upstream and vendored hashes and a precise patch description.
-5. Update the source ref, exact root list, every file digest, and local-patch metadata in `skills-lock.json`.
+5. Update `skills-lock.json` `source.ref` and `scripts/verify-agent-skills.mjs` `EXPECTED_REF` to the same reviewed 40-hex commit, then update the exact root list, every file digest, and local-patch metadata; the independent verifier constant is intentional fail-closed protection against an unreviewed manifest-only ref change.
 6. Run:
 
    ```bash
