@@ -38,6 +38,10 @@ domain evidence with stable provenance and fingerprints.
 - Lineage paths retain ordered typed segments. Each segment records entity endpoints, field or
   entity granularity, and exact field paths where applicable; the canonical paths end at the real
   dashboard and model rather than at an intermediate dataset.
+- The pinned MCP server does not accept a column endpoint on only one side of a path request.
+  Therefore each mixed canonical path composes two official read calls in order: a column-to-column
+  path ending at the downstream dataset field, then an entity-to-entity path ending at the dashboard
+  or model. The evidence preserves both invocation IDs and raw response fingerprints.
 - Query evidence retains only fields exposed by the approved official MCP tools: the DataHub query
   URN, `SYSTEM` source, exact dataset/schema-field subject, and normalized statement fingerprint.
   Raw SQL is not part of the domain evidence contract. Query usage count and last-observed time are
@@ -54,8 +58,9 @@ domain evidence with stable provenance and fingerprints.
 
 1. Search for the exact platform/environment/dataset and require one source dataset URN.
 2. List schema fields and bind `commerce.orders.customer_id` with its native type/nullability.
-3. Collect downstream lineage and exact mixed entity/field paths to the analytics revenue asset,
-   Finance dashboard, fraud feature dataset, and production fraud model.
+3. Collect downstream lineage and compose exact mixed entity/field paths to the analytics revenue
+   asset, Finance dashboard, fraud feature dataset, and production fraud model from the separately
+   attested column and entity path calls.
 4. Read entity details for criticality/lifecycle plus real ownership of the Finance dashboard and
    fraud model.
 5. Collect the ingested PostgreSQL `SYSTEM` query entity that references `customer_id`, preserving
