@@ -36,10 +36,17 @@ const searchPageSchema = z
 
 const schemaFieldSchema = z
   .object({
-    deprecated: z.boolean().optional(),
+    deprecated: z
+      .object({
+        deprecated: z.literal(true),
+        note: boundedText,
+      })
+      .strict()
+      .optional(),
     description: boundedText.nullable().optional(),
     editedDescription: boundedText.nullable().optional(),
-    editedNullable: z.boolean().optional(),
+    editedGlossaryTerms: z.array(boundedText).max(100).optional(),
+    editedTags: z.array(boundedText).max(100).optional(),
     glossaryTerms: z.array(boundedText).max(100).optional(),
     fieldPath: boundedText.min(1),
     isPartOfKey: z.boolean().optional(),
@@ -89,22 +96,21 @@ const lineageResultSchema = z
 
 const lineageDirectionSchema = z
   .object({
-    count: nonnegativeInteger,
+    count: nonnegativeInteger.optional(),
     facets: z.unknown().optional(),
-    hasMore: z.boolean(),
-    offset: nonnegativeInteger,
-    returned: nonnegativeInteger,
+    hasMore: z.boolean().optional(),
+    offset: nonnegativeInteger.optional(),
+    returned: nonnegativeInteger.optional(),
     searchResults: z.array(lineageResultSchema).max(MAX_PAGE_ITEMS).default([]),
-    start: nonnegativeInteger,
+    start: nonnegativeInteger.optional(),
     total: nonnegativeInteger,
     truncatedDueToTokenBudget: z.boolean().optional(),
   })
   .strict()
   .refine(
     (page) =>
-      page.count === page.searchResults.length &&
-      page.returned === page.searchResults.length &&
-      page.total >= page.start + page.returned,
+      (page.returned === undefined || page.returned === page.searchResults.length) &&
+      page.total >= (page.offset ?? page.start ?? 0) + page.searchResults.length,
   );
 
 const lineageMetadataSchema = z
@@ -226,7 +232,8 @@ const entitySchema = z
   .object({
     urn,
   })
-  .passthrough();
+  .passthrough()
+  .refine((entity) => !("error" in entity));
 
 const entitiesResultSchema = z.union([
   entitySchema.transform((entity) => [entity]),
