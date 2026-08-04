@@ -53,16 +53,17 @@ def latest_warehouse_receipt(
     candidates = [
         receipt
         for receipt in receipts
-        if receipt.scenario_id == scenario_id
-        and receipt.operation_kind == "warehouse"
-        and receipt.status is ReceiptStatus.SUCCESS
-        and receipt.detail_code == "WAREHOUSE_READY"
-        and receipt_has_registry_binding(
-            receipt,
-            ownership_nonce=ownership_nonce,
-            warehouse_target_fingerprint=warehouse_target_fingerprint,
-        )
+        if receipt.scenario_id == scenario_id and receipt.operation_kind == "warehouse"
     ]
     if not candidates:
         raise ValueError("WAREHOUSE_RECEIPT_REQUIRED")
-    return candidates[-1]
+    latest = candidates[-1]
+    if latest.status is not ReceiptStatus.SUCCESS or latest.detail_code != "WAREHOUSE_READY":
+        raise ValueError("WAREHOUSE_RECEIPT_NOT_CURRENT")
+    if not receipt_has_registry_binding(
+        latest,
+        ownership_nonce=ownership_nonce,
+        warehouse_target_fingerprint=warehouse_target_fingerprint,
+    ):
+        raise ValueError("WAREHOUSE_RECEIPT_BINDING_MISMATCH")
+    return latest

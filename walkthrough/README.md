@@ -146,6 +146,10 @@ uv run --project tools/datahub lineageguard-datahub reconcile-live-query --execu
 uv run --project tools/datahub lineageguard-datahub reconcile-reset --execute --confirm canonical-customer-id-rename
 ```
 
+The warehouse, dbt, read-query, and connector commands are declarative or read-only; a failed run
+is retried through the same exact command, and no downstream step accepts an older warehouse/dbt or
+connector success after a newer failed attempt.
+
 `metadata-seed --execute` requires a registry-bound warehouse receipt, the exact ordered dbt command
 and three-artifact receipts, and current successful receipts for both captured connector recipes in
 PostgreSQL-then-dbt order. Every receipt is bound to the private scenario nonce and non-secret

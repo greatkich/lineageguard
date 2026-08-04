@@ -23,6 +23,9 @@ MAX_RECEIPTS = 10_000
 MAX_METRICS = 32
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 MetricValue = int | float | str
+# These read-modify-write effects require live inspection before retry. Warehouse, dbt, query,
+# and connector commands are declarative or read-only and converge through an exact normal rerun.
+LIVE_RECONCILIATION_KINDS = frozenset({"seed", "ingest-query", "reset"})
 
 
 class ReceiptStatus(StrEnum):
@@ -462,7 +465,8 @@ class ReceiptStore:
         return tuple(
             receipt
             for receipt in latest.values()
-            if receipt.status
+            if receipt.operation_kind in LIVE_RECONCILIATION_KINDS
+            and receipt.status
             in {
                 ReceiptStatus.PLANNED,
                 ReceiptStatus.FAILURE,

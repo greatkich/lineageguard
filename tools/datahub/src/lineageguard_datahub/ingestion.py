@@ -18,7 +18,12 @@ from lineageguard_datahub.provenance import (
     latest_warehouse_receipt,
     receipt_has_registry_binding,
 )
-from lineageguard_datahub.receipts import MetricValue, OperationReceipt, ReceiptStatus
+from lineageguard_datahub.receipts import (
+    LIVE_RECONCILIATION_KINDS,
+    MetricValue,
+    OperationReceipt,
+    ReceiptStatus,
+)
 
 RECIPE_DIGESTS = {
     "walkthrough/metadata/postgres-ingestion.yml": (
@@ -390,7 +395,8 @@ def ingestion_prerequisite_failures(
     unresolved = [
         receipt
         for receipt in latest_by_identity.values()
-        if receipt.status
+        if receipt.operation_kind in LIVE_RECONCILIATION_KINDS
+        and receipt.status
         in {
             ReceiptStatus.PLANNED,
             ReceiptStatus.FAILURE,
@@ -416,12 +422,15 @@ def ingestion_prerequisite_failures(
     except ValueError as error:
         failures.append(str(error))
         warehouse_index = -1
-    dbt_candidates = [
+    dbt_records = [
         (index, receipt)
         for index, receipt in enumerate(receipts)
-        if receipt.scenario_id == scenario_id
-        and receipt.operation_kind == "dbt-build"
-        and receipt.aspect_name == "artifact-set"
+        if receipt.scenario_id == scenario_id and receipt.operation_kind == "dbt-build"
+    ]
+    dbt_candidates = [
+        (index, receipt)
+        for index, receipt in dbt_records
+        if receipt.aspect_name == "artifact-set"
         and receipt.status is ReceiptStatus.SUCCESS
         and receipt.detail_code == "DBT_ARTIFACTS_VERIFIED"
     ]
@@ -430,6 +439,8 @@ def ingestion_prerequisite_failures(
         failures.append("DBT_BUILD_RECEIPT_REQUIRED")
     else:
         dbt_index, dbt_receipt = dbt_candidates[-1]
+        if dbt_records[-1][0] != dbt_index:
+            failures.append("DBT_BUILD_RECEIPT_NOT_CURRENT")
         expected_dbt_metrics = dict(artifact_metrics) | {
             "dbtProjectFingerprint": dbt_project_sha256,
         }
@@ -580,6 +591,13 @@ def require_dbt_build_provenance(
     if not candidates:
         raise ValueError("DBT_BUILD_RECEIPT_REQUIRED")
     artifact_index = candidates[-1][0]
+    latest_dbt_index = max(
+        index
+        for index, receipt in enumerate(receipts)
+        if receipt.scenario_id == scenario_id and receipt.operation_kind == "dbt-build"
+    )
+    if latest_dbt_index != artifact_index:
+        raise ValueError("DBT_BUILD_RECEIPT_NOT_CURRENT")
     indexes: dict[str, int] = {}
     for aspect, digest in (
         ("build", DBT_BUILD_COMMAND_FINGERPRINT),

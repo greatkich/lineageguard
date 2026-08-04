@@ -23,6 +23,7 @@ from lineageguard_datahub.ingestion import (
     CANONICAL_DBT_NODES,
     CANONICAL_DBT_RELATIONS,
     DBT_ARTIFACT_PATHS,
+    DBT_BUILD_COMMAND_FINGERPRINT,
     DBT_PROJECT_FILE_DIGESTS,
     RECIPE_DIGESTS,
     build_ingestion_plan,
@@ -31,7 +32,7 @@ from lineageguard_datahub.ingestion import (
     protected_ingestion_snapshot,
     verify_dbt_ingestion_artifacts,
 )
-from lineageguard_datahub.receipts import ReceiptStatus, ReceiptStore
+from lineageguard_datahub.receipts import OperationReceipt, ReceiptStatus, ReceiptStore
 
 SCENARIO = "canonical-customer-id-rename"
 
@@ -135,6 +136,57 @@ def test_dbt_ingestion_requires_complete_successful_clean_target(tmp_path: Path)
     assert (
         tuple(artifact.relative_path for artifact in verify_dbt_ingestion_artifacts(tmp_path))
         == DBT_ARTIFACT_PATHS
+    )
+
+
+def test_later_failed_warehouse_or_dbt_attempt_invalidates_old_provenance(
+    repository_root: Path, tmp_path: Path
+) -> None:
+    store = ReceiptStore(tmp_path / "operations.jsonl")
+    append_build_provenance(store, repository_root)
+    append_ingestion_receipts(store, repository_root)
+    valid = store.read_all()
+    project, artifacts, snapshot = provenance_values(repository_root)
+    kwargs = {
+        "scenario_id": SCENARIO,
+        "ownership_nonce": store.ownership_nonce,
+        "warehouse_target_fingerprint": WAREHOUSE_TARGET,
+        "target_attestation": TARGET_ATTESTATION,
+        "target_fingerprint": TARGET_FINGERPRINT,
+        "dbt_project_sha256": project,
+        "artifact_metrics": artifacts,
+        "snapshot_fingerprint": snapshot,
+    }
+    warehouse = next(item for item in valid if item.operation_kind == "warehouse")
+    warehouse_failure = OperationReceipt.create(
+        scenario_id=SCENARIO,
+        operation_kind="warehouse",
+        entity_urn=None,
+        aspect_name=warehouse.aspect_name,
+        idempotency_key=warehouse.idempotency_key,
+        proposal_hash=warehouse.proposal_hash,
+        status=ReceiptStatus.FAILURE,
+        detail_code="RuntimeError",
+        ownership_nonce=store.ownership_nonce,
+        metrics=warehouse.metrics,
+    )
+    assert "WAREHOUSE_RECEIPT_NOT_CURRENT" in ingestion_prerequisite_failures(
+        (*valid, warehouse_failure), **kwargs
+    )
+    dbt_retry = OperationReceipt.create(
+        scenario_id=SCENARIO,
+        operation_kind="dbt-build",
+        entity_urn=None,
+        aspect_name="build",
+        idempotency_key=DBT_BUILD_COMMAND_FINGERPRINT,
+        proposal_hash=project,
+        status=ReceiptStatus.PLANNED,
+        detail_code="OPERATION_PLANNED",
+        ownership_nonce=store.ownership_nonce,
+        metrics=valid[0].metrics | {"dbtProjectFingerprint": project},
+    )
+    assert "DBT_BUILD_RECEIPT_NOT_CURRENT" in ingestion_prerequisite_failures(
+        (*valid, dbt_retry), **kwargs
     )
 
 

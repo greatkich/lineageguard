@@ -98,6 +98,27 @@ def test_receipt_store_rejects_symlink_and_permissive_mode(tmp_path: Path) -> No
         ReceiptStore(link).read_all()
 
 
+def test_only_ambiguous_read_modify_write_failures_require_live_reconciliation(
+    tmp_path: Path,
+) -> None:
+    store = ReceiptStore(tmp_path / "state/operations.jsonl")
+    store.append(
+        OperationReceipt.create(
+            scenario_id="canonical-customer-id-rename",
+            operation_kind="dbt-build",
+            entity_urn=None,
+            aspect_name="build",
+            idempotency_key="d" * 64,
+            proposal_hash="e" * 64,
+            status=ReceiptStatus.FAILURE,
+            detail_code="EXIT_1",
+        )
+    )
+    assert store.unresolved("canonical-customer-id-rename") == ()
+    with store.scenario_operation("canonical-customer-id-rename", "dbt-build"):
+        pass
+
+
 def test_ingestion_environment_is_purpose_bound_and_minimal(repository_root: Path) -> None:
     environ = {
         "PATH": "/bin",
