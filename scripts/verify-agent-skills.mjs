@@ -90,6 +90,14 @@ async function walkFiles(root, relativeDirectory) {
   return files;
 }
 
+async function assertRealVendoredRoot(root, relativeDirectory) {
+  const metadata = await lstat(resolve(root, ...relativeDirectory.split("/")));
+  assert(
+    metadata.isDirectory() && !metadata.isSymbolicLink(),
+    `vendored root is not a real directory: ${relativeDirectory}`,
+  );
+}
+
 async function hashFile(root, relativePath) {
   const absolutePath = resolve(root, ...relativePath.split("/"));
   const metadata = await lstat(absolutePath);
@@ -100,6 +108,8 @@ async function hashFile(root, relativePath) {
 async function verifySnapshot(root, lock) {
   validateLock(lock);
   validateLockedPaths(lock.files);
+
+  for (const vendoredRoot of EXPECTED_ROOTS) await assertRealVendoredRoot(root, vendoredRoot);
 
   const actualFiles = [];
   for (const vendoredRoot of EXPECTED_ROOTS) actualFiles.push(...(await walkFiles(root, vendoredRoot)));
