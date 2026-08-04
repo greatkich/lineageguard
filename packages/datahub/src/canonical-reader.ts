@@ -1,3 +1,4 @@
+import { canonicalAnalyticsStagingUrn } from "@lineageguard/domain";
 import { z } from "zod";
 import { DataHubAdapterError } from "./errors.js";
 import {
@@ -14,6 +15,7 @@ import {
   parseSchemaFieldsPage,
   parseSearchPage,
 } from "./official-contract.js";
+import { collectBoundedPages } from "./pagination.js";
 import type { RawToolInvocation, ReadToolName } from "./tool-client.js";
 
 const identifier = z
@@ -72,6 +74,7 @@ export type CanonicalObservations = Readonly<{
   dashboardFieldPath: OfficialObservation<OfficialPathResult>;
   fraudEntityPath: OfficialObservation<OfficialPathResult>;
   fraudFieldPath: OfficialObservation<OfficialPathResult>;
+  fraudLineageDiscovery: OfficialObservation<OfficialLineagePage>;
   glossaryDetails: OfficialObservation<readonly OfficialEntity[]>;
   lineageDiscovery: OfficialObservation<OfficialLineagePage>;
   modelDetails: OfficialObservation<readonly OfficialEntity[]>;
@@ -95,7 +98,18 @@ async function observe<T>(
       { invocationId: invocation.invocationId, tool },
     );
   }
-  return Object.freeze({ data: parse(invocation.payload), invocation });
+  try {
+    return Object.freeze({ data: parse(invocation.payload), invocation });
+  } catch (error) {
+    if (error instanceof DataHubAdapterError) {
+      throw new DataHubAdapterError(error.code, error.message, {
+        invocationId: invocation.invocationId,
+        retryable: error.retryable,
+        tool,
+      });
+    }
+    throw error;
+  }
 }
 
 function safeTargets(input: CanonicalCollectionTargets): CanonicalCollectionTargets {
@@ -124,78 +138,327 @@ function requireUniqueResolution(
   );
 }
 
+type PagedItem<TPage, TItem> = Readonly<{
+  item: TItem;
+  page: OfficialObservation<TPage>;
+}>;
+
+type ObservedPage<TPage, TItem> = Readonly<{
+  items: readonly TItem[];
+  nextOffset?: number;
+  observation: OfficialObservation<TPage>;
+}>;
+
+async function collectObservedPages<TPage, TItem>(
+  tool: ReadToolName,
+  fetchPage: (offset: number, pageSize: number) => Promise<ObservedPage<TPage, TItem>>,
+): Promise<
+  Readonly<{
+    items: readonly PagedItem<TPage, TItem>[];
+    pages: readonly OfficialObservation<TPage>[];
+  }>
+> {
+  const pages: OfficialObservation<TPage>[] = [];
+  let lastInvocation: RawToolInvocation | undefined;
+  try {
+    const items = await collectBoundedPages<PagedItem<TPage, TItem>>(async (offset, pageSize) => {
+      const page = await fetchPage(offset, pageSize);
+      pages.push(page.observation);
+      lastInvocation = page.observation.invocation;
+      const observedItems = page.items.map((item) =>
+        Object.freeze({ item, page: page.observation }),
+      );
+      return page.nextOffset === undefined
+        ? { items: observedItems }
+        : { items: observedItems, nextOffset: page.nextOffset };
+    });
+    return Object.freeze({ items, pages: Object.freeze(pages) });
+  } catch (error) {
+    if (
+      error instanceof DataHubAdapterError &&
+      error.invocationId === undefined &&
+      lastInvocation !== undefined
+    ) {
+      throw new DataHubAdapterError(error.code, error.message, {
+        invocationId: lastInvocation.invocationId,
+        retryable: error.retryable,
+        tool,
+      });
+    }
+    throw error;
+  }
+}
+
+function pageInvocation<TPage, TItem>(
+  matches: readonly PagedItem<TPage, TItem>[],
+  pages: readonly OfficialObservation<TPage>[],
+): RawToolInvocation {
+  const invocation = matches.at(-1)?.page.invocation ?? pages.at(-1)?.invocation;
+  if (invocation === undefined) {
+    throw new DataHubAdapterError(
+      "MALFORMED_RESPONSE",
+      "DataHub pagination produced no observable page.",
+    );
+  }
+  return invocation;
+}
+
+async function collectResolutionSearch(
+  invoker: CanonicalToolInvoker,
+  targets: CanonicalCollectionTargets,
+): Promise<OfficialObservation<OfficialSearchPage>> {
+  const paged = await collectObservedPages("search", async (offset, pageSize) => {
+    const observation = await observe(
+      invoker,
+      "search",
+      {
+        filter: `entity_type = dataset AND platform = ${targets.platform} AND env = ${targets.environment}`,
+        num_results: pageSize,
+        offset,
+        query: `/q ${targets.platformInstance}+${targets.database}+${targets.schema}+${targets.dataset}`,
+      },
+      parseSearchPage,
+    );
+    if (observation.data.start !== offset) {
+      throw new DataHubAdapterError(
+        "CURSOR_CYCLE",
+        "DataHub pagination did not return the requested offset.",
+        {
+          invocationId: observation.invocation.invocationId,
+          tool: observation.invocation.tool,
+        },
+      );
+    }
+    const nextOffset = observation.data.start + observation.data.count;
+    return {
+      items: observation.data.searchResults,
+      ...(nextOffset >= observation.data.total ? {} : { nextOffset }),
+      observation,
+    };
+  });
+  const matches = paged.items.filter((result) => result.item.entity.urn === targets.sourceUrn);
+  requireUniqueResolution(matches.length, pageInvocation(matches, paged.pages), "dataset");
+  const proof = matches[0]?.page;
+  if (proof === undefined) {
+    throw new DataHubAdapterError("NOT_FOUND", "Canonical DataHub dataset was not found.");
+  }
+  return proof;
+}
+
+async function collectSchemaFields(
+  invoker: CanonicalToolInvoker,
+  targets: CanonicalCollectionTargets,
+): Promise<OfficialObservation<OfficialSchemaFieldsPage>> {
+  let globalMatchingCount: number | undefined;
+  const paged = await collectObservedPages("list_schema_fields", async (offset, pageSize) => {
+    const observation = await observe(
+      invoker,
+      "list_schema_fields",
+      {
+        keywords: [targets.field],
+        limit: pageSize,
+        offset,
+        urn: targets.sourceUrn,
+      },
+      parseSchemaFieldsPage,
+    );
+    if (observation.data.urn !== targets.sourceUrn) {
+      throw new DataHubAdapterError(
+        "MALFORMED_RESPONSE",
+        "DataHub schema response did not match the resolved dataset.",
+        {
+          invocationId: observation.invocation.invocationId,
+          tool: observation.invocation.tool,
+        },
+      );
+    }
+    if (observation.data.offset !== offset) {
+      throw new DataHubAdapterError(
+        "CURSOR_CYCLE",
+        "DataHub pagination did not return the requested offset.",
+        {
+          invocationId: observation.invocation.invocationId,
+          tool: observation.invocation.tool,
+        },
+      );
+    }
+    const matchingCount = observation.data.matchingCount;
+    if (matchingCount === null || matchingCount === undefined) {
+      throw new DataHubAdapterError(
+        "MALFORMED_RESPONSE",
+        "DataHub schema response omitted the filtered-field match count.",
+        {
+          invocationId: observation.invocation.invocationId,
+          tool: observation.invocation.tool,
+        },
+      );
+    }
+    globalMatchingCount ??= matchingCount;
+    if (matchingCount !== globalMatchingCount) {
+      throw new DataHubAdapterError(
+        "SCHEMA_DRIFT",
+        "DataHub schema match count changed during pagination.",
+        {
+          invocationId: observation.invocation.invocationId,
+          tool: observation.invocation.tool,
+        },
+      );
+    }
+    requireUniqueResolution(matchingCount, observation.invocation, "schema field");
+    const nextOffset = observation.data.offset + observation.data.returned;
+    return {
+      items: observation.data.fields,
+      ...(observation.data.remainingCount === 0 ? {} : { nextOffset }),
+      observation,
+    };
+  });
+  const matches = paged.items.filter((field) => field.item.fieldPath === targets.field);
+  requireUniqueResolution(matches.length, pageInvocation(matches, paged.pages), "schema field");
+  const proof = matches[0]?.page;
+  if (proof === undefined) {
+    throw new DataHubAdapterError("NOT_FOUND", "Canonical DataHub schema field was not found.");
+  }
+  return proof;
+}
+
+type LineageResult = NonNullable<OfficialLineagePage["downstreams"]>["searchResults"][number];
+
+async function collectLineageDiscovery(
+  invoker: CanonicalToolInvoker,
+  targets: CanonicalCollectionTargets,
+): Promise<
+  Readonly<{
+    dashboard: OfficialObservation<OfficialLineagePage>;
+    fraud: OfficialObservation<OfficialLineagePage>;
+  }>
+> {
+  const paged = await collectObservedPages<OfficialLineagePage, LineageResult>(
+    "get_lineage",
+    async (offset, pageSize) => {
+      const observation = await observe(
+        invoker,
+        "get_lineage",
+        {
+          column: targets.field,
+          max_hops: 3,
+          max_results: pageSize,
+          offset,
+          upstream: false,
+          urn: targets.sourceUrn,
+        },
+        parseLineagePage,
+      );
+      const downstreams = observation.data.downstreams;
+      if (downstreams === undefined) {
+        throw new DataHubAdapterError(
+          "MALFORMED_RESPONSE",
+          "DataHub lineage response omitted downstream results.",
+          {
+            invocationId: observation.invocation.invocationId,
+            tool: observation.invocation.tool,
+          },
+        );
+      }
+      const actualOffset = downstreams.offset ?? downstreams.start ?? offset;
+      if (actualOffset !== offset) {
+        throw new DataHubAdapterError(
+          "CURSOR_CYCLE",
+          "DataHub pagination did not return the requested offset.",
+          {
+            invocationId: observation.invocation.invocationId,
+            tool: observation.invocation.tool,
+          },
+        );
+      }
+      const nextOffset = actualOffset + downstreams.searchResults.length;
+      const hasMore = downstreams.hasMore === true || nextOffset < downstreams.total;
+      return {
+        items: downstreams.searchResults,
+        ...(hasMore ? { nextOffset } : {}),
+        observation,
+      };
+    },
+  );
+  const exact = (urn: string) =>
+    paged.items.filter(
+      (result) =>
+        result.item.entity.urn === urn &&
+        result.item.lineageColumns?.includes(targets.field) === true,
+    );
+  const staging = exact(canonicalAnalyticsStagingUrn);
+  const revenue = exact(targets.revenueUrn);
+  const fraud = exact(targets.fraudFeaturesUrn);
+  for (const matches of [staging, revenue, fraud]) {
+    requireUniqueResolution(
+      matches.length,
+      pageInvocation(matches, paged.pages),
+      "downstream field lineage",
+    );
+  }
+  const dashboardProof = revenue[0]?.page;
+  const fraudProof = fraud[0]?.page;
+  if (dashboardProof === undefined || fraudProof === undefined) {
+    throw new DataHubAdapterError("NOT_FOUND", "Canonical downstream field lineage was not found.");
+  }
+  return Object.freeze({
+    dashboard: dashboardProof,
+    fraud: fraudProof,
+  });
+}
+
+async function collectQueryDiscovery(
+  invoker: CanonicalToolInvoker,
+  targets: CanonicalCollectionTargets,
+): Promise<OfficialObservation<OfficialQueryPage>> {
+  const paged = await collectObservedPages("get_dataset_queries", async (offset, pageSize) => {
+    const observation = await observe(
+      invoker,
+      "get_dataset_queries",
+      {
+        column: targets.field,
+        count: pageSize,
+        source: "SYSTEM",
+        start: offset,
+        urn: targets.revenueUrn,
+      },
+      parseQueryPage,
+    );
+    if (observation.data.start !== offset) {
+      throw new DataHubAdapterError(
+        "CURSOR_CYCLE",
+        "DataHub pagination did not return the requested offset.",
+        {
+          invocationId: observation.invocation.invocationId,
+          tool: observation.invocation.tool,
+        },
+      );
+    }
+    const nextOffset = observation.data.start + observation.data.count;
+    return {
+      items: observation.data.queries,
+      ...(nextOffset >= observation.data.total ? {} : { nextOffset }),
+      observation,
+    };
+  });
+  const matches = paged.items.filter((query) => query.item.urn === targets.queryUrn);
+  requireUniqueResolution(matches.length, pageInvocation(matches, paged.pages), "query");
+  const proof = matches[0]?.page;
+  if (proof === undefined) {
+    throw new DataHubAdapterError("NOT_FOUND", "Canonical DataHub query was not found.");
+  }
+  return proof;
+}
+
 export async function collectCanonicalObservations(
   invoker: CanonicalToolInvoker,
   input: CanonicalCollectionTargets,
 ): Promise<CanonicalObservations> {
   const targets = safeTargets(input);
-  const resolutionSearch = await observe(
-    invoker,
-    "search",
-    {
-      filter: `entity_type = dataset AND platform = ${targets.platform} AND env = ${targets.environment}`,
-      num_results: 50,
-      offset: 0,
-      query: `/q ${targets.platformInstance}+${targets.database}+${targets.schema}+${targets.dataset}`,
-    },
-    parseSearchPage,
-  );
-  requireUniqueResolution(
-    resolutionSearch.data.searchResults.filter((result) => result.entity.urn === targets.sourceUrn)
-      .length,
-    resolutionSearch.invocation,
-    "dataset",
-  );
-  const schemaFields = await observe(
-    invoker,
-    "list_schema_fields",
-    {
-      keywords: [targets.field],
-      limit: 50,
-      offset: 0,
-      urn: targets.sourceUrn,
-    },
-    parseSchemaFieldsPage,
-  );
-  if (schemaFields.data.urn !== targets.sourceUrn) {
-    throw new DataHubAdapterError(
-      "MALFORMED_RESPONSE",
-      "DataHub schema response did not match the resolved dataset.",
-      {
-        invocationId: schemaFields.invocation.invocationId,
-        tool: schemaFields.invocation.tool,
-      },
-    );
-  }
-  if (schemaFields.data.matchingCount === null || schemaFields.data.matchingCount === undefined) {
-    throw new DataHubAdapterError(
-      "MALFORMED_RESPONSE",
-      "DataHub schema response omitted the filtered-field match count.",
-      {
-        invocationId: schemaFields.invocation.invocationId,
-        tool: schemaFields.invocation.tool,
-      },
-    );
-  }
-  requireUniqueResolution(schemaFields.data.matchingCount, schemaFields.invocation, "schema field");
-  requireUniqueResolution(
-    schemaFields.data.fields.filter((field) => field.fieldPath === targets.field).length,
-    schemaFields.invocation,
-    "schema field",
-  );
-  const lineageDiscovery = await observe(
-    invoker,
-    "get_lineage",
-    {
-      column: targets.field,
-      max_hops: 3,
-      max_results: 50,
-      offset: 0,
-      upstream: false,
-      urn: targets.sourceUrn,
-    },
-    parseLineagePage,
-  );
+  const resolutionSearch = await collectResolutionSearch(invoker, targets);
+  const schemaFields = await collectSchemaFields(invoker, targets);
+  const lineage = await collectLineageDiscovery(invoker, targets);
+  const lineageDiscovery = lineage.dashboard;
+  const fraudLineageDiscovery = lineage.fraud;
   const dashboardFieldPath = await observe(
     invoker,
     "get_lineage_paths_between",
@@ -240,18 +503,7 @@ export async function collectCanonicalObservations(
     },
     parsePathResult,
   );
-  const queryDiscovery = await observe(
-    invoker,
-    "get_dataset_queries",
-    {
-      column: targets.field,
-      count: 50,
-      source: "SYSTEM",
-      start: 0,
-      urn: targets.revenueUrn,
-    },
-    parseQueryPage,
-  );
+  const queryDiscovery = await collectQueryDiscovery(invoker, targets);
   const dashboardDetails = await observe(
     invoker,
     "get_entities",
@@ -283,6 +535,7 @@ export async function collectCanonicalObservations(
     dashboardFieldPath,
     fraudEntityPath,
     fraudFieldPath,
+    fraudLineageDiscovery,
     glossaryDetails,
     lineageDiscovery,
     modelDetails,

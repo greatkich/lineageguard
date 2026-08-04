@@ -293,13 +293,12 @@ function normalizeAsset(
   });
 }
 
-function requireLineageDiscovery(observation: OfficialObservation<OfficialLineagePage>): void {
+function requireLineageDiscovery(
+  observation: OfficialObservation<OfficialLineagePage>,
+  expectedUrns: readonly string[],
+): void {
   const downstreams = observation.data.downstreams?.searchResults ?? [];
-  for (const expectedUrn of [
-    canonicalAnalyticsStagingUrn,
-    canonicalAnalyticsRevenueUrn,
-    canonicalFraudFeaturesUrn,
-  ]) {
+  for (const expectedUrn of expectedUrns) {
     const matching = downstreams.filter(
       (result) =>
         result.entity.urn === expectedUrn &&
@@ -502,7 +501,8 @@ export function normalizeCanonicalLiveCollection(
 ): ImpactCollectionResult {
   const { observations } = input;
   normalizeSchema(observations.schemaFields);
-  requireLineageDiscovery(observations.lineageDiscovery);
+  requireLineageDiscovery(observations.lineageDiscovery, [canonicalAnalyticsRevenueUrn]);
+  requireLineageDiscovery(observations.fraudLineageDiscovery, [canonicalFraudFeaturesUrn]);
   exactFieldPath(observations.dashboardFieldPath, canonicalAnalyticsRevenueUrn, [
     canonicalDatasetUrn,
     canonicalAnalyticsStagingUrn,
@@ -623,7 +623,7 @@ export function normalizeCanonicalLiveCollection(
     criticality: "CRITICAL",
     relatedEvidenceIds: [],
     provenance: [
-      provenance(observations.lineageDiscovery, "LINEAGE_DISCOVERY"),
+      provenance(observations.fraudLineageDiscovery, "LINEAGE_DISCOVERY"),
       provenance(observations.fraudFieldPath, "FIELD_PATH"),
       provenance(observations.fraudEntityPath, "ENTITY_PATH"),
     ],

@@ -20,9 +20,57 @@ function session(overrides: Partial<ToolSession> = {}): ToolSession {
   };
 }
 
+function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
 describe("live DataHub context port", () => {
   it("collects the complete canonical live result through the read-only session", async () => {
-    const responses = canonicalRawResponses();
+    const base = canonicalRawResponses();
+    const lineage = base[2];
+    if (lineage === undefined || !isRecord(lineage.payload)) {
+      throw new Error("expected lineage fixture");
+    }
+    const downstreams = lineage.payload.downstreams;
+    if (!isRecord(downstreams) || !Array.isArray(downstreams.searchResults)) {
+      throw new Error("expected downstream lineage fixture");
+    }
+    const [staging, revenue, fraud] = downstreams.searchResults;
+    if (staging === undefined || revenue === undefined || fraud === undefined) {
+      throw new Error("expected canonical lineage items");
+    }
+    const responses = [
+      ...base.slice(0, 2),
+      {
+        tool: "get_lineage" as const,
+        payload: {
+          downstreams: {
+            count: 2,
+            hasMore: true,
+            offset: 0,
+            returned: 2,
+            searchResults: [staging, revenue],
+            start: 0,
+            total: 3,
+          },
+        },
+      },
+      {
+        tool: "get_lineage" as const,
+        payload: {
+          downstreams: {
+            count: 1,
+            hasMore: false,
+            offset: 2,
+            returned: 1,
+            searchResults: [fraud],
+            start: 2,
+            total: 3,
+          },
+        },
+      },
+      ...base.slice(3),
+    ];
     const transport = session({
       callTool: vi.fn(async (name) => {
         const response = responses.shift();
@@ -54,7 +102,15 @@ describe("live DataHub context port", () => {
     expect(result.outcome).toBe("COLLECTED_LIVE");
     if (result.outcome !== "COLLECTED_LIVE") throw new Error("expected live result");
     expect(result.context.evidence).toHaveLength(9);
-    expect(transport.callTool).toHaveBeenCalledTimes(12);
+    const lineagePaths = result.context.evidence.filter((item) => item.kind === "LINEAGE_PATH");
+    expect(
+      lineagePaths.find((item) => item.targetUrn?.includes("dashboard"))?.provenance[0]
+        ?.invocationId,
+    ).toBe("inv_live_03");
+    expect(
+      lineagePaths.find((item) => item.targetUrn?.includes("mlModel"))?.provenance[0]?.invocationId,
+    ).toBe("inv_live_04");
+    expect(transport.callTool).toHaveBeenCalledTimes(13);
     expect(transport.close).toHaveBeenCalledTimes(1);
   });
 
