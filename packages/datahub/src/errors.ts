@@ -7,6 +7,7 @@ export type DataHubAdapterErrorCode =
   | "PAGINATION_LIMIT"
   | "REPLAY_INVALID"
   | "RESPONSE_LIMIT"
+  | "SCHEMA_DRIFT"
   | "TIMEOUT"
   | "TOOL_FAILURE"
   | "TOOL_MISSING"
