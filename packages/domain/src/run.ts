@@ -66,10 +66,10 @@ const failureTransitions: Partial<Record<RunStatus, RunStatus>> = {
   WRITEBACK_PENDING: "FAILED_WRITEBACK",
 };
 
-export function isTerminalRunStatus(status: RunStatus): boolean {
+function isTerminalRunStatus(status: RunStatus): boolean {
   return terminalStatuses.has(status);
 }
-export function canTransitionRunStatus(from: RunStatus, to: RunStatus): boolean {
+function isAdjacentRunStatus(from: RunStatus, to: RunStatus): boolean {
   if (terminalStatuses.has(from)) return false;
   if (to === "CANCELLED") return true;
   return (
@@ -89,7 +89,7 @@ const leaseEventShape = {
   workerId: workerIdSchema,
   generation: z.number().int().positive().max(1_000_000),
 };
-export const runStatusEventSchema = z
+const runStatusEventSchema = z
   .object({
     ...eventBaseShape,
     ...leaseEventShape,
@@ -99,12 +99,12 @@ export const runStatusEventSchema = z
     detail: z.string().min(1).max(500).optional(),
   })
   .strict()
-  .refine((event) => canTransitionRunStatus(event.from, event.to), {
+  .refine((event) => isAdjacentRunStatus(event.from, event.to), {
     message: "Invalid run status transition",
     path: ["to"],
   });
 
-export const runLeaseAcquiredEventSchema = z
+const runLeaseAcquiredEventSchema = z
   .object({
     ...eventBaseShape,
     ...leaseEventShape,
@@ -116,7 +116,7 @@ export const runLeaseAcquiredEventSchema = z
     message: "Lease expiry must be after acquisition",
     path: ["expiresAt"],
   });
-export const runLeaseRenewedEventSchema = z
+const runLeaseRenewedEventSchema = z
   .object({
     ...eventBaseShape,
     ...leaseEventShape,
@@ -131,10 +131,10 @@ export const runLeaseRenewedEventSchema = z
       new Date(event.occurredAt).getTime() < new Date(event.previousExpiresAt).getTime(),
     { message: "Renewal must occur before and extend the active lease", path: ["expiresAt"] },
   );
-export const runLeaseReleasedEventSchema = z
+const runLeaseReleasedEventSchema = z
   .object({ ...eventBaseShape, ...leaseEventShape, type: z.literal("RUN_LEASE_RELEASED") })
   .strict();
-export const runLeaseExpiredEventSchema = z
+const runLeaseExpiredEventSchema = z
   .object({
     ...eventBaseShape,
     ...leaseEventShape,
@@ -153,7 +153,7 @@ export const retryOperationSchema = z.enum([
   "GITHUB_WRITE",
   "DATAHUB_WRITE",
 ]);
-export const runRetryScheduledEventSchema = z
+const runRetryScheduledEventSchema = z
   .object({
     ...eventBaseShape,
     ...leaseEventShape,
@@ -178,7 +178,7 @@ export const runRetryScheduledEventSchema = z
     },
   );
 
-export const runEventSchema = z.discriminatedUnion("type", [
+const runEventSchema = z.discriminatedUnion("type", [
   runStatusEventSchema,
   runLeaseAcquiredEventSchema,
   runLeaseRenewedEventSchema,
@@ -196,7 +196,7 @@ const retryStates: Record<z.infer<typeof retryOperationSchema>, readonly RunStat
   DATAHUB_WRITE: ["WRITEBACK_PENDING"],
 };
 
-export const runEventStreamSchema = z
+const runEventStreamSchema = z
   .array(runEventSchema)
   .min(1)
   .max(300)
@@ -316,3 +316,23 @@ export const runEventStreamSchema = z
     }
   });
 export type RunEventStream = z.infer<typeof runEventStreamSchema>;
+
+/**
+ * The only authoritative run-event transition gate. Event shapes alone never authorize mutation.
+ * The caller supplies trusted wall-clock time; it must exactly match the persisted event time.
+ */
+export function authorizeRunEvent(
+  currentStreamInput: unknown,
+  proposedEventInput: unknown,
+  trustedCurrentTime: string,
+): RunEventStream {
+  const now = isoDateTimeSchema.parse(trustedCurrentTime);
+  const structuralCurrent = z.array(runEventSchema).max(300).parse(currentStreamInput);
+  const current =
+    structuralCurrent.length === 0 ? [] : runEventStreamSchema.parse(structuralCurrent);
+  const proposed = runEventSchema.parse(proposedEventInput);
+  if (proposed.occurredAt !== now) {
+    throw new Error("Proposed event occurrence must match trusted current time");
+  }
+  return runEventStreamSchema.parse([...current, proposed]);
+}

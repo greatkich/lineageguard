@@ -388,20 +388,20 @@ export function assertRiskEvidenceReferences(
   bindGroundedRiskAssessment(change, context, assessment);
 }
 
-export function compareRiskAssessments(
-  baseline: RiskAssessment,
-  grounded: RiskAssessment,
+export function compareAuthoritativeRisk(
+  changeInput: ProposedChange,
+  contextInput: ImpactContext,
+  evaluatedAt: { baseline: string; grounded: string },
 ): RiskComparison {
-  const parsedBaseline = riskAssessmentSchema.parse(baseline);
-  const parsedGrounded = riskAssessmentSchema.parse(grounded);
-  if (parsedBaseline.changeId !== parsedGrounded.changeId) {
-    throw new Error("Cannot compare assessments for different changes");
-  }
+  const change = proposedChangeSchema.parse(changeInput);
+  const context = impactContextSchema.parse(contextInput);
+  const parsedBaseline = evaluateRepositoryBaseline(change, evaluatedAt.baseline);
+  const parsedGrounded = evaluateGroundedRisk(change, context, evaluatedAt.grounded);
   const changedBecauseEvidenceIds = [
     ...new Set(parsedGrounded.reasons.flatMap((item) => item.evidenceIds)),
   ].sort();
   return riskComparisonSchema.parse({
-    changeId: parsedBaseline.changeId,
+    changeId: change.id,
     baseline: parsedBaseline,
     grounded: parsedGrounded,
     decisionChanged: parsedBaseline.decision !== parsedGrounded.decision,

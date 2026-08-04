@@ -9,23 +9,29 @@ import {
 } from "./evidence.js";
 import { sha256 } from "./hash.js";
 import {
-  assertValidationReceiptBinding,
+  assertStructuralValidationReceiptBinding,
   bindMigrationCandidate,
   migrationArtifactFingerprint,
   migrationCandidateFingerprint,
   migrationCandidateSchema,
-  validationReceiptSchema,
+  structuralValidationReceiptSchema,
 } from "./migration.js";
 import {
   assertRiskEvidenceReferences,
   bindGroundedRiskAssessment,
-  compareRiskAssessments,
+  compareAuthoritativeRisk,
   evaluateGroundedRisk,
   evaluateRepositoryBaseline,
   riskAssessmentSchema,
   riskComparisonSchema,
 } from "./risk.js";
-import { canTransitionRunStatus, runEventStreamSchema } from "./run.js";
+import { authorizeRunEvent, type RunEvent } from "./run.js";
+import {
+  acceptExecutedValidationReceipt,
+  executedValidationReceiptSchema,
+  validationAttestationPayloadFingerprint,
+  type ValidationCheckName,
+} from "./validation.js";
 
 const assessedAt = "2026-08-04T09:00:00.000Z";
 
@@ -189,8 +195,11 @@ describe("canonical impact evidence", () => {
 
 describe("deterministic risk policy", () => {
   it("changes the canonical repository-only ALLOW/LOW assessment to grounded BLOCK", () => {
-    const { context, baseline, grounded } = canonicalBundle();
-    const comparison = compareRiskAssessments(baseline, grounded);
+    const { change, context, baseline, grounded } = canonicalBundle();
+    const comparison = compareAuthoritativeRisk(change, context, {
+      baseline: assessedAt,
+      grounded: assessedAt,
+    });
     expect(baseline).toMatchObject({ decision: "ALLOW", risk: "LOW", reasons: [] });
     expect(grounded.decision).toBe("BLOCK");
     expect(grounded.reasons.map((item) => item.ruleId)).toEqual([
@@ -280,7 +289,7 @@ describe("deterministic risk policy", () => {
   });
 
   it("rejects contradictory assessment and comparison payloads", () => {
-    const { baseline, grounded } = canonicalBundle();
+    const { grounded } = canonicalBundle();
     expect(riskAssessmentSchema.safeParse({ ...grounded, decision: "ALLOW" }).success).toBe(false);
     expect(riskAssessmentSchema.safeParse({ ...grounded, risk: "LOW" }).success).toBe(false);
     expect(
@@ -291,7 +300,10 @@ describe("deterministic risk policy", () => {
         ),
       }).success,
     ).toBe(false);
-    const comparison = compareRiskAssessments(baseline, grounded);
+    const comparison = compareAuthoritativeRisk(canonicalChange(), canonicalBundle().context, {
+      baseline: assessedAt,
+      grounded: assessedAt,
+    });
     expect(
       riskComparisonSchema.safeParse({ ...comparison, transition: "ALLOW→ALLOW" }).success,
     ).toBe(false);
@@ -316,6 +328,13 @@ describe("deterministic risk policy", () => {
       policyVersion: "lineageguard-p0.1",
     });
     expect(() => bindGroundedRiskAssessment(change, context, tampered)).toThrow(/authoritative/);
+    expect(() =>
+      compareAuthoritativeRisk(
+        change,
+        { ...context, impactContextFingerprint: "f".repeat(64) },
+        { baseline: assessedAt, grounded: assessedAt },
+      ),
+    ).toThrow();
   });
 });
 
@@ -699,7 +718,6 @@ function validationReceiptInput(
     artifactPaths: pathsForCheck(check),
   }));
   return {
-    receiptId: "val_111111111111111111111111",
     candidateFingerprint: migrationCandidateFingerprint(candidate),
     status,
     artifactPaths: paths,
@@ -715,14 +733,106 @@ function validationReceiptInput(
   };
 }
 
+const checkCommands: Record<ValidationCheckName, string> = {
+  SQL_MIGRATION: "VALIDATE_SQL_MIGRATION_V1",
+  BACKFILL_EQUALITY: "VALIDATE_BACKFILL_EQUALITY_V1",
+  DBT_PARSE: "VALIDATE_DBT_PARSE_V1",
+  DBT_COMPILE: "VALIDATE_DBT_COMPILE_V1",
+  DBT_TEST: "VALIDATE_DBT_TEST_V1",
+  OLD_CONSUMER_COMPATIBILITY: "VALIDATE_OLD_CONSUMER_V1",
+  NEW_CONSUMER_COMPATIBILITY: "VALIDATE_NEW_CONSUMER_V1",
+  ROLLBACK: "VALIDATE_ROLLBACK_V1",
+};
+
+function expectedValidationExecution() {
+  const validators = Object.fromEntries(
+    Object.keys(checkCommands).map((check) => [
+      check,
+      {
+        implementationId: `lineageguard-${check.toLowerCase()}`,
+        version: "1.0.0",
+        digest: sha256(`validator:${check}:1.0.0`),
+      },
+    ]),
+  ) as Record<ValidationCheckName, { implementationId: string; version: string; digest: string }>;
+  return {
+    runId: "run_111111111111111111111111",
+    sandboxId: "sandbox-p0-validation",
+    worktreeId: "worktree-p0-domain-policy",
+    leaseId: "lease_111111111111111111111111",
+    workerId: "validation-worker-1",
+    generation: 1,
+    validators,
+  };
+}
+
+function executedReceiptInput(candidate = migrationCandidateSchema.parse(candidateInput())) {
+  const structural = structuralValidationReceiptSchema.parse(
+    validationReceiptInput("PASS", candidate),
+  );
+  const expected = expectedValidationExecution();
+  const unsigned = executedValidationReceiptSchema.parse({
+    ...structural,
+    checks: structural.checks.map((check) => {
+      const validator = expected.validators[check.check];
+      const observations = structural.artifactObservations.filter((observation) =>
+        check.artifactPaths.includes(observation.path),
+      );
+      return {
+        ...check,
+        execution: {
+          validatorImplementationId: validator.implementationId,
+          validatorVersion: validator.version,
+          validatorDigest: validator.digest,
+          commandId: checkCommands[check.check],
+          exitCode: 0,
+          startedAt: check.startedAt,
+          finishedAt: check.completedAt,
+          runId: expected.runId,
+          sandboxId: expected.sandboxId,
+          worktreeId: expected.worktreeId,
+          leaseId: expected.leaseId,
+          workerId: expected.workerId,
+          generation: expected.generation,
+          stdoutFingerprint: sha256(`${check.check}:stdout`),
+          stderrFingerprint: sha256(`${check.check}:stderr`),
+          outputFingerprint: sha256(`${check.check}:output`),
+          artifactSetFingerprint: sha256(observations),
+        },
+      };
+    }),
+    executionMode: "LIVE",
+    attestation: {
+      keyId: "validation-key-2026-08",
+      issuer: "lineageguard-validation-worker",
+      algorithm: "HMAC-SHA256",
+      payloadFingerprint: "0".repeat(64),
+      signature: "a".repeat(43),
+    },
+  });
+  return executedValidationReceiptSchema.parse({
+    ...unsigned,
+    attestation: {
+      ...unsigned.attestation,
+      payloadFingerprint: validationAttestationPayloadFingerprint(unsigned),
+    },
+  });
+}
+
+const trustedAttestationVerifier = {
+  verify: (attestation: { signature: string; payloadFingerprint: string }, payload: string) =>
+    attestation.signature === "a".repeat(43) && attestation.payloadFingerprint === payload,
+  isAuthenticatedOriginalLiveReceipt: (fingerprint: string) => fingerprint === "f".repeat(64),
+};
+
 describe("validation receipt contracts", () => {
   it("accepts only a complete passing canonical set for PASS and binds exact artifacts", () => {
     const candidate = migrationCandidateSchema.parse(candidateInput());
-    const receipt = validationReceiptSchema.parse(validationReceiptInput());
-    expect(() => assertValidationReceiptBinding(receipt, candidate)).not.toThrow();
+    const receipt = structuralValidationReceiptSchema.parse(validationReceiptInput());
+    expect(() => assertStructuralValidationReceiptBinding(receipt, candidate)).not.toThrow();
     const missing = validationReceiptInput();
     missing.checks.pop();
-    expect(validationReceiptSchema.safeParse(missing).success).toBe(false);
+    expect(structuralValidationReceiptSchema.safeParse(missing).success).toBe(false);
   });
 
   it("binds every materialized byte and rejects multi-artifact check omissions", () => {
@@ -748,8 +858,10 @@ describe("validation receipt contracts", () => {
       "migrate step",
     ).artifactTargets.sort();
     const candidate = migrationCandidateSchema.parse(raw);
-    const receipt = validationReceiptSchema.parse(validationReceiptInput("PASS", candidate));
-    expect(() => assertValidationReceiptBinding(receipt, candidate)).not.toThrow();
+    const receipt = structuralValidationReceiptSchema.parse(
+      validationReceiptInput("PASS", candidate),
+    );
+    expect(() => assertStructuralValidationReceiptBinding(receipt, candidate)).not.toThrow();
 
     const omitted = structuredClone(receipt);
     required(
@@ -759,11 +871,13 @@ describe("validation receipt contracts", () => {
       omitted.checks.find((check) => check.check === "DBT_COMPILE"),
       "compile check",
     ).artifactPaths.filter((path) => path !== "walkthrough/models/orders_shadow.sql");
-    expect(() => assertValidationReceiptBinding(omitted, candidate)).toThrow(/exact applicable/);
+    expect(() => assertStructuralValidationReceiptBinding(omitted, candidate)).toThrow(
+      /exact applicable/,
+    );
 
     const missingObservation = structuredClone(receipt);
     missingObservation.artifactObservations.pop();
-    expect(validationReceiptSchema.safeParse(missingObservation).success).toBe(false);
+    expect(structuralValidationReceiptSchema.safeParse(missingObservation).success).toBe(false);
 
     const changedBytes = structuredClone(receipt);
     required(
@@ -772,7 +886,7 @@ describe("validation receipt contracts", () => {
       ),
       "shadow observation",
     ).materializedSha256 = sha256("changed materialized bytes");
-    expect(() => assertValidationReceiptBinding(changedBytes, candidate)).toThrow(
+    expect(() => assertStructuralValidationReceiptBinding(changedBytes, candidate)).toThrow(
       /candidate bytes/,
     );
   });
@@ -786,16 +900,122 @@ describe("validation receipt contracts", () => {
         artifactPaths: partial.artifactPaths,
       },
     ];
-    expect(validationReceiptSchema.safeParse(partial).success).toBe(true);
-    expect(validationReceiptSchema.safeParse({ ...partial, status: "PASS" }).success).toBe(false);
+    expect(structuralValidationReceiptSchema.safeParse(partial).success).toBe(true);
+    expect(
+      structuralValidationReceiptSchema.safeParse({ ...partial, status: "PASS" }).success,
+    ).toBe(false);
     const candidate = migrationCandidateSchema.parse(candidateInput());
-    const receipt = validationReceiptSchema.parse(validationReceiptInput());
+    const receipt = structuralValidationReceiptSchema.parse(validationReceiptInput());
     const otherCandidate = migrationCandidateSchema.parse({
       ...candidateInput(),
       summary: "Different candidate.",
     });
-    expect(() => assertValidationReceiptBinding(receipt, otherCandidate)).toThrow(/different/);
-    expect(() => assertValidationReceiptBinding(receipt, candidate)).not.toThrow();
+    expect(() => assertStructuralValidationReceiptBinding(receipt, otherCandidate)).toThrow(
+      /different/,
+    );
+    expect(() => assertStructuralValidationReceiptBinding(receipt, candidate)).not.toThrow();
+  });
+
+  it("accepts only attested executed PASS receipts and derives the receipt ID", () => {
+    const candidate = migrationCandidateSchema.parse(candidateInput());
+    const receipt = executedReceiptInput(candidate);
+    const accepted = acceptExecutedValidationReceipt(
+      receipt,
+      candidate,
+      expectedValidationExecution(),
+      trustedAttestationVerifier,
+    );
+    expect(accepted.receiptId).toMatch(/^val_[a-f0-9]{24}$/);
+    expect(Object.isFrozen(accepted.checks)).toBe(true);
+    expect(Object.isFrozen(accepted.checks[0]?.execution)).toBe(true);
+    expect(accepted.receiptId).toBe(
+      acceptExecutedValidationReceipt(
+        receipt,
+        candidate,
+        expectedValidationExecution(),
+        trustedAttestationVerifier,
+      ).receiptId,
+    );
+    expect(executedValidationReceiptSchema.safeParse(validationReceiptInput()).success).toBe(false);
+    expect(
+      structuralValidationReceiptSchema.safeParse({
+        ...validationReceiptInput(),
+        receiptId: "val_111111111111111111111111",
+      }).success,
+    ).toBe(false);
+  });
+
+  it("rejects forged execution provenance, artifact binding, and attestations", () => {
+    const candidate = migrationCandidateSchema.parse(candidateInput());
+    const accept = (receipt: ReturnType<typeof executedReceiptInput>) =>
+      acceptExecutedValidationReceipt(
+        receipt,
+        candidate,
+        expectedValidationExecution(),
+        trustedAttestationVerifier,
+      );
+    const wrongFence = structuredClone(executedReceiptInput(candidate));
+    required(wrongFence.checks[0], "check").execution.generation = 2;
+    expect(() => accept(wrongFence)).toThrow(/fence/);
+
+    const wrongValidator = structuredClone(executedReceiptInput(candidate));
+    required(wrongValidator.checks[0], "check").execution.validatorDigest = sha256("forged");
+    expect(() => accept(wrongValidator)).toThrow(/validator implementation/);
+
+    const wrongArtifacts = structuredClone(executedReceiptInput(candidate));
+    required(wrongArtifacts.checks[0], "check").execution.artifactSetFingerprint = sha256("wrong");
+    expect(() => accept(wrongArtifacts)).toThrow(/exact artifact hashes/);
+
+    const wrongCommand = structuredClone(executedReceiptInput(candidate));
+    required(wrongCommand.checks[0], "check").execution.commandId = "VALIDATE_BACKFILL_EQUALITY_V1";
+    expect(() => accept(wrongCommand)).toThrow(/allowlisted command/);
+
+    const missingObservation = structuredClone(executedReceiptInput(candidate));
+    missingObservation.artifactObservations.pop();
+    expect(() => accept(missingObservation)).toThrow();
+
+    const nonzero = structuredClone(executedReceiptInput(candidate));
+    required(nonzero.checks[0], "check").execution.exitCode = 1;
+    expect(() => accept(nonzero)).toThrow(/canonical successful/);
+
+    const forgedAttestation = structuredClone(executedReceiptInput(candidate));
+    forgedAttestation.attestation.signature = "b".repeat(43);
+    expect(() => accept(forgedAttestation)).toThrow(/not trusted/);
+  });
+
+  it("accepts replay only when it references an authenticated original live receipt", () => {
+    const candidate = migrationCandidateSchema.parse(candidateInput());
+    const base = executedReceiptInput(candidate);
+    const makeReplay = (originalFingerprint: string) => {
+      const replay = executedValidationReceiptSchema.parse({
+        ...base,
+        executionMode: "REPLAY",
+        authenticatedOriginalLiveReceiptFingerprint: originalFingerprint,
+      });
+      return executedValidationReceiptSchema.parse({
+        ...replay,
+        attestation: {
+          ...replay.attestation,
+          payloadFingerprint: validationAttestationPayloadFingerprint(replay),
+        },
+      });
+    };
+    expect(() =>
+      acceptExecutedValidationReceipt(
+        makeReplay("f".repeat(64)),
+        candidate,
+        expectedValidationExecution(),
+        trustedAttestationVerifier,
+      ),
+    ).not.toThrow();
+    expect(() =>
+      acceptExecutedValidationReceipt(
+        makeReplay("e".repeat(64)),
+        candidate,
+        expectedValidationExecution(),
+        trustedAttestationVerifier,
+      ),
+    ).toThrow(/authenticated original/);
   });
 });
 
@@ -844,13 +1064,21 @@ describe("run state and operational events", () => {
     })),
   ];
 
+  function streamIsAuthorized(events: readonly unknown[]): boolean {
+    try {
+      let current: RunEvent[] = [];
+      for (const event of events) {
+        if (typeof event !== "object" || event === null || !("occurredAt" in event)) return false;
+        current = authorizeRunEvent(current, event, String(event.occurredAt));
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   it("matches the exact documented success sequence and failure states", () => {
-    expect(runEventStreamSchema.safeParse(exactStatusEvents()).success).toBe(true);
-    expect(canTransitionRunStatus("CONTEXT_COLLECTING", "FAILED_CONTEXT")).toBe(true);
-    expect(canTransitionRunStatus("VALIDATED", "FAILED_GITHUB")).toBe(true);
-    expect(canTransitionRunStatus("WRITEBACK_PENDING", "FAILED_WRITEBACK")).toBe(true);
-    expect(canTransitionRunStatus("VALIDATED", "FAILED_WRITEBACK")).toBe(false);
-    expect(canTransitionRunStatus("MIGRATION_PLANNED", "CANCELLED")).toBe(true);
+    expect(streamIsAuthorized(exactStatusEvents())).toBe(true);
   });
 
   function contextLeaseEvents() {
@@ -912,7 +1140,7 @@ describe("run state and operational events", () => {
         expiresAt: "2026-08-04T09:30:00.000Z",
       },
     ];
-    expect(runEventStreamSchema.safeParse(events).success).toBe(true);
+    expect(streamIsAuthorized(events)).toBe(true);
   });
 
   it("requires explicit expiry before ownership changes", () => {
@@ -941,7 +1169,7 @@ describe("run state and operational events", () => {
         expiresAt: "2026-08-04T09:20:00.000Z",
       },
     ];
-    expect(runEventStreamSchema.safeParse(events).success).toBe(true);
+    expect(streamIsAuthorized(events)).toBe(true);
   });
 
   it("rejects overlap, late renewal, mismatched worker, wrong-state retry, and post-terminal events", () => {
@@ -956,7 +1184,7 @@ describe("run state and operational events", () => {
         generation: 2,
       },
     ];
-    expect(runEventStreamSchema.safeParse(overlap).success).toBe(false);
+    expect(streamIsAuthorized(overlap)).toBe(false);
     const lateRenewal = [
       ...contextLeaseEvents(),
       {
@@ -972,7 +1200,7 @@ describe("run state and operational events", () => {
         expiresAt: "2026-08-04T09:20:00.000Z",
       },
     ];
-    expect(runEventStreamSchema.safeParse(lateRenewal).success).toBe(false);
+    expect(streamIsAuthorized(lateRenewal)).toBe(false);
     const mismatch = [
       ...contextLeaseEvents(),
       {
@@ -986,7 +1214,7 @@ describe("run state and operational events", () => {
         occurredAt: "2026-08-04T09:00:04.000Z",
       },
     ];
-    expect(runEventStreamSchema.safeParse(mismatch).success).toBe(false);
+    expect(streamIsAuthorized(mismatch)).toBe(false);
     const wrongRetry = [
       {
         eventId: eventId(40),
@@ -1014,7 +1242,7 @@ describe("run state and operational events", () => {
         retryAt: "2026-08-04T09:00:02.000Z",
       },
     ];
-    expect(runEventStreamSchema.safeParse(wrongRetry).success).toBe(false);
+    expect(streamIsAuthorized(wrongRetry)).toBe(false);
     const mismatchedRetry = [
       ...contextLeaseEvents(),
       {
@@ -1032,7 +1260,7 @@ describe("run state and operational events", () => {
         retryAt: "2026-08-04T09:11:00.000Z",
       },
     ];
-    expect(runEventStreamSchema.safeParse(mismatchedRetry).success).toBe(false);
+    expect(streamIsAuthorized(mismatchedRetry)).toBe(false);
     const successEvents = exactStatusEvents();
     const terminal = [
       ...successEvents,
@@ -1048,18 +1276,21 @@ describe("run state and operational events", () => {
         expiresAt: "2026-08-04T09:02:00.000Z",
       },
     ];
-    expect(runEventStreamSchema.safeParse(terminal).success).toBe(false);
+    expect(streamIsAuthorized(terminal)).toBe(false);
   });
 
   it("requires a live matching lease for every status transition", () => {
     const transition = required(exactStatusEvents()[1], "first transition");
-    expect(runEventStreamSchema.safeParse([{ ...transition, sequence: 0 }]).success).toBe(false);
+    expect(streamIsAuthorized([{ ...transition, sequence: 0 }])).toBe(false);
+    expect(() =>
+      authorizeRunEvent([], { ...transition, sequence: 0 }, transition.occurredAt),
+    ).toThrow(/live active lease/);
 
     const expired = exactStatusEvents().slice(0, 2);
     const acquisition = required(expired[0], "acquisition");
     if (acquisition.type !== "RUN_LEASE_ACQUIRED") throw new Error("expected acquisition");
     Object.assign(acquisition, { expiresAt: "2026-08-04T09:00:00.000Z" });
-    expect(runEventStreamSchema.safeParse(expired).success).toBe(false);
+    expect(streamIsAuthorized(expired)).toBe(false);
 
     for (const mismatch of [
       { workerId: "other-worker" },
@@ -1068,8 +1299,12 @@ describe("run state and operational events", () => {
     ]) {
       const events = exactStatusEvents().slice(0, 2);
       Object.assign(required(events[1], "transition"), mismatch);
-      expect(runEventStreamSchema.safeParse(events).success).toBe(false);
+      expect(streamIsAuthorized(events)).toBe(false);
     }
+    const trustedTimeAcquisition = required(exactStatusEvents()[0], "acquisition");
+    expect(() => authorizeRunEvent([], trustedTimeAcquisition, "2026-08-04T09:00:00.000Z")).toThrow(
+      /trusted current time/,
+    );
   });
 
   it("rejects lease ID reuse and non-increasing generations", () => {
@@ -1085,7 +1320,7 @@ describe("run state and operational events", () => {
       },
     ];
     expect(
-      runEventStreamSchema.safeParse([
+      streamIsAuthorized([
         ...released,
         {
           eventId: eventId(61),
@@ -1097,10 +1332,10 @@ describe("run state and operational events", () => {
           occurredAt: "2026-08-04T09:00:05.000Z",
           expiresAt: "2026-08-04T09:01:00.000Z",
         },
-      ]).success,
+      ]),
     ).toBe(false);
     expect(
-      runEventStreamSchema.safeParse([
+      streamIsAuthorized([
         ...released,
         {
           eventId: eventId(62),
@@ -1113,7 +1348,7 @@ describe("run state and operational events", () => {
           occurredAt: "2026-08-04T09:00:05.000Z",
           expiresAt: "2026-08-04T09:01:00.000Z",
         },
-      ]).success,
+      ]),
     ).toBe(false);
   });
 
@@ -1167,21 +1402,19 @@ describe("run state and operational events", () => {
         retryAt: "2026-08-04T09:00:12.000Z",
       },
     ];
-    expect(runEventStreamSchema.safeParse(acrossLeases).success).toBe(true);
+    expect(streamIsAuthorized(acrossLeases)).toBe(true);
 
     const reset = structuredClone(acrossLeases);
     Object.assign(required(reset[7], "second retry"), {
       attempt: 1,
       retryAt: "2026-08-04T09:00:08.000Z",
     });
-    expect(runEventStreamSchema.safeParse(reset).success).toBe(false);
+    expect(streamIsAuthorized(reset)).toBe(false);
     const wrongDelay = [
       ...structuredClone(contextLeaseEvents()),
       { ...firstRetry, retryAt: "2026-08-04T09:00:06.000Z" },
     ];
-    expect(runEventStreamSchema.safeParse(wrongDelay).success).toBe(false);
-    expect(
-      runEventStreamSchema.safeParse([{ ...firstRetry, sequence: 0, attempt: 4 }]).success,
-    ).toBe(false);
+    expect(streamIsAuthorized(wrongDelay)).toBe(false);
+    expect(streamIsAuthorized([{ ...firstRetry, sequence: 0, attempt: 4 }])).toBe(false);
   });
 });

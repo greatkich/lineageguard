@@ -395,7 +395,7 @@ export const validationCheckNameSchema = z.enum([
 ]);
 const requiredValidationChecks = validationCheckNameSchema.options;
 
-export const validationCheckSchema = z
+export const structuralValidationCheckSchema = z
   .object({
     check: validationCheckNameSchema,
     status: z.enum(["PASS", "FAIL"]),
@@ -434,14 +434,14 @@ export const artifactObservationSchema = z
   })
   .strict();
 
-export const validationReceiptSchema = z
+/** Structural transport validation only; this does not prove that validators executed. */
+export const structuralValidationReceiptSchema = z
   .object({
-    receiptId: z.string().regex(/^val_[a-f0-9]{24}$/),
     candidateFingerprint: fingerprintSchema,
     status: z.enum(["PASS", "FAIL"]),
     artifactPaths: z.array(migrationArtifactPathSchema).min(1).max(20),
     artifactObservations: z.array(artifactObservationSchema).min(1).max(20),
-    checks: z.array(validationCheckSchema).min(1).max(20),
+    checks: z.array(structuralValidationCheckSchema).min(1).max(20),
     completedAt: isoDateTimeSchema,
   })
   .strict()
@@ -531,13 +531,14 @@ export const validationReceiptSchema = z
     }
   });
 
-export type ValidationReceipt = z.infer<typeof validationReceiptSchema>;
+export type StructuralValidationReceipt = z.infer<typeof structuralValidationReceiptSchema>;
 
-export function assertValidationReceiptBinding(
-  receiptInput: ValidationReceipt,
+/** Candidate binding only; never use this helper as a SAFE/VALIDATED authorization gate. */
+export function assertStructuralValidationReceiptBinding(
+  receiptInput: StructuralValidationReceipt,
   candidateInput: MigrationCandidate,
 ): void {
-  const receipt = validationReceiptSchema.parse(receiptInput);
+  const receipt = structuralValidationReceiptSchema.parse(receiptInput);
   const candidate = migrationCandidateSchema.parse(candidateInput);
   if (receipt.candidateFingerprint !== migrationCandidateFingerprint(candidate)) {
     throw new Error("Validation receipt is bound to a different migration candidate");
