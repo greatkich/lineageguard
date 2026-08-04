@@ -25,6 +25,64 @@ class GraphContractError(ValueError):
 
 CANONICAL_PREFIX = "lineageguard-canonical"
 CANONICAL_QUERY_SHA256 = "e4bbe7075754d05de68f76ff0a9b127532e044da8ab0a357bce7e0d41f7ad22c"
+CANONICAL_LIVE_QUERY_URN = f"urn:li:query:{CANONICAL_PREFIX}.system.{CANONICAL_QUERY_SHA256}"
+CANONICAL_SCHEMA_FIELDS = {
+    "commerce.orders": ("order_id", "customer_id", "order_total", "ordered_at"),
+    "analytics.stg_orders": ("order_id", "customer_id", "order_total", "ordered_at"),
+    "analytics.customer_revenue": ("customer_id", "lifetime_revenue"),
+    "fraud.customer_features": ("customer_id", "order_count", "max_order_total"),
+    "finance.revenue-dashboard": (),
+    "fraud.model-v3": (),
+}
+CANONICAL_EDGE_SPECS = {
+    (
+        "orders.customer_id->stg_orders.customer_id",
+        "commerce.orders",
+        "analytics.stg_orders",
+        "FIELD",
+        "customer_id",
+        "customer_id",
+    ),
+    (
+        "stg_orders.customer_id->customer_revenue.customer_id",
+        "analytics.stg_orders",
+        "analytics.customer_revenue",
+        "FIELD",
+        "customer_id",
+        "customer_id",
+    ),
+    (
+        "stg_orders.customer_id->customer_features.customer_id",
+        "analytics.stg_orders",
+        "fraud.customer_features",
+        "FIELD",
+        "customer_id",
+        "customer_id",
+    ),
+    (
+        "customer_revenue->finance-dashboard",
+        "analytics.customer_revenue",
+        "finance.revenue-dashboard",
+        "ENTITY",
+        None,
+        None,
+    ),
+    (
+        "customer_features->fraud-model-v3",
+        "fraud.customer_features",
+        "fraud.model-v3",
+        "ENTITY",
+        None,
+        None,
+    ),
+}
+CANONICAL_IMPACT_CARDS = (
+    "analytics.customer_revenue",
+    "finance.revenue-dashboard",
+    "fraud.model-v3",
+    "query.finance-monthly-close",
+)
+CANONICAL_INTERMEDIATES = ("analytics.stg_orders", "fraud.customer_features")
 CANONICAL_ENTITY_TYPES = {
     "commerce.orders": EntityType.DATASET,
     "analytics.stg_orders": EntityType.DATASET,
@@ -39,7 +97,7 @@ CANONICAL_NON_DATASET_URNS = {
     "urn:li:dashboard:(looker,lineageguard-canonical.finance-revenue-dashboard)",
     "urn:li:glossaryTerm:lineageguard-canonical.CustomerIdentifier",
     "urn:li:mlModel:(urn:li:dataPlatform:mlflow,lineageguard-canonical.fraud-model-v3,PROD)",
-    f"urn:li:query:{CANONICAL_PREFIX}.{CANONICAL_QUERY_SHA256}",
+    CANONICAL_LIVE_QUERY_URN,
     "urn:li:tag:lineageguard-canonical.Critical",
     "urn:li:tag:lineageguard-canonical.Production",
 }
@@ -76,7 +134,7 @@ def _exact_keys(value: dict[str, Any], expected: set[str], context: str) -> None
 
 
 def _string(value: object, context: str) -> str:
-    if not isinstance(value, str) or not value:
+    if not isinstance(value, str) or not value or len(value) > 2048:
         raise GraphContractError(f"{context} must be a non-empty string")
     return value
 
@@ -84,12 +142,16 @@ def _string(value: object, context: str) -> str:
 def _strings(value: object, context: str) -> tuple[str, ...]:
     if not isinstance(value, list):
         raise GraphContractError(f"{context} must be an array")
+    if len(value) > 64:
+        raise GraphContractError(f"{context} exceeds maximum size")
     return tuple(_string(item, f"{context}[]") for item in value)
 
 
 def _objects(value: object, context: str) -> tuple[dict[str, Any], ...]:
     if not isinstance(value, list):
         raise GraphContractError(f"{context} must be an array")
+    if len(value) > 64:
+        raise GraphContractError(f"{context} exceeds maximum size")
     return tuple(_object(item, f"{context}[]") for item in value)
 
 
@@ -138,7 +200,11 @@ def _tag(raw: dict[str, Any]) -> Tag:
 
 
 def _node(raw: dict[str, Any]) -> GraphNode:
-    _exact_keys(raw, {"logicalKey", "urn", "entityType", "name", "ownerUrns", "tagUrns"}, "node")
+    _exact_keys(
+        raw,
+        {"logicalKey", "urn", "entityType", "name", "ownerUrns", "tagUrns", "schemaFields"},
+        "node",
+    )
     try:
         entity_type = EntityType(_string(raw["entityType"], "node.entityType"))
     except ValueError as error:
@@ -150,6 +216,7 @@ def _node(raw: dict[str, Any]) -> GraphNode:
         name=_string(raw["name"], "node.name"),
         owner_urns=_strings(raw["ownerUrns"], "node.ownerUrns"),
         tag_urns=_strings(raw["tagUrns"], "node.tagUrns"),
+        schema_fields=_strings(raw["schemaFields"], "node.schemaFields"),
     )
 
 
@@ -237,6 +304,8 @@ def _validate_references(graph: ExpectedGraph) -> None:
         query.logical_key for query in graph.query_evidence
     }
     for node in graph.nodes:
+        if node.schema_fields != CANONICAL_SCHEMA_FIELDS.get(node.logical_key):
+            raise GraphContractError(f"node {node.logical_key} schemaFields mismatch")
         if not set(node.owner_urns) <= owner_urns:
             raise GraphContractError(f"node {node.logical_key} references an unknown owner")
         if not set(node.tag_urns) <= tag_urns:
@@ -286,8 +355,34 @@ def _validate_canonical_allowlist(graph: ExpectedGraph) -> None:
     query = graph.query_evidence[0]
     if query.sha256 != CANONICAL_QUERY_SHA256:
         raise GraphContractError("canonical query digest mismatch")
-    if query.query_urn != f"urn:li:query:{CANONICAL_PREFIX}.{CANONICAL_QUERY_SHA256}":
-        raise GraphContractError("canonical recorded query URN mismatch")
+    if query.query_urn != CANONICAL_LIVE_QUERY_URN:
+        raise GraphContractError("canonical live query URN mismatch")
+    if (
+        query.dataset_urn
+        != next(
+            node.urn for node in graph.nodes if node.logical_key == "analytics.customer_revenue"
+        )
+        or query.field_path != "customer_id"
+    ):
+        raise GraphContractError("canonical query subject mismatch")
+    logical_by_urn = {node.urn: node.logical_key for node in graph.nodes}
+    actual_edges = {
+        (
+            edge.logical_key,
+            logical_by_urn[edge.upstream_urn],
+            logical_by_urn[edge.downstream_urn],
+            edge.granularity.value,
+            edge.upstream_field_path,
+            edge.downstream_field_path,
+        )
+        for edge in graph.edges
+    }
+    if actual_edges != CANONICAL_EDGE_SPECS:
+        raise GraphContractError("canonical edge allowlist mismatch")
+    if graph.impact_cards != CANONICAL_IMPACT_CARDS:
+        raise GraphContractError("canonical impact outcomes mismatch")
+    if graph.lineage_intermediates != CANONICAL_INTERMEDIATES:
+        raise GraphContractError("canonical intermediate outcomes mismatch")
 
 
 def load_expected_graph(path: Path) -> ExpectedGraph:

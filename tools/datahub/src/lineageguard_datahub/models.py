@@ -46,6 +46,7 @@ class GraphNode:
     name: str
     owner_urns: tuple[str, ...]
     tag_urns: tuple[str, ...]
+    schema_fields: tuple[str, ...]
 
 
 @dataclass(frozen=True, slots=True)

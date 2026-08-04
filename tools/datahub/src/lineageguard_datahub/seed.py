@@ -31,10 +31,6 @@ from datahub.metadata.schema_classes import (
     OwnershipClass,
     OwnershipTypeClass,
     QueryPropertiesClass,
-    QuerySourceClass,
-    QueryStatementClass,
-    QuerySubjectClass,
-    QuerySubjectsClass,
     SchemaFieldClass,
     SchemaFieldDataTypeClass,
     SchemaMetadataClass,
@@ -58,7 +54,7 @@ ACTOR_URN = "urn:li:corpuser:lineageguard"
 AUDIT_STAMP = AuditStampClass(time=0, actor=ACTOR_URN)
 SCENARIO_MARKER_KEY = "lineageguard.scenario"
 SCENARIO_MARKER_VALUE = "canonical-customer-id-rename"
-SCENARIO_MARKER_TEXT = f"[{SCENARIO_MARKER_KEY}={SCENARIO_MARKER_VALUE}]"
+OWNERSHIP_NONCE_KEY = "lineageguard.ownershipNonce"
 Aspect = TypeVar("Aspect", bound=_Aspect)
 
 
@@ -181,7 +177,22 @@ def _schema_for(node: GraphNode, graph: ExpectedGraph) -> SchemaMetadataClass:
     )
 
 
-def _node_aspects(node: GraphNode, graph: ExpectedGraph) -> list[PlannedUpsert]:
+def _marker_properties(ownership_nonce: str) -> dict[str, str]:
+    return {
+        SCENARIO_MARKER_KEY: SCENARIO_MARKER_VALUE,
+        OWNERSHIP_NONCE_KEY: ownership_nonce,
+    }
+
+
+def _marker_text(ownership_nonce: str) -> str:
+    return (
+        f"[{SCENARIO_MARKER_KEY}={SCENARIO_MARKER_VALUE};{OWNERSHIP_NONCE_KEY}={ownership_nonce}]"
+    )
+
+
+def _node_aspects(
+    node: GraphNode, graph: ExpectedGraph, ownership_nonce: str
+) -> list[PlannedUpsert]:
     upserts: list[PlannedUpsert] = []
     if node.entity_type is EntityType.DATASET:
         upserts.extend(
@@ -194,7 +205,7 @@ def _node_aspects(node: GraphNode, graph: ExpectedGraph) -> list[PlannedUpsert]:
                         name=node.name,
                         qualifiedName=node.logical_key,
                         description=f"Canonical LineageGuard asset: {node.logical_key}.",
-                        customProperties={SCENARIO_MARKER_KEY: SCENARIO_MARKER_VALUE},
+                        customProperties=_marker_properties(ownership_nonce),
                     ),
                 ),
                 _upsert(
@@ -221,7 +232,7 @@ def _node_aspects(node: GraphNode, graph: ExpectedGraph) -> list[PlannedUpsert]:
                         created=AUDIT_STAMP, lastModified=AUDIT_STAMP
                     ),
                     datasets=[revenue_urn],
-                    customProperties={SCENARIO_MARKER_KEY: SCENARIO_MARKER_VALUE},
+                    customProperties=_marker_properties(ownership_nonce),
                 ),
             )
         )
@@ -240,7 +251,7 @@ def _node_aspects(node: GraphNode, graph: ExpectedGraph) -> list[PlannedUpsert]:
                         description="Production fraud scoring model using customer order features.",
                         version=None,
                         type="classification",
-                        customProperties={SCENARIO_MARKER_KEY: SCENARIO_MARKER_VALUE},
+                        customProperties=_marker_properties(ownership_nonce),
                     ),
                 ),
                 _upsert(
@@ -300,7 +311,9 @@ def _lineage_aspect(graph: ExpectedGraph, downstream_urn: str) -> UpstreamLineag
     return UpstreamLineageClass(upstreams=upstreams, fineGrainedLineages=fine_grained or None)
 
 
-def build_seed_plan(graph: ExpectedGraph, root: Path) -> tuple[PlannedUpsert, ...]:
+def build_seed_plan(
+    graph: ExpectedGraph, root: Path, ownership_nonce: str = "offline-plan"
+) -> tuple[PlannedUpsert, ...]:
     upserts: list[PlannedUpsert] = []
     for owner in graph.owners:
         upserts.append(
@@ -314,7 +327,8 @@ def build_seed_plan(graph: ExpectedGraph, root: Path) -> tuple[PlannedUpsert, ..
                     groups=[],
                     displayName=owner.display_name,
                     description=(
-                        f"Canonical owner group: {owner.display_name}. {SCENARIO_MARKER_TEXT}"
+                        f"Canonical owner group: {owner.display_name}. "
+                        f"{_marker_text(ownership_nonce)}"
                     ),
                 ),
             )
@@ -329,7 +343,7 @@ def build_seed_plan(graph: ExpectedGraph, root: Path) -> tuple[PlannedUpsert, ..
                     name=tag.display_name,
                     description=(
                         f"LineageGuard {tag.display_name.lower()} asset classification. "
-                        f"{SCENARIO_MARKER_TEXT}"
+                        f"{_marker_text(ownership_nonce)}"
                     ),
                 ),
             )
@@ -345,12 +359,12 @@ def build_seed_plan(graph: ExpectedGraph, root: Path) -> tuple[PlannedUpsert, ..
                     "Stable identifier that joins customer activity across controlled systems."
                 ),
                 termSource="INTERNAL",
-                customProperties={SCENARIO_MARKER_KEY: SCENARIO_MARKER_VALUE},
+                customProperties=_marker_properties(ownership_nonce),
             ),
         )
     )
     for node in graph.nodes:
-        upserts.extend(_node_aspects(node, graph))
+        upserts.extend(_node_aspects(node, graph, ownership_nonce))
     node_types = {node.urn: _entity_name(node) for node in graph.nodes}
     for downstream_urn in sorted(edges_by_downstream(graph)):
         if node_types[downstream_urn] != "dataset":
@@ -362,40 +376,6 @@ def build_seed_plan(graph: ExpectedGraph, root: Path) -> tuple[PlannedUpsert, ..
                 node_types[downstream_urn],
                 _lineage_aspect(graph, downstream_urn),
             )
-        )
-    for query in graph.query_evidence:
-        statement = (root / query.sql_path).read_text(encoding="utf-8")
-        upserts.extend(
-            [
-                _upsert(
-                    f"{query.logical_key}:properties",
-                    query.query_urn,
-                    "query",
-                    QueryPropertiesClass(
-                        statement=QueryStatementClass(value=statement, language="SQL"),
-                        source=QuerySourceClass.MANUAL,
-                        created=AUDIT_STAMP,
-                        lastModified=AUDIT_STAMP,
-                        name="Finance monthly close",
-                        description=(
-                            "Unmanaged Finance query captured as organizational usage evidence."
-                        ),
-                        customProperties={
-                            "lineageguard.marker": query.marker,
-                            "lineageguard.sha256": query.sha256,
-                            "lineageguard.fieldPath": query.field_path,
-                            SCENARIO_MARKER_KEY: SCENARIO_MARKER_VALUE,
-                            "lineageguard.mode": "RECORDED_FALLBACK",
-                        },
-                    ),
-                ),
-                _upsert(
-                    f"{query.logical_key}:subjects",
-                    query.query_urn,
-                    "query",
-                    QuerySubjectsClass(subjects=[QuerySubjectClass(entity=query.dataset_urn)]),
-                ),
-            ]
         )
     keys = [item.idempotency_key for item in upserts]
     if len(keys) != len(set(keys)):
@@ -415,14 +395,19 @@ def _marker_aspect(entity_type: str) -> type[_Aspect]:
     }[entity_type]
 
 
-def entity_has_scenario_marker(reader: EntityReader, urn: str, entity_type: str) -> bool:
+def entity_has_scenario_marker(
+    reader: EntityReader, urn: str, entity_type: str, ownership_nonce: str
+) -> bool:
     aspect = reader.get_aspect(urn, _marker_aspect(entity_type))
     if aspect is None:
         return False
     if isinstance(aspect, CorpGroupInfoClass | TagPropertiesClass):
-        return SCENARIO_MARKER_TEXT in (aspect.description or "")
+        return _marker_text(ownership_nonce) in (aspect.description or "")
     custom_properties = getattr(aspect, "customProperties", None) or {}
-    return custom_properties.get(SCENARIO_MARKER_KEY) == SCENARIO_MARKER_VALUE
+    return (
+        custom_properties.get(SCENARIO_MARKER_KEY) == SCENARIO_MARKER_VALUE
+        and custom_properties.get(OWNERSHIP_NONCE_KEY) == ownership_nonce
+    )
 
 
 def seed_metadata(
@@ -432,33 +417,66 @@ def seed_metadata(
     graph: ExpectedGraph,
     root: Path,
 ) -> SeedReceipt:
-    plan = build_seed_plan(graph, root)
-    entities = {(item.proposal.entityUrn, item.proposal.entityType) for item in plan}
-    for urn, entity_type in entities:
+    nonce = receipt_store.ownership_nonce
+    plan = build_seed_plan(graph, root, nonce)
+    by_entity: dict[tuple[str, str], list[PlannedUpsert]] = {}
+    for operation in plan:
+        urn = operation.proposal.entityUrn
+        if urn is None:
+            raise ValueError("SEED_ENTITY_URN_MISSING")
+        by_entity.setdefault((urn, operation.proposal.entityType), []).append(operation)
+    receipts = receipt_store.read_all()
+    created_receipts = {
+        receipt.entity_urn: receipt
+        for receipt in receipts
+        if receipt.scenario_id == graph.scenario_id
+        and receipt.operation_kind == "entity"
+        and receipt.status is ReceiptStatus.SUCCESS
+        and receipt.detail_code == "ENTITY_CREATED"
+        and receipt.ownership_nonce == nonce
+    }
+    preexisting_exact: set[str] = set()
+    owned: set[str] = set()
+    for (urn, entity_type), operations in by_entity.items():
+        if not reader.exists(urn):
+            continue
+        exact = all(
+            operation.proposal.aspect is not None
+            and (current := reader.get_aspect(urn, type(operation.proposal.aspect))) is not None
+            and current.to_obj() == operation.proposal.aspect.to_obj()
+            for operation in operations
+        )
+        if exact:
+            preexisting_exact.add(urn)
+            continue
+        entity_hash = _entity_proposal_hash(operations)
+        creation = created_receipts.get(urn)
         if (
-            urn is not None
-            and reader.exists(urn)
-            and not entity_has_scenario_marker(reader, urn, entity_type)
+            creation is None
+            or creation.proposal_hash != entity_hash
+            or not entity_has_scenario_marker(reader, urn, entity_type, nonce)
         ):
-            raise ValueError(f"EXISTING_ENTITY_MARKER_MISMATCH:{urn}")
-    successful = receipt_store.latest_success(graph.scenario_id, "seed")
+            raise ValueError(f"EXISTING_ENTITY_NOT_OWNED:{urn}")
+        owned.add(urn)
+        for operation in operations:
+            aspect = operation.proposal.aspect
+            if aspect is None:
+                raise ValueError("SEED_ASPECT_MISSING")
+            current = reader.get_aspect(urn, type(aspect))
+            if current is not None and current.to_obj() != aspect.to_obj():
+                raise ValueError(f"OWNED_ASPECT_DRIFT:{urn}:{operation.proposal.aspectName}")
     emitted = 0
     skipped = 0
     for operation in plan:
         proposal = operation.proposal
-        existing_receipt = successful.get(operation.idempotency_key)
+        urn = proposal.entityUrn
+        if urn is None:
+            raise ValueError("SEED_ENTITY_URN_MISSING")
         aspect = proposal.aspect
-        current = (
-            reader.get_aspect(proposal.entityUrn, type(aspect))
-            if proposal.entityUrn is not None and aspect is not None
-            else None
-        )
-        if (
-            existing_receipt is not None
-            and current is not None
-            and aspect is not None
-            and current.to_obj() == aspect.to_obj()
-        ):
+        if aspect is None:
+            raise ValueError("SEED_ASPECT_MISSING")
+        current = reader.get_aspect(urn, type(aspect))
+        if current is not None and current.to_obj() == aspect.to_obj():
             skipped += 1
             receipt_store.append(
                 OperationReceipt.create(
@@ -468,7 +486,10 @@ def seed_metadata(
                     aspect_name=proposal.aspectName,
                     idempotency_key=operation.idempotency_key,
                     status=ReceiptStatus.SKIPPED,
-                    detail_code="RECONCILED_EXACT_SUCCESS",
+                    detail_code="ASPECT_SKIPPED_EXACT",
+                    proposal_hash=operation.idempotency_key,
+                    ownership_nonce=nonce,
+                    metrics={"beforeStatus": "EXACT", "afterStatus": "UNCHANGED"},
                 )
             )
             continue
@@ -484,6 +505,9 @@ def seed_metadata(
                     idempotency_key=operation.idempotency_key,
                     status=ReceiptStatus.FAILURE,
                     detail_code=type(error).__name__,
+                    proposal_hash=operation.idempotency_key,
+                    ownership_nonce=nonce,
+                    metrics={"beforeStatus": "MISSING", "afterStatus": "FAILED"},
                 )
             )
             raise
@@ -496,12 +520,39 @@ def seed_metadata(
                 aspect_name=proposal.aspectName,
                 idempotency_key=operation.idempotency_key,
                 status=ReceiptStatus.SUCCESS,
-                detail_code="EMITTED",
+                detail_code="ASPECT_RECONCILED" if urn in owned else "ASPECT_EMITTED",
+                proposal_hash=operation.idempotency_key,
+                ownership_nonce=nonce,
+                metrics={"beforeStatus": "MISSING", "afterStatus": "EMITTED"},
             )
         )
+        if urn not in preexisting_exact and urn not in owned:
+            operations = by_entity[(urn, proposal.entityType)]
+            receipt_store.append(
+                OperationReceipt.create(
+                    scenario_id=graph.scenario_id,
+                    operation_kind="entity",
+                    entity_urn=urn,
+                    aspect_name=None,
+                    idempotency_key=hashlib.sha256(
+                        f"entity:{graph.scenario_id}:{urn}".encode()
+                    ).hexdigest(),
+                    status=ReceiptStatus.SUCCESS,
+                    detail_code="ENTITY_CREATED",
+                    proposal_hash=_entity_proposal_hash(operations),
+                    ownership_nonce=nonce,
+                    metrics={"beforeStatus": "ABSENT", "afterStatus": "CREATED"},
+                )
+            )
+            owned.add(urn)
     return SeedReceipt(
         scenario_id=graph.scenario_id,
         emitted=emitted,
         skipped=skipped,
         idempotency_keys=tuple(operation.idempotency_key for operation in plan),
     )
+
+
+def _entity_proposal_hash(operations: list[PlannedUpsert]) -> str:
+    payload = "\n".join(sorted(operation.idempotency_key for operation in operations))
+    return hashlib.sha256(payload.encode()).hexdigest()

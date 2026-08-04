@@ -35,7 +35,7 @@ class RecordingCursor:
     def fetchone(self) -> tuple[object, ...]:
         self.fetchone_calls += 1
         if self.fetchone_calls == 1:
-            return (self.read_only_role,) * 5
+            return (self.read_only_role,) * 12
         if self.observed:
             return ("48291", 3, 1.25, self.commands[3][0])
         return ()
@@ -88,6 +88,16 @@ def test_execution_requires_pg_stat_statements_evidence(
     assert observed.commands[-1][1] == (f"%{plan.marker}%",)
     assert receipt.execution_count == 3
     assert receipt.total_exec_time_ms == 1.25
+    role_sql = observed.commands[2][0]
+    assert "pg_has_role" in role_sql
+    assert "current_user = 'lineageguard_query'" in role_sql
+    for relation in (
+        "commerce.orders",
+        "analytics.stg_orders",
+        "analytics.customer_revenue",
+        "fraud.customer_features",
+    ):
+        assert relation in role_sql
 
 
 def test_execution_rejects_privileged_role(

@@ -84,7 +84,13 @@ def test_partial_failure_is_durable_and_retry_reconciles_exact_successes(
             repository_root,
         )
     receipts = store.read_all()
-    assert sum(item.status is ReceiptStatus.SUCCESS for item in receipts) == 4
+    assert (
+        sum(
+            item.status is ReceiptStatus.SUCCESS and item.operation_kind == "seed"
+            for item in receipts
+        )
+        == 4
+    )
     assert sum(item.status is ReceiptStatus.FAILURE for item in receipts) == 1
     retry = seed_metadata(
         RecordingEmitter(catalog), catalog, store, expected_graph, repository_root
@@ -98,8 +104,7 @@ def test_plan_contains_query_governance_and_each_lineage_target(
 ) -> None:
     plan = build_seed_plan(expected_graph, repository_root)
     logical_keys = {item.logical_key for item in plan}
-    assert "query.finance-monthly-close:properties" in logical_keys
-    assert "query.finance-monthly-close:subjects" in logical_keys
+    assert not any(key.startswith("query.finance-monthly-close:") for key in logical_keys)
     assert "fraud.model-v3:training-data" in logical_keys
     dataset_downstreams = {
         edge.downstream_urn
@@ -126,3 +131,56 @@ def test_every_upsert_uses_an_aspect_allowed_for_its_entity(
         proposal = operation.proposal
         allowed = key_classes[proposal.entityType].ASPECT_INFO["entityAspects"]
         assert proposal.aspectName in allowed, operation.logical_key
+
+
+def test_preexisting_exact_entities_never_receive_creation_receipts(
+    expected_graph: ExpectedGraph, repository_root: Path, tmp_path: Path
+) -> None:
+    store = ReceiptStore(tmp_path / "operations.jsonl")
+    catalog = FakeCatalog()
+    for operation in build_seed_plan(expected_graph, repository_root, store.ownership_nonce):
+        proposal = operation.proposal
+        assert proposal.entityUrn is not None and proposal.aspect is not None
+        catalog.aspects[(proposal.entityUrn, type(proposal.aspect))] = proposal.aspect
+    result = seed_metadata(
+        RecordingEmitter(catalog), catalog, store, expected_graph, repository_root
+    )
+    assert result.emitted == 0
+    assert not any(item.detail_code == "ENTITY_CREATED" for item in store.read_all())
+
+
+def test_public_marker_without_creation_proof_cannot_authorize_reconciliation(
+    expected_graph: ExpectedGraph, repository_root: Path, tmp_path: Path
+) -> None:
+    store = ReceiptStore(tmp_path / "operations.jsonl")
+    catalog = FakeCatalog()
+    first = next(
+        item
+        for item in build_seed_plan(expected_graph, repository_root, store.ownership_nonce)
+        if item.logical_key == "commerce.orders:properties"
+    )
+    assert first.proposal.entityUrn is not None and first.proposal.aspect is not None
+    catalog.aspects[(first.proposal.entityUrn, type(first.proposal.aspect))] = first.proposal.aspect
+    with pytest.raises(ValueError, match="EXISTING_ENTITY_NOT_OWNED"):
+        seed_metadata(RecordingEmitter(catalog), catalog, store, expected_graph, repository_root)
+
+
+def test_owned_entity_drift_is_not_clobbered(
+    expected_graph: ExpectedGraph, repository_root: Path, tmp_path: Path
+) -> None:
+    store = ReceiptStore(tmp_path / "operations.jsonl")
+    catalog = FakeCatalog()
+    seed_metadata(RecordingEmitter(catalog), catalog, store, expected_graph, repository_root)
+    schema_operation = next(
+        item
+        for item in build_seed_plan(expected_graph, repository_root, store.ownership_nonce)
+        if item.logical_key == "commerce.orders:schema"
+    )
+    assert schema_operation.proposal.entityUrn is not None
+    assert schema_operation.proposal.aspect is not None
+    current = catalog.aspects[
+        (schema_operation.proposal.entityUrn, type(schema_operation.proposal.aspect))
+    ]
+    current.hash = "externally-modified"
+    with pytest.raises(ValueError, match="OWNED_ASPECT_DRIFT"):
+        seed_metadata(RecordingEmitter(catalog), catalog, store, expected_graph, repository_root)

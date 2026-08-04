@@ -89,14 +89,27 @@ def execute_query(cursor: Cursor, plan: QueryExecutionPlan) -> QueryExecutionRec
     cursor.execute("SET LOCAL TRANSACTION READ ONLY")
     cursor.execute("SET LOCAL statement_timeout = '5s'")
     cursor.execute(
-        "SELECT current_setting('transaction_read_only') = 'on', NOT rolsuper, "
-        "NOT rolcreatedb, NOT rolcreaterole, "
-        "NOT has_table_privilege(current_user, 'commerce.orders', "
-        "'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') "
+        "SELECT current_user = 'lineageguard_query', "
+        "current_setting('transaction_read_only') = 'on', NOT rolsuper, "
+        "NOT rolcreatedb, NOT rolcreaterole, NOT rolreplication, "
+        "pg_has_role(current_user, 'lineageguard_reader', 'MEMBER'), "
+        "has_table_privilege(current_user, 'analytics.customer_revenue', 'SELECT'), "
+        "NOT COALESCE(has_table_privilege(current_user, 'commerce.orders', "
+        "'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER'), false), "
+        "NOT COALESCE(has_table_privilege(current_user, 'analytics.stg_orders', "
+        "'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER'), false), "
+        "NOT COALESCE(has_table_privilege(current_user, 'analytics.customer_revenue', "
+        "'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER'), false), "
+        "NOT COALESCE(has_table_privilege(current_user, 'fraud.customer_features', "
+        "'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER'), false) "
         "FROM pg_roles WHERE rolname = current_user"
     )
     role_check = cursor.fetchone()
-    if role_check is None or len(role_check) != 5 or not all(value is True for value in role_check):
+    if (
+        role_check is None
+        or len(role_check) != 12
+        or not all(value is True for value in role_check)
+    ):
         raise QueryPolicyError("QUERY_ROLE_NOT_READ_ONLY")
     cursor.execute(plan.statement)
     rows = cursor.fetchall()

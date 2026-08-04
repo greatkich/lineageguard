@@ -1,11 +1,22 @@
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import os
-from dataclasses import asdict, dataclass, field
+import re
+import stat
+from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
+from typing import Any
+
+MAX_RECEIPT_BYTES = 4 * 1024 * 1024
+MAX_RECEIPT_LINE_BYTES = 64 * 1024
+MAX_RECEIPTS = 10_000
+MAX_METRICS = 32
+SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 
 
 class ReceiptStatus(StrEnum):
@@ -24,7 +35,11 @@ class OperationReceipt:
     status: ReceiptStatus
     detail_code: str
     recorded_at: str
+    proposal_hash: str = ""
+    ownership_nonce: str = ""
     metrics: dict[str, int | float | str] = field(default_factory=dict)
+    previous_hash: str = ""
+    record_hash: str = ""
 
     @classmethod
     def create(
@@ -37,7 +52,10 @@ class OperationReceipt:
         idempotency_key: str,
         status: ReceiptStatus,
         detail_code: str,
+        proposal_hash: str = "",
+        ownership_nonce: str = "",
         metrics: dict[str, int | float | str] | None = None,
+        recorded_at: str | None = None,
     ) -> OperationReceipt:
         return cls(
             scenario_id=scenario_id,
@@ -47,7 +65,9 @@ class OperationReceipt:
             idempotency_key=idempotency_key,
             status=status,
             detail_code=detail_code,
-            recorded_at=datetime.now(UTC).isoformat(),
+            recorded_at=recorded_at or datetime.now(UTC).isoformat(),
+            proposal_hash=proposal_hash or idempotency_key,
+            ownership_nonce=ownership_nonce,
             metrics=dict(metrics or {}),
         )
 
@@ -55,42 +75,260 @@ class OperationReceipt:
 class ReceiptStore:
     def __init__(self, path: Path) -> None:
         self.path = path
+        self.state_path = path.with_name("ownership-state.json")
+
+    @property
+    def ownership_nonce(self) -> str:
+        return self._state()["nonce"]
+
+    def _safe_flags(self, flags: int) -> int:
+        return flags | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+
+    def _validate_descriptor(self, descriptor: int, *, maximum: int) -> os.stat_result:
+        info = os.fstat(descriptor)
+        if not stat.S_ISREG(info.st_mode):
+            raise ValueError("PROTECTED_FILE_NOT_REGULAR")
+        if info.st_uid != os.getuid():
+            raise ValueError("PROTECTED_FILE_WRONG_OWNER")
+        if stat.S_IMODE(info.st_mode) != 0o600:
+            raise ValueError("PROTECTED_FILE_MODE_MUST_BE_0600")
+        if info.st_size > maximum:
+            raise ValueError("PROTECTED_FILE_TOO_LARGE")
+        return info
+
+    def _prepare_parent(self) -> None:
+        self.path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        if self.path.parent.is_symlink() or not self.path.parent.is_dir():
+            raise ValueError("RECEIPT_PARENT_UNSAFE")
+        info = self.path.parent.stat()
+        if info.st_uid != os.getuid():
+            raise ValueError("RECEIPT_PARENT_WRONG_OWNER")
+        os.chmod(self.path.parent, 0o700)
+
+    def _state(self) -> dict[str, str]:
+        self._prepare_parent()
+        try:
+            descriptor = os.open(self.state_path, self._safe_flags(os.O_RDONLY))
+        except FileNotFoundError:
+            state = {"key": os.urandom(32).hex(), "nonce": os.urandom(32).hex()}
+            descriptor = os.open(
+                self.state_path,
+                self._safe_flags(os.O_WRONLY | os.O_CREAT | os.O_EXCL),
+                0o600,
+            )
+            with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+                stream.write(json.dumps(state, sort_keys=True))
+                stream.flush()
+                os.fsync(stream.fileno())
+            return state
+        self._validate_descriptor(descriptor, maximum=1024)
+        with os.fdopen(descriptor, "r", encoding="utf-8") as stream:
+            raw = stream.read(1025)
+        try:
+            state = json.loads(raw)
+        except json.JSONDecodeError as error:
+            raise ValueError("OWNERSHIP_STATE_INVALID") from error
+        if (
+            not isinstance(state, dict)
+            or set(state) != {"key", "nonce"}
+            or any(not isinstance(state[item], str) or len(state[item]) != 64 for item in state)
+        ):
+            raise ValueError("OWNERSHIP_STATE_INVALID")
+        return state
+
+    @staticmethod
+    def _unsigned(receipt: OperationReceipt) -> dict[str, Any]:
+        payload = asdict(receipt)
+        payload.pop("record_hash")
+        return payload
+
+    def _sign(self, receipt: OperationReceipt, key: str) -> str:
+        payload = json.dumps(
+            self._unsigned(receipt), sort_keys=True, separators=(",", ":")
+        ).encode()
+        return hmac.new(bytes.fromhex(key), payload, hashlib.sha256).hexdigest()
+
+    @staticmethod
+    def _validate_fields(receipt: OperationReceipt) -> None:
+        if receipt.scenario_id != "canonical-customer-id-rename":
+            raise ValueError("RECEIPT_SCENARIO_INVALID")
+        if not re.fullmatch(r"[a-z-]{2,32}", receipt.operation_kind):
+            raise ValueError("RECEIPT_OPERATION_INVALID")
+        if not re.fullmatch(r"[A-Za-z0-9_:-]{2,128}", receipt.detail_code):
+            raise ValueError("RECEIPT_DETAIL_INVALID")
+        for name, value in (
+            ("IDEMPOTENCY", receipt.idempotency_key),
+            ("PROPOSAL", receipt.proposal_hash),
+            ("NONCE", receipt.ownership_nonce),
+        ):
+            if not SHA256_PATTERN.fullmatch(value):
+                raise ValueError(f"RECEIPT_{name}_INVALID")
+        if receipt.previous_hash and not SHA256_PATTERN.fullmatch(receipt.previous_hash):
+            raise ValueError("RECEIPT_PREVIOUS_HASH_INVALID")
+        if receipt.record_hash and not SHA256_PATTERN.fullmatch(receipt.record_hash):
+            raise ValueError("RECEIPT_RECORD_HASH_INVALID")
+        timestamp = datetime.fromisoformat(receipt.recorded_at)
+        if timestamp.tzinfo is None:
+            raise ValueError("RECEIPT_TIMESTAMP_INVALID")
+        for key, metric_value in receipt.metrics.items():
+            if len(key) > 128 or (isinstance(metric_value, str) and len(metric_value) > 4096):
+                raise ValueError("RECEIPT_METRICS_INVALID")
 
     def append(self, receipt: OperationReceipt) -> None:
-        self.path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        state = self._state()
+        existing = self.read_all()
+        if len(existing) >= MAX_RECEIPTS:
+            raise ValueError("RECEIPT_COUNT_LIMIT")
+        if receipt.ownership_nonce and receipt.ownership_nonce != state["nonce"]:
+            raise ValueError("RECEIPT_OWNERSHIP_NONCE_MISMATCH")
+        previous_hash = existing[-1].record_hash if existing else ""
+        last_time = datetime.fromisoformat(existing[-1].recorded_at) if existing else None
+        current_time = datetime.fromisoformat(receipt.recorded_at)
+        if current_time.tzinfo is None or (last_time is not None and current_time < last_time):
+            raise ValueError("RECEIPT_TIMESTAMP_OUT_OF_ORDER")
+        identity = (
+            receipt.operation_kind,
+            receipt.entity_urn,
+            receipt.aspect_name,
+            receipt.idempotency_key,
+        )
+        for item in existing:
+            other = (item.operation_kind, item.entity_urn, item.aspect_name, item.idempotency_key)
+            if identity == other and item.proposal_hash != receipt.proposal_hash:
+                raise ValueError("RECEIPT_DUPLICATE_CONFLICT")
+        bound = replace(
+            receipt,
+            ownership_nonce=receipt.ownership_nonce or state["nonce"],
+            previous_hash=previous_hash,
+            record_hash="",
+        )
+        self._validate_fields(bound)
+        bound = replace(bound, record_hash=self._sign(bound, state["key"]))
+        encoded = (json.dumps(asdict(bound), sort_keys=True, separators=(",", ":")) + "\n").encode()
+        if len(encoded) > MAX_RECEIPT_LINE_BYTES:
+            raise ValueError("RECEIPT_LINE_TOO_LARGE")
         descriptor = os.open(
             self.path,
-            os.O_APPEND | os.O_CREAT | os.O_WRONLY,
+            self._safe_flags(os.O_APPEND | os.O_CREAT | os.O_WRONLY),
             0o600,
         )
-        with os.fdopen(descriptor, "a", encoding="utf-8") as stream:
-            stream.write(json.dumps(asdict(receipt), sort_keys=True) + "\n")
+        info = self._validate_descriptor(descriptor, maximum=MAX_RECEIPT_BYTES)
+        if info.st_size + len(encoded) > MAX_RECEIPT_BYTES:
+            os.close(descriptor)
+            raise ValueError("RECEIPT_FILE_TOO_LARGE")
+        with os.fdopen(descriptor, "ab") as stream:
+            stream.write(encoded)
             stream.flush()
             os.fsync(stream.fileno())
 
     def read_all(self) -> tuple[OperationReceipt, ...]:
-        if not self.path.exists():
+        try:
+            descriptor = os.open(self.path, self._safe_flags(os.O_RDONLY))
+        except FileNotFoundError:
             return ()
+        self._validate_descriptor(descriptor, maximum=MAX_RECEIPT_BYTES)
+        state = self._state()
         receipts: list[OperationReceipt] = []
-        for line_number, line in enumerate(self.path.read_text(encoding="utf-8").splitlines(), 1):
-            raw = json.loads(line)
-            try:
-                receipts.append(
-                    OperationReceipt(
-                        scenario_id=raw["scenario_id"],
-                        operation_kind=raw["operation_kind"],
-                        entity_urn=raw["entity_urn"],
-                        aspect_name=raw["aspect_name"],
-                        idempotency_key=raw["idempotency_key"],
-                        status=ReceiptStatus(raw["status"]),
-                        detail_code=raw["detail_code"],
-                        recorded_at=raw["recorded_at"],
-                        metrics=raw.get("metrics", {}),
-                    )
+        previous_hash = ""
+        previous_time: datetime | None = None
+        seen: dict[tuple[str, str | None, str | None, str], str] = {}
+        with os.fdopen(descriptor, "rb") as stream:
+            for line_number, raw_line in enumerate(stream, 1):
+                if line_number > MAX_RECEIPTS:
+                    raise ValueError("RECEIPT_COUNT_LIMIT")
+                if len(raw_line) > MAX_RECEIPT_LINE_BYTES:
+                    raise ValueError(f"RECEIPT_LINE_TOO_LARGE:{line_number}")
+                try:
+                    raw = json.loads(raw_line)
+                    receipt = self._parse(raw)
+                    recorded_at = datetime.fromisoformat(receipt.recorded_at)
+                except (json.JSONDecodeError, KeyError, TypeError, ValueError) as error:
+                    raise ValueError(f"RECEIPT_INVALID_LINE:{line_number}") from error
+                if recorded_at.tzinfo is None or (
+                    previous_time is not None and recorded_at < previous_time
+                ):
+                    raise ValueError(f"RECEIPT_TIMESTAMP_OUT_OF_ORDER:{line_number}")
+                if receipt.previous_hash != previous_hash:
+                    raise ValueError(f"RECEIPT_CHAIN_BROKEN:{line_number}")
+                if receipt.ownership_nonce != state["nonce"]:
+                    raise ValueError(f"RECEIPT_NONCE_INVALID:{line_number}")
+                self._validate_fields(receipt)
+                expected_hash = self._sign(replace(receipt, record_hash=""), state["key"])
+                if not hmac.compare_digest(receipt.record_hash, expected_hash):
+                    raise ValueError(f"RECEIPT_HASH_INVALID:{line_number}")
+                identity = (
+                    receipt.operation_kind,
+                    receipt.entity_urn,
+                    receipt.aspect_name,
+                    receipt.idempotency_key,
                 )
-            except (KeyError, TypeError, ValueError) as error:
-                raise ValueError(f"RECEIPT_INVALID_LINE:{line_number}") from error
+                if identity in seen and seen[identity] != receipt.proposal_hash:
+                    raise ValueError(f"RECEIPT_DUPLICATE_CONFLICT:{line_number}")
+                seen[identity] = receipt.proposal_hash
+                previous_hash = receipt.record_hash
+                previous_time = recorded_at
+                receipts.append(receipt)
         return tuple(receipts)
+
+    @staticmethod
+    def _parse(raw: object) -> OperationReceipt:
+        keys = {
+            "scenario_id",
+            "operation_kind",
+            "entity_urn",
+            "aspect_name",
+            "idempotency_key",
+            "status",
+            "detail_code",
+            "recorded_at",
+            "proposal_hash",
+            "ownership_nonce",
+            "metrics",
+            "previous_hash",
+            "record_hash",
+        }
+        if not isinstance(raw, dict) or set(raw) != keys:
+            raise ValueError("RECEIPT_KEYS_INVALID")
+        strings = (
+            "scenario_id",
+            "operation_kind",
+            "idempotency_key",
+            "detail_code",
+            "recorded_at",
+            "proposal_hash",
+            "ownership_nonce",
+            "previous_hash",
+            "record_hash",
+        )
+        if any(not isinstance(raw[key], str) or len(raw[key]) > 4096 for key in strings):
+            raise ValueError("RECEIPT_STRING_INVALID")
+        if raw["entity_urn"] is not None and not isinstance(raw["entity_urn"], str):
+            raise ValueError("RECEIPT_ENTITY_INVALID")
+        if raw["aspect_name"] is not None and not isinstance(raw["aspect_name"], str):
+            raise ValueError("RECEIPT_ASPECT_INVALID")
+        metrics = raw["metrics"]
+        if not isinstance(metrics, dict) or len(metrics) > MAX_METRICS:
+            raise ValueError("RECEIPT_METRICS_INVALID")
+        if any(
+            not isinstance(key, str) or not isinstance(value, int | float | str)
+            for key, value in metrics.items()
+        ):
+            raise ValueError("RECEIPT_METRICS_INVALID")
+        return OperationReceipt(
+            scenario_id=raw["scenario_id"],
+            operation_kind=raw["operation_kind"],
+            entity_urn=raw["entity_urn"],
+            aspect_name=raw["aspect_name"],
+            idempotency_key=raw["idempotency_key"],
+            status=ReceiptStatus(raw["status"]),
+            detail_code=raw["detail_code"],
+            recorded_at=raw["recorded_at"],
+            proposal_hash=raw["proposal_hash"],
+            ownership_nonce=raw["ownership_nonce"],
+            metrics=metrics,
+            previous_hash=raw["previous_hash"],
+            record_hash=raw["record_hash"],
+        )
 
     def latest_success(self, scenario_id: str, operation_kind: str) -> dict[str, OperationReceipt]:
         successful: dict[str, OperationReceipt] = {}

@@ -6,7 +6,10 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from datahub.emitter.mce_builder import make_schema_field_urn
+from datahub.emitter.mce_builder import (
+    make_dataplatform_instance_urn,
+    make_schema_field_urn,
+)
 from datahub.emitter.mcp import MetadataChangeProposalWrapper
 from datahub.metadata.schema_classes import (
     AuditStampClass,
@@ -19,12 +22,18 @@ from datahub.metadata.schema_classes import (
     QuerySubjectsClass,
     QueryUsageStatisticsClass,
 )
-from datahub.metadata.urns import QueryUrn
 
+from lineageguard_datahub.ingestion import RECIPE_DIGESTS
 from lineageguard_datahub.models import ExpectedGraph
 from lineageguard_datahub.query_history import plan_query_execution
 from lineageguard_datahub.receipts import OperationReceipt, ReceiptStatus, ReceiptStore
-from lineageguard_datahub.seed import EntityReader, McpEmitter
+from lineageguard_datahub.seed import (
+    OWNERSHIP_NONCE_KEY,
+    SCENARIO_MARKER_KEY,
+    SCENARIO_MARKER_VALUE,
+    EntityReader,
+    McpEmitter,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,6 +61,20 @@ def latest_pg_stat_receipt(
     if not candidates:
         raise ValueError("PG_STAT_RECEIPT_REQUIRED")
     receipt = max(candidates, key=lambda item: item.recorded_at)
+    query = graph.query_evidence[0]
+    required_metrics = {
+        "queryId",
+        "executionCount",
+        "totalExecTimeMs",
+        "normalizedFingerprint",
+        "statementSha256",
+    }
+    if not required_metrics <= set(receipt.metrics):
+        raise ValueError("PG_STAT_RECEIPT_INCOMPLETE")
+    if receipt.metrics["normalizedFingerprint"] != receipt.idempotency_key:
+        raise ValueError("PG_STAT_FINGERPRINT_MISMATCH")
+    if receipt.metrics["statementSha256"] != query.sha256:
+        raise ValueError("PG_STAT_STATEMENT_DIGEST_MISMATCH")
     if int(receipt.metrics.get("executionCount", 0)) < 1:
         raise ValueError("PG_STAT_COUNT_INVALID")
     if float(receipt.metrics.get("totalExecTimeMs", -1)) < 0:
@@ -60,7 +83,10 @@ def latest_pg_stat_receipt(
 
 
 def build_live_query_plan(
-    graph: ExpectedGraph, root: Path, receipt: OperationReceipt
+    graph: ExpectedGraph,
+    root: Path,
+    receipt: OperationReceipt,
+    ownership_nonce: str = "offline-plan",
 ) -> tuple[LiveQueryUpsert, ...]:
     query = graph.query_evidence[0]
     execution = plan_query_execution(root, query)
@@ -68,7 +94,7 @@ def build_live_query_plan(
         raise ValueError("PG_STAT_FINGERPRINT_MISMATCH")
     recorded_at = datetime.fromisoformat(receipt.recorded_at)
     timestamp_ms = int(recorded_at.timestamp() * 1000)
-    urn = QueryUrn(execution.normalized_fingerprint).urn()
+    urn = query.query_urn
     audit = AuditStampClass(time=timestamp_ms, actor="urn:li:corpuser:lineageguard-reader")
     proposals = (
         MetadataChangeProposalWrapper(
@@ -81,6 +107,11 @@ def build_live_query_plan(
                 source=QuerySourceClass.SYSTEM,
                 created=audit,
                 lastModified=audit,
+                customProperties={
+                    SCENARIO_MARKER_KEY: SCENARIO_MARKER_VALUE,
+                    OWNERSHIP_NONCE_KEY: ownership_nonce,
+                    "lineageguard.queryFingerprint": execution.normalized_fingerprint,
+                },
             ),
         ),
         MetadataChangeProposalWrapper(
@@ -98,7 +129,7 @@ def build_live_query_plan(
             entityUrn=urn,
             aspect=DataPlatformInstanceClass(
                 platform="urn:li:dataPlatform:postgres",
-                instance=graph.platform_instance,
+                instance=make_dataplatform_instance_urn("postgres", graph.platform_instance),
             ),
         ),
         MetadataChangeProposalWrapper(
@@ -121,29 +152,71 @@ def emit_live_query_evidence(
     graph: ExpectedGraph,
     root: Path,
 ) -> int:
-    receipt = latest_pg_stat_receipt(graph, store.read_all())
-    plan = build_live_query_plan(graph, root, receipt)
+    receipts = store.read_all()
+    receipt = latest_pg_stat_receipt(graph, receipts)
+    recipe_digest = RECIPE_DIGESTS["walkthrough/metadata/postgres-ingestion.yml"]
+    ingest_receipts = [
+        item
+        for item in receipts
+        if item.operation_kind == "ingest"
+        and item.aspect_name == "walkthrough/metadata/postgres-ingestion.yml"
+        and item.status is ReceiptStatus.SUCCESS
+        and item.idempotency_key == recipe_digest
+        and item.proposal_hash == recipe_digest
+    ]
+    if not ingest_receipts:
+        raise ValueError("POSTGRES_INGEST_RECEIPT_REQUIRED")
+    latest_ingest = max(ingest_receipts, key=lambda item: item.recorded_at)
+    if datetime.fromisoformat(latest_ingest.recorded_at) < datetime.fromisoformat(
+        receipt.recorded_at
+    ):
+        raise ValueError("POSTGRES_INGEST_PRECEDES_QUERY")
+    nonce = store.ownership_nonce
+    plan = build_live_query_plan(graph, root, receipt, nonce)
     urn = plan[0].proposal.entityUrn
     if urn is None:
         raise ValueError("LIVE_QUERY_URN_MISSING")
-    if reader.exists(urn):
+    entity_hash = hashlib.sha256(
+        "\n".join(sorted(item.idempotency_key for item in plan)).encode()
+    ).hexdigest()
+    creation = next(
+        (
+            item
+            for item in reversed(receipts)
+            if item.operation_kind == "entity"
+            and item.entity_urn == urn
+            and item.status is ReceiptStatus.SUCCESS
+            and item.detail_code == "ENTITY_CREATED"
+        ),
+        None,
+    )
+    existed = reader.exists(urn)
+    if existed:
         properties = reader.get_aspect(urn, QueryPropertiesClass)
         expected = plan[0].proposal.aspect
         if (
-            properties is None
+            creation is None
+            or creation.ownership_nonce != nonce
+            or creation.proposal_hash != entity_hash
+            or properties is None
             or properties.source != QuerySourceClass.SYSTEM
             or not isinstance(expected, QueryPropertiesClass)
-            or properties.statement.value != expected.statement.value
+            or properties.to_obj() != expected.to_obj()
         ):
-            raise ValueError("LIVE_QUERY_EXISTING_ENTITY_MISMATCH")
+            raise ValueError("LIVE_QUERY_EXISTING_ENTITY_NOT_OWNED")
+        for operation in plan[:-1]:
+            aspect = operation.proposal.aspect
+            if aspect is None:
+                raise ValueError("LIVE_QUERY_ASPECT_MISSING")
+            current = reader.get_aspect(urn, type(aspect))
+            if current is not None and current.to_obj() != aspect.to_obj():
+                raise ValueError(f"LIVE_QUERY_STATIC_ASPECT_DRIFT:{operation.proposal.aspectName}")
     emitted = 0
-    successful = store.latest_success(graph.scenario_id, "ingest-query")
-    for operation in plan:
+    for index, operation in enumerate(plan):
         proposal = operation.proposal
         aspect = proposal.aspect
         if (
-            operation.idempotency_key in successful
-            and proposal.entityUrn is not None
+            proposal.entityUrn is not None
             and aspect is not None
             and not isinstance(aspect, QueryUsageStatisticsClass)
         ):
@@ -157,7 +230,11 @@ def emit_live_query_evidence(
                         aspect_name=proposal.aspectName,
                         idempotency_key=operation.idempotency_key,
                         status=ReceiptStatus.SKIPPED,
-                        detail_code="RECONCILED_EXACT_SUCCESS",
+                        detail_code="ASPECT_SKIPPED_EXACT",
+                        proposal_hash=operation.idempotency_key,
+                        ownership_nonce=nonce,
+                        metrics=_evidence_metrics(receipt, recipe_digest)
+                        | {"beforeStatus": "EXACT", "afterStatus": "UNCHANGED"},
                     )
                 )
                 continue
@@ -173,6 +250,10 @@ def emit_live_query_evidence(
                     idempotency_key=operation.idempotency_key,
                     status=ReceiptStatus.FAILURE,
                     detail_code=type(error).__name__,
+                    proposal_hash=operation.idempotency_key,
+                    ownership_nonce=nonce,
+                    metrics=_evidence_metrics(receipt, recipe_digest)
+                    | {"beforeStatus": "MISSING", "afterStatus": "FAILED"},
                 )
             )
             raise
@@ -186,6 +267,41 @@ def emit_live_query_evidence(
                 idempotency_key=operation.idempotency_key,
                 status=ReceiptStatus.SUCCESS,
                 detail_code="LIVE_QUERY_EMITTED",
+                proposal_hash=operation.idempotency_key,
+                ownership_nonce=nonce,
+                metrics=_evidence_metrics(receipt, recipe_digest)
+                | {"beforeStatus": "MISSING", "afterStatus": "EMITTED"},
             )
         )
+        if not existed and index == 0:
+            store.append(
+                OperationReceipt.create(
+                    scenario_id=graph.scenario_id,
+                    operation_kind="entity",
+                    entity_urn=urn,
+                    aspect_name=None,
+                    idempotency_key=hashlib.sha256(
+                        f"entity:{graph.scenario_id}:{urn}".encode()
+                    ).hexdigest(),
+                    status=ReceiptStatus.SUCCESS,
+                    detail_code="ENTITY_CREATED",
+                    proposal_hash=entity_hash,
+                    ownership_nonce=nonce,
+                    metrics={"beforeStatus": "ABSENT", "afterStatus": "CREATED"},
+                )
+            )
+            existed = True
     return emitted
+
+
+def _evidence_metrics(
+    receipt: OperationReceipt, recipe_digest: str
+) -> dict[str, int | float | str]:
+    return {
+        "queryFingerprint": receipt.idempotency_key,
+        "pgStatQueryId": str(receipt.metrics["queryId"]),
+        "executionCount": int(receipt.metrics["executionCount"]),
+        "totalExecTimeMs": float(receipt.metrics["totalExecTimeMs"]),
+        "observationTimestamp": receipt.recorded_at,
+        "recipeFingerprint": recipe_digest,
+    }

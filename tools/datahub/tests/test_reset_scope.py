@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 from typing import Any
 
@@ -8,7 +9,7 @@ import pytest
 from lineageguard_datahub.models import ExpectedGraph
 from lineageguard_datahub.receipts import OperationReceipt, ReceiptStatus, ReceiptStore
 from lineageguard_datahub.reset import ResetPolicyError, build_reset_plan, execute_reset
-from lineageguard_datahub.seed import build_seed_plan
+from lineageguard_datahub.seed import _entity_proposal_hash, build_seed_plan
 
 
 class CatalogDeleter:
@@ -32,57 +33,73 @@ class CatalogDeleter:
 
 
 def _creation_state(
-    expected_graph: ExpectedGraph, repository_root: Path
-) -> tuple[tuple[OperationReceipt, ...], dict[tuple[str, type[object]], Any]]:
-    receipts: list[OperationReceipt] = []
+    expected_graph: ExpectedGraph, repository_root: Path, store: ReceiptStore
+) -> dict[tuple[str, type[object]], Any]:
     aspects: dict[tuple[str, type[object]], Any] = {}
-    for operation in build_seed_plan(expected_graph, repository_root):
+    by_entity: dict[str, list[Any]] = {}
+    nonce = store.ownership_nonce
+    for operation in build_seed_plan(expected_graph, repository_root, nonce):
         proposal = operation.proposal
         assert proposal.entityUrn is not None and proposal.aspect is not None
         aspects[(proposal.entityUrn, type(proposal.aspect))] = proposal.aspect
-        receipts.append(
+        by_entity.setdefault(proposal.entityUrn, []).append(operation)
+    for urn, operations in by_entity.items():
+        store.append(
             OperationReceipt.create(
                 scenario_id=expected_graph.scenario_id,
-                operation_kind="seed",
-                entity_urn=proposal.entityUrn,
-                aspect_name=proposal.aspectName,
-                idempotency_key=operation.idempotency_key,
+                operation_kind="entity",
+                entity_urn=urn,
+                aspect_name=None,
+                idempotency_key=hashlib.sha256(f"entity:{urn}".encode()).hexdigest(),
                 status=ReceiptStatus.SUCCESS,
-                detail_code="EMITTED",
+                detail_code="ENTITY_CREATED",
+                proposal_hash=_entity_proposal_hash(operations),
+                ownership_nonce=nonce,
             )
         )
-    return tuple(receipts), aspects
+    return aspects
 
 
-def test_reset_refuses_non_canonical_environment(expected_graph: ExpectedGraph) -> None:
+def test_reset_refuses_non_canonical_environment(
+    expected_graph: ExpectedGraph, repository_root: Path
+) -> None:
     with pytest.raises(ResetPolicyError, match="CANONICAL_ENV_REQUIRED"):
         build_reset_plan(
             expected_graph,
             environment_gate="production",
             platform_instance=expected_graph.platform_instance,
             creation_receipts=(),
+            root=repository_root,
+            ownership_nonce="nonce",
         )
 
 
-def test_reset_requires_creation_receipts(expected_graph: ExpectedGraph) -> None:
+def test_reset_requires_creation_receipts(
+    expected_graph: ExpectedGraph, repository_root: Path
+) -> None:
     with pytest.raises(ResetPolicyError, match="CREATION_RECEIPTS_REQUIRED"):
         build_reset_plan(
             expected_graph,
             environment_gate="canonical",
             platform_instance=expected_graph.platform_instance,
             creation_receipts=(),
+            root=repository_root,
+            ownership_nonce="nonce",
         )
 
 
-def test_reset_rejects_receipt_outside_allowlist(expected_graph: ExpectedGraph) -> None:
+def test_reset_rejects_receipt_outside_allowlist(
+    expected_graph: ExpectedGraph, repository_root: Path
+) -> None:
     receipt = OperationReceipt.create(
         scenario_id=expected_graph.scenario_id,
-        operation_kind="seed",
+        operation_kind="entity",
         entity_urn="urn:li:tag:shared",
         aspect_name="tagProperties",
         idempotency_key="bad",
         status=ReceiptStatus.SUCCESS,
-        detail_code="EMITTED",
+        detail_code="ENTITY_CREATED",
+        ownership_nonce="nonce",
     )
     with pytest.raises(ResetPolicyError, match="RECEIPT_TARGET_OUTSIDE_ALLOWLIST"):
         build_reset_plan(
@@ -90,21 +107,23 @@ def test_reset_rejects_receipt_outside_allowlist(expected_graph: ExpectedGraph) 
             environment_gate="canonical",
             platform_instance=expected_graph.platform_instance,
             creation_receipts=(receipt,),
+            root=repository_root,
+            ownership_nonce="nonce",
         )
 
 
 def test_reset_uses_receipts_markers_and_recovers_partial_failure(
     expected_graph: ExpectedGraph, repository_root: Path, tmp_path: Path
 ) -> None:
-    receipts, aspects = _creation_state(expected_graph, repository_root)
     store = ReceiptStore(tmp_path / "operations.jsonl")
-    for receipt in receipts:
-        store.append(receipt)
+    aspects = _creation_state(expected_graph, repository_root, store)
     plan = build_reset_plan(
         expected_graph,
         environment_gate="canonical",
         platform_instance=expected_graph.platform_instance,
         creation_receipts=store.read_all(),
+        root=repository_root,
+        ownership_nonce=store.ownership_nonce,
     )
     catalog = CatalogDeleter(aspects, fail_at=2)
     with pytest.raises(RuntimeError, match="injected"):

@@ -60,3 +60,16 @@ def test_dbt_parse_relations_match_expected_graph(
     for unique_id, relation in expected.items():
         node = manifest["nodes"][unique_id]
         assert (node["database"], node["schema"], node["alias"]) == relation
+
+
+def test_dbt_grants_only_exact_canonical_relations(repository_root: Path) -> None:
+    macro = (repository_root / "walkthrough/dbt/macros/grant_canonical_readers.sql").read_text()
+    assert "TO lineageguard_reader" in macro
+    for relation in (
+        "analytics.stg_orders",
+        "analytics.customer_revenue",
+        "fraud.customer_features",
+    ):
+        assert relation in macro
+    assert "commerce.orders" not in macro
+    assert "GRANT SELECT ON ALL" not in macro

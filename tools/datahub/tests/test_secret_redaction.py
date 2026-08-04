@@ -14,7 +14,7 @@ def _local_postgres() -> dict[str, str]:
     return {
         "WALKTHROUGH_POSTGRES_HOST": "127.0.0.1",
         "WALKTHROUGH_POSTGRES_PORT": "5432",
-        "WALKTHROUGH_POSTGRES_USER": "lineageguard",
+        "WALKTHROUGH_POSTGRES_USER": "lineageguard_seed",
         "WALKTHROUGH_POSTGRES_PASSWORD": "secret",
         "WALKTHROUGH_POSTGRES_DATABASE": "lineageguard",
         "LINEAGEGUARD_POSTGRES_MODE": "local",
@@ -41,6 +41,27 @@ def test_query_role_uses_separate_credentials() -> None:
     values = _local_postgres()
     with pytest.raises(ConfigurationError, match="WALKTHROUGH_QUERY_POSTGRES_USER"):
         load_postgres_config(values, query_role=True)
+
+
+def test_query_and_ingest_principals_are_fixed_login_names() -> None:
+    values = _local_postgres() | {
+        "WALKTHROUGH_QUERY_POSTGRES_USER": "lineageguard_reader",
+        "WALKTHROUGH_QUERY_POSTGRES_PASSWORD": "query",
+        "WALKTHROUGH_INGEST_POSTGRES_USER": "lineageguard_query",
+        "WALKTHROUGH_INGEST_POSTGRES_PASSWORD": "ingest",
+    }
+    with pytest.raises(ConfigurationError, match="QUERY_POSTGRES_PRINCIPAL_MISMATCH"):
+        load_postgres_config(values, query_role=True)
+    with pytest.raises(ConfigurationError, match="INGEST_POSTGRES_PRINCIPAL_MISMATCH"):
+        load_postgres_config(values, ingest_role=True)
+    values["WALKTHROUGH_QUERY_POSTGRES_USER"] = "lineageguard_query"
+    values["WALKTHROUGH_INGEST_POSTGRES_USER"] = "lineageguard_ingest"
+    assert load_postgres_config(values, query_role=True).credential_kind == "query"
+    assert load_postgres_config(values, ingest_role=True).credential_kind == "ingest"
+
+
+def test_redaction_replaces_longest_secret_first() -> None:
+    assert redact("token-long token", ("token", "token-long")) == "[REDACTED] [REDACTED]"
 
 
 def test_remote_postgres_requires_verify_full_and_opt_in() -> None:

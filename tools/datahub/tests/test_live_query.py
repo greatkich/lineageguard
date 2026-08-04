@@ -6,8 +6,13 @@ from typing import Any
 
 import pytest
 from datahub.emitter.mcp import MetadataChangeProposalWrapper
-from datahub.metadata.schema_classes import QueryPropertiesClass, QuerySourceClass
+from datahub.metadata.schema_classes import (
+    QueryPropertiesClass,
+    QuerySourceClass,
+    QuerySubjectsClass,
+)
 
+from lineageguard_datahub.ingestion import RECIPE_DIGESTS
 from lineageguard_datahub.live_query import build_live_query_plan, emit_live_query_evidence
 from lineageguard_datahub.models import ExpectedGraph
 from lineageguard_datahub.query_history import plan_query_execution
@@ -46,9 +51,32 @@ def _query_receipt(graph: ExpectedGraph, repository_root: Path) -> OperationRece
             idempotency_key=execution.normalized_fingerprint,
             status=ReceiptStatus.SUCCESS,
             detail_code="PG_STAT_OBSERVED",
-            metrics={"executionCount": 3, "totalExecTimeMs": 1.25},
+            metrics={
+                "queryId": "48291",
+                "executionCount": 3,
+                "totalExecTimeMs": 1.25,
+                "normalizedFingerprint": execution.normalized_fingerprint,
+                "statementSha256": execution.sha256,
+            },
         ),
         recorded_at="2026-08-04T10:00:00+00:00",
+    )
+
+
+def _prepare_store(store: ReceiptStore, graph: ExpectedGraph, repository_root: Path) -> None:
+    store.append(_query_receipt(graph, repository_root))
+    digest = RECIPE_DIGESTS["walkthrough/metadata/postgres-ingestion.yml"]
+    store.append(
+        OperationReceipt.create(
+            scenario_id=graph.scenario_id,
+            operation_kind="ingest",
+            entity_urn=None,
+            aspect_name="walkthrough/metadata/postgres-ingestion.yml",
+            idempotency_key=digest,
+            status=ReceiptStatus.SUCCESS,
+            detail_code="INGESTED",
+            recorded_at="2026-08-04T10:01:00+00:00",
+        )
     )
 
 
@@ -60,14 +88,14 @@ def test_live_query_plan_is_system_provenance_and_namespaced_fallback_is_not_use
     properties = plan[0].proposal.aspect
     assert isinstance(properties, QueryPropertiesClass)
     assert properties.source == QuerySourceClass.SYSTEM
-    assert plan[0].proposal.entityUrn != expected_graph.query_evidence[0].query_urn
+    assert plan[0].proposal.entityUrn == expected_graph.query_evidence[0].query_urn
 
 
 def test_live_query_partial_failure_reconciles_successful_aspects(
     expected_graph: ExpectedGraph, repository_root: Path, tmp_path: Path
 ) -> None:
     store = ReceiptStore(tmp_path / "operations.jsonl")
-    store.append(_query_receipt(expected_graph, repository_root))
+    _prepare_store(store, expected_graph, repository_root)
     catalog = FakeCatalog(fail_at=2)
     with pytest.raises(RuntimeError, match="injected"):
         emit_live_query_evidence(catalog, catalog, store, expected_graph, repository_root)
@@ -85,8 +113,8 @@ def test_manual_query_entity_cannot_be_promoted_to_live(
 ) -> None:
     store = ReceiptStore(tmp_path / "operations.jsonl")
     receipt = _query_receipt(expected_graph, repository_root)
-    store.append(receipt)
-    plan = build_live_query_plan(expected_graph, repository_root, receipt)
+    _prepare_store(store, expected_graph, repository_root)
+    plan = build_live_query_plan(expected_graph, repository_root, receipt, store.ownership_nonce)
     catalog = FakeCatalog()
     properties = plan[0].proposal.aspect
     assert isinstance(properties, QueryPropertiesClass)
@@ -94,7 +122,7 @@ def test_manual_query_entity_cannot_be_promoted_to_live(
     urn = plan[0].proposal.entityUrn
     assert urn is not None
     catalog.aspects[(urn, QueryPropertiesClass)] = manual
-    with pytest.raises(ValueError, match="LIVE_QUERY_EXISTING_ENTITY_MISMATCH"):
+    with pytest.raises(ValueError, match="LIVE_QUERY_EXISTING_ENTITY_NOT_OWNED"):
         emit_live_query_evidence(catalog, catalog, store, expected_graph, repository_root)
 
 
@@ -106,3 +134,17 @@ def replace_query_source(properties: QueryPropertiesClass, source: str) -> Query
         lastModified=properties.lastModified,
         customProperties={"lineageguard.ownerUrn": "urn:li:corpGroup:shared"},
     )
+
+
+def test_owned_live_query_static_aspect_drift_is_refused(
+    expected_graph: ExpectedGraph, repository_root: Path, tmp_path: Path
+) -> None:
+    store = ReceiptStore(tmp_path / "operations.jsonl")
+    _prepare_store(store, expected_graph, repository_root)
+    catalog = FakeCatalog()
+    emit_live_query_evidence(catalog, catalog, store, expected_graph, repository_root)
+    urn = expected_graph.query_evidence[0].query_urn
+    subjects = catalog.aspects[(urn, QuerySubjectsClass)]
+    subjects.subjects = []
+    with pytest.raises(ValueError, match="LIVE_QUERY_STATIC_ASPECT_DRIFT"):
+        emit_live_query_evidence(catalog, catalog, store, expected_graph, repository_root)

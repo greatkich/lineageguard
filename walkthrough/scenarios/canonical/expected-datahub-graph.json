@@ -41,7 +41,8 @@
       "entityType": "DATASET",
       "name": "orders",
       "ownerUrns": [],
-      "tagUrns": []
+      "tagUrns": [],
+      "schemaFields": ["order_id", "customer_id", "order_total", "ordered_at"]
     },
     {
       "logicalKey": "analytics.stg_orders",
@@ -49,7 +50,8 @@
       "entityType": "DATASET",
       "name": "stg_orders",
       "ownerUrns": [],
-      "tagUrns": []
+      "tagUrns": [],
+      "schemaFields": ["order_id", "customer_id", "order_total", "ordered_at"]
     },
     {
       "logicalKey": "analytics.customer_revenue",
@@ -57,7 +59,8 @@
       "entityType": "DATASET",
       "name": "customer_revenue",
       "ownerUrns": ["urn:li:corpGroup:lineageguard-canonical.finance-analytics"],
-      "tagUrns": ["urn:li:tag:lineageguard-canonical.Critical"]
+      "tagUrns": ["urn:li:tag:lineageguard-canonical.Critical"],
+      "schemaFields": ["customer_id", "lifetime_revenue"]
     },
     {
       "logicalKey": "fraud.customer_features",
@@ -65,7 +68,8 @@
       "entityType": "DATASET",
       "name": "customer_features",
       "ownerUrns": ["urn:li:corpGroup:lineageguard-canonical.risk-ml"],
-      "tagUrns": ["urn:li:tag:lineageguard-canonical.Production"]
+      "tagUrns": ["urn:li:tag:lineageguard-canonical.Production"],
+      "schemaFields": ["customer_id", "order_count", "max_order_total"]
     },
     {
       "logicalKey": "finance.revenue-dashboard",
@@ -73,7 +77,8 @@
       "entityType": "DASHBOARD",
       "name": "Finance Revenue Dashboard",
       "ownerUrns": ["urn:li:corpGroup:lineageguard-canonical.finance-analytics"],
-      "tagUrns": ["urn:li:tag:lineageguard-canonical.Critical", "urn:li:tag:lineageguard-canonical.Production"]
+      "tagUrns": ["urn:li:tag:lineageguard-canonical.Critical", "urn:li:tag:lineageguard-canonical.Production"],
+      "schemaFields": []
     },
     {
       "logicalKey": "fraud.model-v3",
@@ -81,7 +86,8 @@
       "entityType": "MLMODEL",
       "name": "Fraud Model v3",
       "ownerUrns": ["urn:li:corpGroup:lineageguard-canonical.risk-ml"],
-      "tagUrns": ["urn:li:tag:lineageguard-canonical.Critical", "urn:li:tag:lineageguard-canonical.Production"]
+      "tagUrns": ["urn:li:tag:lineageguard-canonical.Critical", "urn:li:tag:lineageguard-canonical.Production"],
+      "schemaFields": []
     }
   ],
   "edges": [
@@ -139,7 +145,7 @@
   "queryEvidence": [
     {
       "logicalKey": "query.finance-monthly-close",
-      "queryUrn": "urn:li:query:lineageguard-canonical.e4bbe7075754d05de68f76ff0a9b127532e044da8ab0a357bce7e0d41f7ad22c",
+      "queryUrn": "urn:li:query:lineageguard-canonical.system.e4bbe7075754d05de68f76ff0a9b127532e044da8ab0a357bce7e0d41f7ad22c",
       "marker": "lineageguard:finance-monthly-close",
       "sqlPath": "walkthrough/warehouse/queries/finance-monthly-close.sql",
       "datasetUrn": "urn:li:dataset:(urn:li:dataPlatform:postgres,lineageguard-canonical.lineageguard.analytics.customer_revenue,PROD)",

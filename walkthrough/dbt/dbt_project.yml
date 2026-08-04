@@ -19,3 +19,6 @@ models:
     fraud:
       +schema: fraud
       +materialized: table
+
+on-run-end:
+  - "{{ grant_canonical_readers() }}"

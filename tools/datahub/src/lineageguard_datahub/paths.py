@@ -19,7 +19,13 @@ def canonical_manifest_path(root: Path | None = None) -> Path:
     ) / "walkthrough/scenarios/canonical/expected-datahub-graph.json"
 
 
-def resolve_checked_file(root: Path, relative_path: str, expected_sha256: str) -> Path:
+def resolve_checked_file(
+    root: Path,
+    relative_path: str,
+    expected_sha256: str,
+    *,
+    maximum_bytes: int = 1024 * 1024,
+) -> Path:
     relative = Path(relative_path)
     if relative.is_absolute() or ".." in relative.parts:
         raise ValueError("CHECKED_PATH_INVALID")
@@ -34,6 +40,8 @@ def resolve_checked_file(root: Path, relative_path: str, expected_sha256: str) -
         raise ValueError("CHECKED_PATH_OUTSIDE_REPOSITORY")
     if not stat.S_ISREG(resolved.stat().st_mode):
         raise ValueError("CHECKED_PATH_NOT_REGULAR_FILE")
+    if resolved.stat().st_size > maximum_bytes:
+        raise ValueError("CHECKED_FILE_TOO_LARGE")
     if hashlib.sha256(resolved.read_bytes()).hexdigest() != expected_sha256:
         raise ValueError("CHECKED_FILE_DIGEST_MISMATCH")
     return resolved

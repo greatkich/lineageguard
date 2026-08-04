@@ -2,16 +2,19 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Iterable
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Protocol, TypeVar
 
 from datahub._codegen.aspect import _Aspect
-from datahub.emitter.mce_builder import make_schema_field_urn
+from datahub.emitter.mce_builder import (
+    make_dataplatform_instance_urn,
+    make_schema_field_urn,
+)
 from datahub.metadata.schema_classes import (
     DashboardInfoClass,
+    DataPlatformInstanceClass,
     GlobalTagsClass,
     OwnershipClass,
     QueryPropertiesClass,
@@ -23,6 +26,7 @@ from datahub.metadata.schema_classes import (
     UpstreamLineageClass,
 )
 
+from lineageguard_datahub.ingestion import RECIPE_DIGESTS
 from lineageguard_datahub.models import ExpectedGraph, Granularity
 from lineageguard_datahub.paths import resolve_checked_file
 from lineageguard_datahub.query_history import normalized_sql_fingerprint
@@ -37,8 +41,6 @@ class GraphReader(Protocol):
     def get_aspect(
         self, entity_urn: str, aspect_type: type[Aspect], version: int = 0
     ) -> Aspect | None: ...
-
-    def get_urns_by_filter(self, *, entity_types: list[str], query: str) -> Iterable[str]: ...
 
     def get_timeseries_values(
         self,
@@ -56,6 +58,9 @@ class QuerySignal:
     normalized_fingerprint: str
     subjects: frozenset[str]
     usage_count: int
+    platform_instance: str
+    observation_timestamp_ms: int
+    aspect_keys: tuple[tuple[str, str], ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,11 +96,12 @@ class GraphVerificationReport:
 
 
 def _expected_field_urns(graph: ExpectedGraph) -> frozenset[str]:
-    fields = {graph.source_field.schema_field_urn}
-    for edge in graph.edges:
-        if edge.granularity is Granularity.FIELD:
-            fields.add(make_schema_field_urn(edge.upstream_urn, edge.upstream_field_path or ""))
-            fields.add(make_schema_field_urn(edge.downstream_urn, edge.downstream_field_path or ""))
+    fields = {
+        make_schema_field_urn(node.urn, field)
+        for node in graph.nodes
+        if node.entity_type.value == "DATASET"
+        for field in node.schema_fields
+    }
     return frozenset(fields)
 
 
@@ -127,11 +133,16 @@ def expected_observation(graph: ExpectedGraph) -> ObservedGraph:
         ),
         query_signals=(
             QuerySignal(
-                urn="urn:li:query:system-observed",
+                urn=query.query_urn,
                 source=QuerySourceClass.SYSTEM,
                 normalized_fingerprint=normalized_sql_fingerprint_from_file(graph, query),
                 subjects=frozenset({query.dataset_urn, revenue_field}),
                 usage_count=1,
+                platform_instance=make_dataplatform_instance_urn(
+                    "postgres", graph.platform_instance
+                ),
+                observation_timestamp_ms=1,
+                aspect_keys=(),
             ),
         ),
     )
@@ -153,8 +164,22 @@ def _missing_failure(
     return None if not missing else VerificationFailure(code, ", ".join(missing))
 
 
+def _exact_failure(
+    code: str, expected: frozenset[object], observed: frozenset[object]
+) -> VerificationFailure | None:
+    missing = sorted(str(value) for value in expected - observed)
+    extra = sorted(str(value) for value in observed - expected)
+    return (
+        None
+        if not missing and not extra
+        else VerificationFailure(code, f"missing={missing}, extra={extra}")
+    )
+
+
 def _receipt_failures(
-    graph: ExpectedGraph, receipts: tuple[OperationReceipt, ...]
+    graph: ExpectedGraph,
+    signals: tuple[QuerySignal, ...],
+    receipts: tuple[OperationReceipt, ...],
 ) -> tuple[VerificationFailure, ...]:
     query_receipts = [
         receipt
@@ -171,20 +196,47 @@ def _receipt_failures(
         and receipt.operation_kind == "ingest"
         and receipt.status is ReceiptStatus.SUCCESS
         and receipt.aspect_name == "walkthrough/metadata/postgres-ingestion.yml"
+        and receipt.idempotency_key == RECIPE_DIGESTS["walkthrough/metadata/postgres-ingestion.yml"]
+        and receipt.proposal_hash == RECIPE_DIGESTS["walkthrough/metadata/postgres-ingestion.yml"]
     ]
-    live_query_receipts = {
-        receipt.aspect_name
+    live_query_candidates = [
+        receipt
         for receipt in receipts
         if receipt.scenario_id == graph.scenario_id
         and receipt.operation_kind == "ingest-query"
-        and receipt.status is ReceiptStatus.SUCCESS
-        and receipt.detail_code == "LIVE_QUERY_EMITTED"
-    }
+        and (
+            (
+                receipt.status is ReceiptStatus.SUCCESS
+                and receipt.detail_code == "LIVE_QUERY_EMITTED"
+            )
+            or (
+                receipt.status is ReceiptStatus.SKIPPED
+                and receipt.detail_code == "ASPECT_SKIPPED_EXACT"
+            )
+        )
+    ]
+    latest_live_by_aspect: dict[str, OperationReceipt] = {}
+    for receipt in live_query_candidates:
+        if receipt.aspect_name is None:
+            continue
+        current = latest_live_by_aspect.get(receipt.aspect_name)
+        if current is None or receipt.recorded_at > current.recorded_at:
+            latest_live_by_aspect[receipt.aspect_name] = receipt
+    live_query_receipts = list(latest_live_by_aspect.values())
     failures: list[VerificationFailure] = []
     if not query_receipts:
         failures.append(VerificationFailure("PG_STAT_RECEIPT_MISSING", "query"))
     else:
         latest = max(query_receipts, key=lambda item: item.recorded_at)
+        query = graph.query_evidence[0]
+        if (
+            latest.idempotency_key != normalized_sql_fingerprint_from_file(graph, query)
+            or latest.proposal_hash != latest.idempotency_key
+            or latest.metrics.get("normalizedFingerprint") != latest.idempotency_key
+            or latest.metrics.get("statementSha256") != query.sha256
+            or not latest.metrics.get("queryId")
+        ):
+            failures.append(VerificationFailure("PG_STAT_RECEIPT_BINDING_INVALID", "query"))
         if int(latest.metrics.get("executionCount", 0)) < 1:
             failures.append(VerificationFailure("PG_STAT_COUNT_INVALID", "executionCount"))
         if float(latest.metrics.get("totalExecTimeMs", -1)) < 0:
@@ -198,14 +250,70 @@ def _receipt_failures(
             latest_query.recorded_at
         ):
             failures.append(VerificationFailure("POSTGRES_INGEST_PRECEDES_QUERY", "order"))
-    required_query_aspects = {"queryProperties", "querySubjects", "queryUsageStatistics"}
-    if not required_query_aspects <= live_query_receipts:
+    required_query_aspects = {
+        "queryProperties",
+        "querySubjects",
+        "dataPlatformInstance",
+        "queryUsageStatistics",
+    }
+    signal = signals[0] if len(signals) == 1 else None
+    receipt_aspects = {item.aspect_name for item in live_query_receipts}
+    if not required_query_aspects <= receipt_aspects:
         failures.append(
             VerificationFailure(
                 "LIVE_QUERY_INGEST_RECEIPTS_MISSING",
-                ", ".join(sorted(required_query_aspects - live_query_receipts)),
+                ", ".join(sorted(required_query_aspects - receipt_aspects)),
             )
         )
+    if signal is not None and query_receipts:
+        latest_query = max(query_receipts, key=lambda item: item.recorded_at)
+        expected_keys = dict(signal.aspect_keys)
+        for item in live_query_receipts:
+            if item.entity_urn != signal.urn:
+                failures.append(
+                    VerificationFailure("LIVE_QUERY_RECEIPT_URN_MISMATCH", str(item.entity_urn))
+                )
+                continue
+            expected_key = expected_keys.get(item.aspect_name or "")
+            if (
+                expected_key is None
+                or item.idempotency_key != expected_key
+                or item.proposal_hash != expected_key
+            ):
+                failures.append(
+                    VerificationFailure("LIVE_QUERY_RECEIPT_KEY_MISMATCH", str(item.aspect_name))
+                )
+            metrics = item.metrics
+            if (
+                metrics.get("queryFingerprint") != latest_query.idempotency_key
+                or str(metrics.get("pgStatQueryId")) != str(latest_query.metrics.get("queryId"))
+                or int(metrics.get("executionCount", -1))
+                != int(latest_query.metrics.get("executionCount", -2))
+                or float(metrics.get("totalExecTimeMs", -1))
+                != float(latest_query.metrics.get("totalExecTimeMs", -2))
+                or metrics.get("observationTimestamp") != latest_query.recorded_at
+                or metrics.get("recipeFingerprint")
+                != RECIPE_DIGESTS["walkthrough/metadata/postgres-ingestion.yml"]
+                or metrics.get("afterStatus")
+                != ("EMITTED" if item.status is ReceiptStatus.SUCCESS else "UNCHANGED")
+            ):
+                failures.append(
+                    VerificationFailure(
+                        "LIVE_QUERY_RECEIPT_METRICS_MISMATCH", str(item.aspect_name)
+                    )
+                )
+        expected_ms = int(datetime.fromisoformat(latest_query.recorded_at).timestamp() * 1000)
+        if signal.usage_count != int(latest_query.metrics.get("executionCount", -1)):
+            failures.append(VerificationFailure("LIVE_QUERY_COUNT_MISMATCH", signal.urn))
+        if signal.observation_timestamp_ms != expected_ms:
+            failures.append(VerificationFailure("LIVE_QUERY_TIMESTAMP_MISMATCH", signal.urn))
+        for item in live_query_receipts:
+            if datetime.fromisoformat(item.recorded_at) < datetime.fromisoformat(
+                latest_query.recorded_at
+            ):
+                failures.append(
+                    VerificationFailure("LIVE_QUERY_RECEIPT_STALE", str(item.aspect_name))
+                )
     return tuple(failures)
 
 
@@ -259,30 +367,43 @@ def compare_observed_graph(
 ) -> GraphVerificationReport:
     expected = expected_observation(graph)
     checks = (
-        ("ENTITY_MISSING", expected.entity_urns, observed.entity_urns),
-        ("SCHEMA_FIELD_MISSING", expected.schema_fields, observed.schema_fields),
-        ("ENTITY_LINEAGE_MISSING", expected.entity_edges, observed.entity_edges),
-        ("FIELD_LINEAGE_MISSING", expected.field_edges, observed.field_edges),
-        ("OWNER_MISSING", expected.ownership, observed.ownership),
-        ("TAG_MISSING", expected.tags, observed.tags),
-        ("GLOSSARY_TERM_MISSING", expected.glossary_terms, observed.glossary_terms),
+        ("ENTITY_INVENTORY_MISMATCH", expected.entity_urns, observed.entity_urns),
+        ("ENTITY_LINEAGE_MISMATCH", expected.entity_edges, observed.entity_edges),
+        ("FIELD_LINEAGE_MISMATCH", expected.field_edges, observed.field_edges),
+        ("OWNER_MISMATCH", expected.ownership, observed.ownership),
+        ("TAG_MISMATCH", expected.tags, observed.tags),
+        ("GLOSSARY_TERM_MISMATCH", expected.glossary_terms, observed.glossary_terms),
     )
     failures = [
         failure
         for code, expected_values, observed_values in checks
-        if (failure := _missing_failure(code, expected_values, observed_values)) is not None
+        if (failure := _exact_failure(code, expected_values, observed_values)) is not None
     ]
+    if expected.schema_fields != observed.schema_fields:
+        missing = sorted(expected.schema_fields - observed.schema_fields)
+        extra = sorted(observed.schema_fields - expected.schema_fields)
+        failures.append(
+            VerificationFailure(
+                "SCHEMA_FIELD_INVENTORY_MISMATCH", f"missing={missing}, extra={extra}"
+            )
+        )
     canonical_fingerprint = expected.query_signals[0].normalized_fingerprint
     live_query = [
         signal
         for signal in observed.query_signals
         if signal.source == QuerySourceClass.SYSTEM
+        and signal.urn == graph.query_evidence[0].query_urn
         and signal.normalized_fingerprint == canonical_fingerprint
         and signal.usage_count > 0
+        and signal.platform_instance
+        == make_dataplatform_instance_urn("postgres", graph.platform_instance)
+        and signal.subjects == expected.query_signals[0].subjects
     ]
     if not live_query:
         failures.append(VerificationFailure("LIVE_QUERY_EVIDENCE_MISSING", "SYSTEM query"))
-    failures.extend(_receipt_failures(graph, receipts))
+    if len(live_query) != 1:
+        failures.append(VerificationFailure("LIVE_QUERY_SIGNAL_SPLIT", str(len(live_query))))
+    failures.extend(_receipt_failures(graph, tuple(live_query), receipts))
     outcomes, intermediates = _reachable(graph, observed)
     missing_outcomes = set(graph.impact_cards) - outcomes
     if missing_outcomes:
@@ -350,23 +471,42 @@ def observe_live(reader: GraphReader, graph: ExpectedGraph) -> ObservedGraph:
         tag_aspect = reader.get_aspect(node.urn, GlobalTagsClass)
         if tag_aspect is not None:
             tags.update((node.urn, association.tag) for association in tag_aspect.tags)
-    for urn in reader.get_urns_by_filter(entity_types=["query"], query="*"):
-        if urn == graph.query_evidence[0].query_urn:
-            continue  # Recorded fallback can never satisfy LIVE verification.
+    urn = graph.query_evidence[0].query_urn
+    if reader.exists(urn):
         properties = reader.get_aspect(urn, QueryPropertiesClass)
         subjects = reader.get_aspect(urn, QuerySubjectsClass)
-        if properties is None or subjects is None:
-            continue
-        usage = reader.get_timeseries_values(urn, QueryUsageStatisticsClass, {}, limit=100)
-        query_signals.append(
-            QuerySignal(
-                urn=urn,
-                source=str(properties.source),
-                normalized_fingerprint=normalized_sql_fingerprint(properties.statement.value),
-                subjects=frozenset(subject.entity for subject in subjects.subjects),
-                usage_count=sum(item.queryCount or 0 for item in usage),
+        instance = reader.get_aspect(urn, DataPlatformInstanceClass)
+        usage = reader.get_timeseries_values(urn, QueryUsageStatisticsClass, {}, limit=10)
+        if properties is not None and subjects is not None and instance is not None and usage:
+            latest_usage = max(usage, key=lambda item: item.timestampMillis)
+            from datahub.emitter.mcp import MetadataChangeProposalWrapper
+
+            aspects = (properties, subjects, instance, latest_usage)
+            aspect_keys = tuple(
+                (
+                    MetadataChangeProposalWrapper(entityUrn=urn, aspect=aspect).aspectName or "",
+                    hashlib.sha256(
+                        json.dumps(
+                            MetadataChangeProposalWrapper(entityUrn=urn, aspect=aspect).to_obj(),
+                            sort_keys=True,
+                            separators=(",", ":"),
+                        ).encode()
+                    ).hexdigest(),
+                )
+                for aspect in aspects
             )
-        )
+            query_signals.append(
+                QuerySignal(
+                    urn=urn,
+                    source=str(properties.source),
+                    normalized_fingerprint=normalized_sql_fingerprint(properties.statement.value),
+                    subjects=frozenset(subject.entity for subject in subjects.subjects),
+                    usage_count=int(latest_usage.queryCount or 0),
+                    platform_instance=str(instance.instance),
+                    observation_timestamp_ms=int(latest_usage.timestampMillis),
+                    aspect_keys=aspect_keys,
+                )
+            )
     return ObservedGraph(
         entity_urns=frozenset(entities),
         schema_fields=frozenset(schema_fields),

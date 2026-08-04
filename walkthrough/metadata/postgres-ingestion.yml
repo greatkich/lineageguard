@@ -3,8 +3,10 @@ source:
   config:
     host_port: "${WALKTHROUGH_POSTGRES_HOST}:${WALKTHROUGH_POSTGRES_PORT}"
     database: "${WALKTHROUGH_POSTGRES_DATABASE}"
-    username: "${WALKTHROUGH_POSTGRES_USER}"
-    password: "${WALKTHROUGH_POSTGRES_PASSWORD}"
+    username: "${WALKTHROUGH_INGEST_POSTGRES_USER}"
+    password: "${WALKTHROUGH_INGEST_POSTGRES_PASSWORD}"
+    options:
+      sslmode: "${WALKTHROUGH_POSTGRES_SSLMODE}"
     platform_instance: lineageguard-canonical
     env: PROD
     include_usage_statistics: true
@@ -22,9 +24,11 @@ source:
         - analytics
         - fraud
     table_pattern:
-      deny:
-        - "^pg_.*"
-        - "^information_schema\\..*"
+      allow:
+        - "^commerce\\.orders$"
+        - "^analytics\\.stg_orders$"
+        - "^analytics\\.customer_revenue$"
+        - "^fraud\\.customer_features$"
 sink:
   type: datahub-rest
   config:

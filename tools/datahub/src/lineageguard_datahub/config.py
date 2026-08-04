@@ -27,6 +27,7 @@ class PostgresConfig:
     database: str
     sslmode: str
     remote: bool = False
+    credential_kind: str = "application"
 
     @property
     def dsn(self) -> str:
@@ -102,7 +103,11 @@ def load_postgres_config(
     environ: dict[str, str] | None = None,
     *,
     query_role: bool = False,
+    ingest_role: bool = False,
+    admin_role: bool = False,
 ) -> PostgresConfig:
+    if sum((query_role, ingest_role, admin_role)) > 1:
+        raise ConfigurationError("POSTGRES_CREDENTIAL_PURPOSE_CONFLICT")
     values = dict(os.environ if environ is None else environ)
     raw_port = _required("WALKTHROUGH_POSTGRES_PORT", values)
     try:
@@ -123,24 +128,44 @@ def load_postgres_config(
         or values.get("LINEAGEGUARD_REMOTE_POSTGRES") != "approved"
     ):
         raise ConfigurationError("REMOTE_POSTGRES_VERIFY_FULL_REQUIRED")
-    user_name = "WALKTHROUGH_QUERY_POSTGRES_USER" if query_role else "WALKTHROUGH_POSTGRES_USER"
-    password_name = (
-        "WALKTHROUGH_QUERY_POSTGRES_PASSWORD" if query_role else "WALKTHROUGH_POSTGRES_PASSWORD"
+    kind = (
+        "query"
+        if query_role
+        else ("ingest" if ingest_role else ("admin" if admin_role else "application"))
     )
+    prefix = {
+        "query": "WALKTHROUGH_QUERY_POSTGRES",
+        "ingest": "WALKTHROUGH_INGEST_POSTGRES",
+        "admin": "WALKTHROUGH_ADMIN_POSTGRES",
+        "application": "WALKTHROUGH_POSTGRES",
+    }[kind]
+    user_name = f"{prefix}_USER"
+    password_name = f"{prefix}_PASSWORD"
+    user = _required(user_name, values)
+    fixed_users = {
+        "query": "lineageguard_query",
+        "ingest": "lineageguard_ingest",
+        "application": "lineageguard_seed",
+    }
+    if kind in fixed_users and user != fixed_users[kind]:
+        raise ConfigurationError(f"{kind.upper()}_POSTGRES_PRINCIPAL_MISMATCH")
+    database = _required("WALKTHROUGH_POSTGRES_DATABASE", values)
+    if database != "lineageguard":
+        raise ConfigurationError("WALKTHROUGH_POSTGRES_DATABASE_MISMATCH")
     return PostgresConfig(
         host=host,
         port=port,
-        user=_required(user_name, values),
+        user=user,
         password=_required(password_name, values),
-        database=_required("WALKTHROUGH_POSTGRES_DATABASE", values),
+        database=database,
         sslmode=sslmode,
         remote=not local,
+        credential_kind=kind,
     )
 
 
 def redact(text: str, secrets: tuple[str | None, ...]) -> str:
     redacted = text
-    for secret in secrets:
-        if secret:
-            redacted = redacted.replace(secret, "[REDACTED]")
+    for secret in sorted((item for item in secrets if item), key=len, reverse=True):
+        redacted = redacted.replace(secret, "[REDACTED]")
     return redacted

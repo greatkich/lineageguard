@@ -78,3 +78,19 @@ def test_loader_forbids_manifest_target_expansion(repository_root: Path, tmp_pat
     invalid.write_text(json.dumps(manifest))
     with pytest.raises(GraphContractError, match="URN allowlist mismatch"):
         load_expected_graph(invalid)
+
+
+@pytest.mark.parametrize("fields", [["customer_id"], ["customer_id", "unexpected"]])
+def test_loader_freezes_complete_schema_inventory(
+    repository_root: Path, tmp_path: Path, fields: list[str]
+) -> None:
+    manifest = json.loads(
+        (
+            repository_root / "walkthrough/scenarios/canonical/expected-datahub-graph.json"
+        ).read_text()
+    )
+    manifest["nodes"][2]["schemaFields"] = fields
+    invalid = tmp_path / "schema-drift.json"
+    invalid.write_text(json.dumps(manifest))
+    with pytest.raises(GraphContractError, match="schemaFields mismatch"):
+        load_expected_graph(invalid)

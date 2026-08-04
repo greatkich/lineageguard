@@ -2,11 +2,18 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Protocol
 
 from lineageguard_datahub.models import ExpectedGraph
 from lineageguard_datahub.receipts import OperationReceipt, ReceiptStatus, ReceiptStore
-from lineageguard_datahub.seed import EntityReader, entity_has_scenario_marker
+from lineageguard_datahub.seed import (
+    EntityReader,
+    PlannedUpsert,
+    _entity_proposal_hash,
+    build_seed_plan,
+    entity_has_scenario_marker,
+)
 
 
 class ResetPolicyError(ValueError):
@@ -32,6 +39,8 @@ class ResetTarget:
     urn: str
     entity_type: str
     idempotency_key: str
+    ownership_nonce: str
+    proposal_hash: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,22 +55,55 @@ def build_reset_plan(
     environment_gate: str | None,
     platform_instance: str | None,
     creation_receipts: tuple[OperationReceipt, ...],
+    root: Path,
+    ownership_nonce: str,
 ) -> ResetPlan:
     if environment_gate != "canonical":
         raise ResetPolicyError("CANONICAL_ENV_REQUIRED")
     if platform_instance != graph.platform_instance:
         raise ResetPolicyError("PLATFORM_INSTANCE_MISMATCH")
     managed = set(graph.managed_urns)
-    created: set[str] = set()
+    seed_plan = build_seed_plan(graph, root, ownership_nonce)
+    seed_by_entity: dict[str, list[PlannedUpsert]] = {}
+    for operation in seed_plan:
+        assert operation.proposal.entityUrn is not None
+        seed_by_entity.setdefault(operation.proposal.entityUrn, []).append(operation)
+    expected_hashes = {
+        urn: _entity_proposal_hash(operations) for urn, operations in seed_by_entity.items()
+    }
+    created: dict[str, OperationReceipt] = {}
     for receipt in creation_receipts:
         if receipt.scenario_id != graph.scenario_id:
             continue
-        if receipt.operation_kind != "seed" or receipt.status is not ReceiptStatus.SUCCESS:
+        if (
+            receipt.operation_kind != "entity"
+            or receipt.status is not ReceiptStatus.SUCCESS
+            or receipt.detail_code != "ENTITY_CREATED"
+        ):
             continue
         if receipt.entity_urn not in managed:
             raise ResetPolicyError("RECEIPT_TARGET_OUTSIDE_ALLOWLIST")
         if receipt.entity_urn is not None:
-            created.add(receipt.entity_urn)
+            if receipt.ownership_nonce != ownership_nonce:
+                raise ResetPolicyError("RECEIPT_OWNERSHIP_MISMATCH")
+            expected = expected_hashes.get(receipt.entity_urn)
+            if expected is not None and receipt.proposal_hash != expected:
+                raise ResetPolicyError("CREATION_PROPOSAL_MISMATCH")
+            if expected is None:
+                first_aspect_keys: dict[str, str] = {}
+                for item in creation_receipts:
+                    if (
+                        item.entity_urn == receipt.entity_urn
+                        and item.operation_kind == "ingest-query"
+                        and item.status is ReceiptStatus.SUCCESS
+                        and item.aspect_name is not None
+                    ):
+                        first_aspect_keys.setdefault(item.aspect_name, item.idempotency_key)
+                aspect_keys = sorted(first_aspect_keys.values())
+                actual = hashlib.sha256("\n".join(aspect_keys).encode()).hexdigest()
+                if not aspect_keys or receipt.proposal_hash != actual:
+                    raise ResetPolicyError("CREATION_PROPOSAL_MISMATCH")
+            created[receipt.entity_urn] = receipt
     if not created:
         raise ResetPolicyError("CREATION_RECEIPTS_REQUIRED")
     targets = tuple(
@@ -69,6 +111,8 @@ def build_reset_plan(
             urn=urn,
             entity_type=_entity_type_from_urn(urn),
             idempotency_key=hashlib.sha256(f"reset:{graph.scenario_id}:{urn}".encode()).hexdigest(),
+            ownership_nonce=ownership_nonce,
+            proposal_hash=created[urn].proposal_hash,
         )
         for urn in sorted(created, reverse=True)
     )
@@ -102,7 +146,7 @@ def execute_reset(
         if target.idempotency_key in successful and not reader.exists(target.urn):
             continue
         if not reader.exists(target.urn) or not entity_has_scenario_marker(
-            reader, target.urn, target.entity_type
+            reader, target.urn, target.entity_type, target.ownership_nonce
         ):
             raise ResetPolicyError(f"SERVER_MARKER_REQUIRED:{target.urn}")
         try:
@@ -117,6 +161,9 @@ def execute_reset(
                     idempotency_key=target.idempotency_key,
                     status=ReceiptStatus.FAILURE,
                     detail_code=type(error).__name__,
+                    proposal_hash=target.proposal_hash,
+                    ownership_nonce=target.ownership_nonce,
+                    metrics={"beforeStatus": "OWNED", "afterStatus": "FAILED"},
                 )
             )
             raise
@@ -129,6 +176,9 @@ def execute_reset(
                 idempotency_key=target.idempotency_key,
                 status=ReceiptStatus.SUCCESS,
                 detail_code="SOFT_DELETED",
+                proposal_hash=target.proposal_hash,
+                ownership_nonce=target.ownership_nonce,
+                metrics={"beforeStatus": "OWNED", "afterStatus": "SOFT_DELETED"},
             )
         )
         deleted.append(target.urn)

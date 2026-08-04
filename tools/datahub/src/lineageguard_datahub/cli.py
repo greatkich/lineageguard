@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
 import subprocess
@@ -20,6 +19,11 @@ from lineageguard_datahub.config import (
     redact,
 )
 from lineageguard_datahub.expected_graph import graph_fingerprint, load_expected_graph
+from lineageguard_datahub.ingestion import (
+    build_ingestion_plan,
+    ingestion_environment,
+    verify_ingestion_role,
+)
 from lineageguard_datahub.live_query import emit_live_query_evidence
 from lineageguard_datahub.paths import canonical_manifest_path, repository_root
 from lineageguard_datahub.query_history import execute_query, plan_query_execution
@@ -31,7 +35,11 @@ from lineageguard_datahub.receipts import (
 from lineageguard_datahub.reset import build_reset_plan, execute_reset
 from lineageguard_datahub.seed import build_seed_plan, seed_metadata
 from lineageguard_datahub.verify import compare_observed_graph, observe_live, verify_query_files
-from lineageguard_datahub.warehouse import apply_warehouse_seed, build_warehouse_seed_plan
+from lineageguard_datahub.warehouse import (
+    apply_warehouse_rows,
+    apply_warehouse_seed,
+    build_warehouse_seed_plan,
+)
 
 DATAHUB_VERSION = "v1.6.0"
 
@@ -62,8 +70,8 @@ def _receipt_store(root: Path) -> ReceiptStore:
     return ReceiptStore(root / "walkthrough/.state/operations.jsonl")
 
 
-def _run(command: list[str], *, cwd: Path) -> None:
-    subprocess.run(command, cwd=cwd, check=True, shell=False)
+def _run(command: list[str], *, cwd: Path, env: dict[str, str] | None = None) -> None:
+    subprocess.run(command, cwd=cwd, check=True, shell=False, env=env)
 
 
 def _quickstart(execute: bool, root: Path) -> dict[str, object]:
@@ -84,9 +92,22 @@ def _warehouse_seed(execute: bool, root: Path) -> dict[str, object]:
     plan = build_warehouse_seed_plan(root)
     if execute:
         _require_environment_gate()
-        config = load_postgres_config()
+        config = load_postgres_config(admin_role=True)
+        query_config = load_postgres_config(query_role=True)
+        ingest_config = load_postgres_config(ingest_role=True)
+        seed_config = load_postgres_config()
+        store = _receipt_store(root)
         with psycopg.connect(config.dsn) as connection, connection.cursor() as cursor:
-            apply_warehouse_seed(cursor, plan)
+            apply_warehouse_seed(
+                cursor,
+                plan,
+                ownership_nonce=store.ownership_nonce,
+                query_password=query_config.password,
+                ingest_password=ingest_config.password,
+                seed_password=seed_config.password,
+            )
+        with psycopg.connect(seed_config.dsn) as connection, connection.cursor() as cursor:
+            apply_warehouse_rows(cursor, plan, ownership_nonce=store.ownership_nonce)
     return {
         "executed": execute,
         "sqlFiles": [str(path.relative_to(root)) for path in plan.sql_paths],
@@ -139,6 +160,8 @@ def _query(execute: bool, root: Path) -> dict[str, object]:
                     "queryId": receipt.query_id,
                     "executionCount": receipt.execution_count,
                     "totalExecTimeMs": receipt.total_exec_time_ms,
+                    "normalizedFingerprint": receipt.normalized_fingerprint,
+                    "statementSha256": receipt.sha256,
                 },
             )
         )
@@ -146,27 +169,28 @@ def _query(execute: bool, root: Path) -> dict[str, object]:
 
 
 def _ingest(execute: bool, root: Path) -> dict[str, object]:
-    recipes = (
-        root / "walkthrough/metadata/postgres-ingestion.yml",
-        root / "walkthrough/metadata/dbt-ingestion.yml",
-    )
-    commands = [["datahub", "ingest", "run", "-c", str(path.relative_to(root))] for path in recipes]
+    recipes = build_ingestion_plan(root)
+    commands = [["datahub", "ingest", "run", "-c", recipe.relative_path] for recipe in recipes]
     live_query_upserts = 0
     if execute:
         _require_environment_gate()
         store = _receipt_store(root)
+        datahub_config = load_datahub_config(ingest=True)
+        postgres_config = load_postgres_config(ingest_role=True)
+        child_env = ingestion_environment(datahub_config, postgres_config)
+        with psycopg.connect(postgres_config.dsn) as connection, connection.cursor() as cursor:
+            verify_ingestion_role(cursor)
         for command, recipe in zip(commands, recipes, strict=True):
-            digest = hashlib.sha256(recipe.read_bytes()).hexdigest()
             try:
-                _run(command, cwd=root)
+                _run(command, cwd=root, env=child_env)
             except subprocess.CalledProcessError as error:
                 store.append(
                     OperationReceipt.create(
                         scenario_id="canonical-customer-id-rename",
                         operation_kind="ingest",
                         entity_urn=None,
-                        aspect_name=str(recipe.relative_to(root)),
-                        idempotency_key=digest,
+                        aspect_name=recipe.relative_path,
+                        idempotency_key=recipe.sha256,
                         status=ReceiptStatus.FAILURE,
                         detail_code=f"EXIT_{error.returncode}",
                     )
@@ -177,17 +201,20 @@ def _ingest(execute: bool, root: Path) -> dict[str, object]:
                     scenario_id="canonical-customer-id-rename",
                     operation_kind="ingest",
                     entity_urn=None,
-                    aspect_name=str(recipe.relative_to(root)),
-                    idempotency_key=digest,
+                    aspect_name=recipe.relative_path,
+                    idempotency_key=recipe.sha256,
                     status=ReceiptStatus.SUCCESS,
                     detail_code="INGESTED",
                 )
             )
-            if recipe.name == "postgres-ingestion.yml":
+            if recipe.path.name == "postgres-ingestion.yml":
                 graph = load_expected_graph(canonical_manifest_path(root))
-                config = load_datahub_config(ingest=True)
-                emitter = DatahubRestEmitter(gms_server=config.server, token=config.token)
-                client = DataHubGraph(DatahubClientConfig(server=config.server, token=config.token))
+                emitter = DatahubRestEmitter(
+                    gms_server=datahub_config.server, token=datahub_config.token
+                )
+                client = DataHubGraph(
+                    DatahubClientConfig(server=datahub_config.server, token=datahub_config.token)
+                )
                 live_query_upserts = emit_live_query_evidence(emitter, client, store, graph, root)
     return {
         "executed": execute,
@@ -224,6 +251,8 @@ def _reset(execute: bool, confirmation: str | None, root: Path) -> dict[str, obj
         environment_gate=os.environ.get("LINEAGEGUARD_WALKTHROUGH_ENV"),
         platform_instance=os.environ.get("LINEAGEGUARD_PLATFORM_INSTANCE"),
         creation_receipts=_receipt_store(root).read_all(),
+        root=root,
+        ownership_nonce=_receipt_store(root).ownership_nonce,
     )
     if execute and confirmation != graph.scenario_id:
         raise RuntimeError("SCENARIO_CONFIRMATION_REQUIRED")
@@ -295,8 +324,11 @@ def main(argv: list[str] | None = None) -> int:
             os.environ.get("DATAHUB_TOKEN"),
             os.environ.get("DATAHUB_READ_TOKEN"),
             os.environ.get("DATAHUB_WRITE_TOKEN"),
+            os.environ.get("DATAHUB_INGEST_TOKEN"),
             os.environ.get("WALKTHROUGH_POSTGRES_PASSWORD"),
             os.environ.get("WALKTHROUGH_QUERY_POSTGRES_PASSWORD"),
+            os.environ.get("WALKTHROUGH_INGEST_POSTGRES_PASSWORD"),
+            os.environ.get("WALKTHROUGH_ADMIN_POSTGRES_PASSWORD"),
         )
         print(redact(str(error), secrets), file=sys.stderr)
         return 2
