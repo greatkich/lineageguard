@@ -110,6 +110,22 @@ function successScript(): Array<GitHubHttpResponse | Error> {
   ];
 }
 
+function reconcileScript(
+  overrides: { commit?: unknown; headTree?: unknown; headBlob?: unknown; pulls?: unknown } = {},
+): Array<GitHubHttpResponse | Error> {
+  return [
+    response(200, fixture.repository),
+    response(200, fixture.baseRef),
+    response(200, fixture.ref),
+    response(200, overrides.commit ?? fixture.commit),
+    response(200, fixture.baseCommit),
+    response(200, fixture.baseTree),
+    response(200, overrides.headTree ?? fixture.headTree),
+    response(200, overrides.headBlob ?? fixture.headBlob),
+    response(200, overrides.pulls ?? fixture.pullList),
+  ];
+}
+
 describe("LiveGitHubPort", () => {
   it("creates only validated bytes on a deterministic non-force branch and one draft PR", async () => {
     const transport = new ScriptedTransport(successScript());
@@ -193,11 +209,7 @@ describe("LiveGitHubPort", () => {
   it("retries safe reads only within the configured attempt bound", async () => {
     const transport = new ScriptedTransport([
       response(503, fixture.notFound),
-      response(200, fixture.repository),
-      response(200, fixture.baseRef),
-      response(200, fixture.ref),
-      response(200, fixture.commit),
-      response(200, fixture.pullList),
+      ...reconcileScript(),
     ]);
     await expect(createPort(transport).createMigrationReview(request())).resolves.toMatchObject({
       prNumber: 17,
@@ -233,16 +245,97 @@ describe("LiveGitHubPort", () => {
   });
 
   it("reconciles an existing exact branch and PR before creating anything", async () => {
-    const transport = new ScriptedTransport([
-      response(200, fixture.repository),
-      response(200, fixture.baseRef),
-      response(200, fixture.ref),
-      response(200, fixture.commit),
-      response(200, fixture.pullList),
-    ]);
+    const transport = new ScriptedTransport(reconcileScript());
     const receipt = await createPort(transport).createMigrationReview(request());
     expect(receipt.reconciled).toBe(true);
     expect(transport.calls.every((call) => call.method === "GET")).toBe(true);
+  });
+
+  it.each([
+    [
+      "an unrelated altered tree entry",
+      {
+        headTree: {
+          ...(fixture.headTree as Record<string, unknown>),
+          tree: [
+            ...((fixture.headTree as { tree: unknown[] }).tree ?? []),
+            {
+              path: "docs/migrations/unapproved.md",
+              mode: "100644",
+              type: "blob",
+              sha: sha("8"),
+            },
+          ],
+        },
+      },
+    ],
+    [
+      "altered authorized blob bytes",
+      {
+        headBlob: {
+          ...(fixture.headBlob as Record<string, unknown>),
+          size: 9,
+          content: Buffer.from("tampered\n", "utf8").toString("base64"),
+        },
+      },
+    ],
+  ])("rejects reconciliation with the same marker and parent but %s", async (_name, overrides) => {
+    const transport = new ScriptedTransport(reconcileScript(overrides));
+    await expect(createPort(transport).createMigrationReview(request())).rejects.toMatchObject({
+      code: "REMOTE_CONFLICT",
+      operation: "RECONCILE",
+      retry: "NEVER",
+    });
+    expect(transport.calls.every((call) => call.method === "GET")).toBe(true);
+  });
+
+  it("rejects a marker-matching merge commit with more than the authorized base parent", async () => {
+    const commit = {
+      ...(fixture.commit as Record<string, unknown>),
+      parents: [{ sha: sha("a") }, { sha: sha("7") }],
+    };
+    const transport = new ScriptedTransport(reconcileScript({ commit }));
+    await expect(createPort(transport).createMigrationReview(request())).rejects.toMatchObject({
+      code: "REMOTE_CONFLICT",
+      operation: "RECONCILE",
+      retry: "NEVER",
+    });
+  });
+
+  it.each([
+    ["edited title", { title: "Edited after authorization" }],
+    ["edited body with marker retained", { body: `${(fixture.pull as { body: string }).body}\n` }],
+    [
+      "removed rollback field",
+      {
+        body: (fixture.pull as { body: string }).body.replace(
+          "\nRollback\n- Run the validated rollback artifact",
+          "",
+        ),
+      },
+    ],
+  ])("rejects reconciliation when the PR has an %s", async (_name, pullChange) => {
+    const pull = { ...(fixture.pull as Record<string, unknown>), ...pullChange };
+    const transport = new ScriptedTransport(reconcileScript({ pulls: [pull] }));
+    await expect(createPort(transport).createMigrationReview(request())).rejects.toMatchObject({
+      code: "REMOTE_CONFLICT",
+      operation: "RECONCILE",
+      retry: "NEVER",
+    });
+  });
+
+  it("rejects a PR whose head repository is not the single allowlisted repository", async () => {
+    const original = fixture.pull as Record<string, unknown>;
+    const head = {
+      ...(original.head as Record<string, unknown>),
+      repo: { full_name: "fork/demo" },
+    };
+    const transport = new ScriptedTransport(reconcileScript({ pulls: [{ ...original, head }] }));
+    await expect(createPort(transport).createMigrationReview(request())).rejects.toMatchObject({
+      code: "REMOTE_CONFLICT",
+      operation: "RECONCILE",
+      retry: "NEVER",
+    });
   });
 
   it("reconciles after an ambiguous PR response and never creates a second PR", async () => {
@@ -254,14 +347,63 @@ describe("LiveGitHubPort", () => {
     });
     const script = successScript();
     script[10] = ambiguous;
-    const transport = new ScriptedTransport([
-      ...script,
-      response(200, fixture.ref),
-      response(200, fixture.commit),
-      response(200, fixture.pullList),
-    ]);
+    const transport = new ScriptedTransport([...script, ...reconcileScript().slice(2)]);
     const receipt = await createPort(transport).createMigrationReview(request());
     expect(receipt.reconciled).toBe(true);
+    expect(
+      transport.calls.filter((call) => call.method === "POST" && call.url.endsWith("/pulls")),
+    ).toHaveLength(1);
+  });
+
+  it("fails closed when an ambiguous branch creation resolves to an altered remote tree", async () => {
+    const ambiguous = new GitHubEffectError({
+      code: "TRANSPORT_AMBIGUOUS",
+      operation: "CREATE_REF",
+      retry: "RECONCILE",
+      message: "response status is unknown",
+    });
+    const script = successScript();
+    script[8] = ambiguous;
+    const alteredTree = {
+      ...(fixture.headTree as Record<string, unknown>),
+      tree: [
+        ...((fixture.headTree as { tree: unknown[] }).tree ?? []),
+        { path: "docs/migrations/unapproved.md", mode: "100644", type: "blob", sha: sha("8") },
+      ],
+    };
+    const transport = new ScriptedTransport([
+      ...script.slice(0, 9),
+      ...reconcileScript({ headTree: alteredTree }).slice(2),
+    ]);
+    await expect(createPort(transport).createMigrationReview(request())).rejects.toMatchObject({
+      code: "REMOTE_CONFLICT",
+      operation: "RECONCILE",
+      retry: "NEVER",
+    });
+    expect(
+      transport.calls.filter((call) => call.method === "POST" && call.url.endsWith("/git/refs")),
+    ).toHaveLength(1);
+  });
+
+  it("fails closed when an ambiguous PR response reconciles to multiple branch PRs", async () => {
+    const ambiguous = new GitHubEffectError({
+      code: "TRANSPORT_AMBIGUOUS",
+      operation: "CREATE_PULL_REQUEST",
+      retry: "RECONCILE",
+      message: "response status is unknown",
+    });
+    const script = successScript();
+    script[10] = ambiguous;
+    const pull = fixture.pull as Record<string, unknown>;
+    const transport = new ScriptedTransport([
+      ...script,
+      ...reconcileScript({ pulls: [pull, { ...pull, number: 18 }] }).slice(2),
+    ]);
+    await expect(createPort(transport).createMigrationReview(request())).rejects.toMatchObject({
+      code: "REMOTE_CONFLICT",
+      operation: "RECONCILE",
+      retry: "NEVER",
+    });
     expect(
       transport.calls.filter((call) => call.method === "POST" && call.url.endsWith("/pulls")),
     ).toHaveLength(1);

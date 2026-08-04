@@ -28,6 +28,24 @@
   },
   "blob": { "sha": "cccccccccccccccccccccccccccccccccccccccc" },
   "tree": { "sha": "dddddddddddddddddddddddddddddddddddddddd" },
+  "headTree": {
+    "sha": "dddddddddddddddddddddddddddddddddddddddd",
+    "truncated": false,
+    "tree": [
+      {
+        "path": "walkthrough/models/orders.sql",
+        "mode": "100644",
+        "type": "blob",
+        "sha": "cccccccccccccccccccccccccccccccccccccccc"
+      }
+    ]
+  },
+  "headBlob": {
+    "sha": "cccccccccccccccccccccccccccccccccccccccc",
+    "encoding": "base64",
+    "size": 31,
+    "content": "c2VsZWN0IGN1c3RvbWVyX2lkIGFzIGJ1eWVyX2lkCg=="
+  },
   "commit": {
     "sha": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
     "message": "LineageGuard migration for run_0123456789abcdef01234567\n\nLineageGuard-Effect: 1111111111111111111111111111111111111111111111111111111111111111",
@@ -44,12 +62,18 @@
     "html_url": "https://github.com/lineageguard/demo/pull/17",
     "state": "open",
     "draft": true,
-    "base": { "ref": "main", "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
+    "title": "Safe customer identifier migration",
+    "base": {
+      "ref": "main",
+      "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "repo": { "full_name": "lineageguard/demo" }
+    },
     "head": {
       "ref": "lineageguard/run_0123456789abcdef01234567",
-      "sha": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+      "sha": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "repo": { "full_name": "lineageguard/demo" }
     },
-    "body": "<!-- lineageguard-effect:1111111111111111111111111111111111111111111111111111111111111111 -->",
+    "body": "<!-- lineageguard-effect:1111111111111111111111111111111111111111111111111111111111111111 -->\nExpand, migrate, and contract safely.\n\nCandidate: 2222222222222222222222222222222222222222222222222222222222222222\nValidated artifacts: 3333333333333333333333333333333333333333333333333333333333333333\nValidation receipt: 4444444444444444444444444444444444444444444444444444444444444444\n\nEvidence\n- ev_0123456789abcdef01234567\n\nRollout\n- Deploy additive field\n- Migrate consumers\n\nRollback\n- Run the validated rollback artifact",
     "created_at": "2026-08-04T12:00:00.000Z",
     "updated_at": "2026-08-04T12:00:00.000Z"
   },
@@ -59,12 +83,18 @@
       "html_url": "https://github.com/lineageguard/demo/pull/17",
       "state": "open",
       "draft": true,
-      "base": { "ref": "main", "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
+      "title": "Safe customer identifier migration",
+      "base": {
+        "ref": "main",
+        "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "repo": { "full_name": "lineageguard/demo" }
+      },
       "head": {
         "ref": "lineageguard/run_0123456789abcdef01234567",
-        "sha": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+        "sha": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "repo": { "full_name": "lineageguard/demo" }
       },
-      "body": "<!-- lineageguard-effect:1111111111111111111111111111111111111111111111111111111111111111 -->",
+      "body": "<!-- lineageguard-effect:1111111111111111111111111111111111111111111111111111111111111111 -->\nExpand, migrate, and contract safely.\n\nCandidate: 2222222222222222222222222222222222222222222222222222222222222222\nValidated artifacts: 3333333333333333333333333333333333333333333333333333333333333333\nValidation receipt: 4444444444444444444444444444444444444444444444444444444444444444\n\nEvidence\n- ev_0123456789abcdef01234567\n\nRollout\n- Deploy additive field\n- Migrate consumers\n\nRollback\n- Run the validated rollback artifact",
       "created_at": "2026-08-04T12:00:00.000Z",
       "updated_at": "2026-08-04T12:00:00.000Z"
     }

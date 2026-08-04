@@ -1,4 +1,5 @@
 import { GitHubEffectError } from "./errors.js";
+import { sha256Buffer } from "./hash.js";
 import { FetchGitHubTransport } from "./transport.js";
 import type {
   GitHubHttpRequest,
@@ -25,6 +26,24 @@ function integer(value: unknown): number | undefined {
   return Number.isSafeInteger(value) && (value as number) > 0 ? (value as number) : undefined;
 }
 const gitObjectId = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/;
+
+interface TreeEntry {
+  path: string;
+  mode: string;
+  type: string;
+  sha: string;
+}
+
+function decodedBase64(value: unknown): Buffer | undefined {
+  const encoded = text(value);
+  if (!encoded) return undefined;
+  const compact = encoded.replace(/\r?\n/g, "");
+  if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(compact))
+    return undefined;
+  const decoded = Buffer.from(compact, "base64");
+  if (decoded.toString("base64") !== compact) return undefined;
+  return decoded;
+}
 
 export class LiveGitHubPort implements GitHubPort<GitHubReviewRequest> {
   readonly #transport;
@@ -287,6 +306,123 @@ export class LiveGitHubPort implements GitHubPort<GitHubReviewRequest> {
     ].join("\n");
   }
 
+  private async readTree(treeSha: string): Promise<Map<string, TreeEntry>> {
+    const response = object(
+      (await this.call("GET", `/git/trees/${treeSha}?recursive=1`, "RECONCILE")).body,
+    );
+    const entries = Array.isArray(response?.tree) ? response.tree : undefined;
+    if (text(response?.sha) !== treeSha || response?.truncated !== false || !entries) {
+      throw new GitHubEffectError({
+        code: "REMOTE_CONFLICT",
+        operation: "RECONCILE",
+        retry: "NEVER",
+        message: "Remote commit tree cannot be reconciled completely",
+      });
+    }
+    const result = new Map<string, TreeEntry>();
+    for (const raw of entries) {
+      const entry = object(raw);
+      const path = text(entry?.path);
+      const mode = text(entry?.mode);
+      const type = text(entry?.type);
+      const sha = text(entry?.sha);
+      if (!path || !mode || !type || !sha || !gitObjectId.test(sha) || result.has(path)) {
+        throw new GitHubEffectError({
+          code: "REMOTE_CONFLICT",
+          operation: "RECONCILE",
+          retry: "NEVER",
+          message: "Remote commit tree contains malformed or duplicate entries",
+        });
+      }
+      if (type !== "tree") result.set(path, { path, mode, type, sha });
+    }
+    return result;
+  }
+
+  private async verifyReconciledArtifacts(
+    input: GitHubReviewRequest,
+    headTreeSha: string,
+  ): Promise<void> {
+    const baseCommit = object(
+      (await this.call("GET", `/git/commits/${input.baseSha}`, "RECONCILE")).body,
+    );
+    const baseTreeSha = text(object(baseCommit?.tree)?.sha);
+    if (text(baseCommit?.sha) !== input.baseSha || !baseTreeSha || !gitObjectId.test(baseTreeSha)) {
+      throw new GitHubEffectError({
+        code: "REMOTE_CONFLICT",
+        operation: "RECONCILE",
+        retry: "NEVER",
+        message: "Validated base commit cannot be reconciled",
+      });
+    }
+    const [baseTree, headTree] = await Promise.all([
+      this.readTree(baseTreeSha),
+      this.readTree(headTreeSha),
+    ]);
+    const artifacts = new Map(input.artifacts.map((artifact) => [artifact.path, artifact]));
+    const observations = new Map(
+      input.validation.artifacts.map((observation) => [observation.path, observation]),
+    );
+    const paths = new Set([...baseTree.keys(), ...headTree.keys()]);
+    for (const path of paths) {
+      if (artifacts.has(path)) continue;
+      const base = baseTree.get(path);
+      const head = headTree.get(path);
+      if (
+        !base ||
+        !head ||
+        base.mode !== head.mode ||
+        base.type !== head.type ||
+        base.sha !== head.sha
+      ) {
+        throw new GitHubEffectError({
+          code: "REMOTE_CONFLICT",
+          operation: "RECONCILE",
+          retry: "NEVER",
+          message: "Remote commit contains an unauthorized tree delta",
+        });
+      }
+    }
+    for (const artifact of input.artifacts) {
+      const base = baseTree.get(artifact.path);
+      const head = headTree.get(artifact.path);
+      if (
+        (artifact.operation === "CREATE" && base !== undefined) ||
+        (artifact.operation === "MODIFY" && base?.type !== "blob") ||
+        !head ||
+        head.type !== "blob" ||
+        head.mode !== "100644"
+      ) {
+        throw new GitHubEffectError({
+          code: "REMOTE_CONFLICT",
+          operation: "RECONCILE",
+          retry: "NEVER",
+          message: "Remote commit does not contain the exact authorized artifact delta",
+        });
+      }
+      const blob = object((await this.call("GET", `/git/blobs/${head.sha}`, "RECONCILE")).body);
+      const bytes = decodedBase64(blob?.content);
+      const expectedBytes = Buffer.from(artifact.content, "utf8");
+      const observation = observations.get(artifact.path);
+      if (
+        text(blob?.sha) !== head.sha ||
+        text(blob?.encoding) !== "base64" ||
+        integer(blob?.size) !== expectedBytes.length ||
+        !bytes ||
+        !bytes.equals(expectedBytes) ||
+        !observation ||
+        sha256Buffer(bytes) !== observation.materializedSha256
+      ) {
+        throw new GitHubEffectError({
+          code: "REMOTE_CONFLICT",
+          operation: "RECONCILE",
+          retry: "NEVER",
+          message: "Remote blob bytes do not match signed validation",
+        });
+      }
+    }
+  }
+
   private async getHead(input: GitHubReviewRequest): Promise<Json | undefined> {
     const head = deterministicHead(input.runId);
     const response = await this.call(
@@ -321,6 +457,8 @@ export class LiveGitHubPort implements GitHubPort<GitHubReviewRequest> {
   ): GitHubReviewReceipt {
     const base = object(pull.base);
     const head = object(pull.head);
+    const baseRepository = object(base?.repo);
+    const headRepository = object(head?.repo);
     const number = integer(pull.number);
     const url = text(pull.html_url);
     const createdAt = text(pull.created_at);
@@ -332,11 +470,14 @@ export class LiveGitHubPort implements GitHubPort<GitHubReviewRequest> {
       url !== `https://github.com/${input.repository}/pull/${number}` ||
       pull.state !== "open" ||
       pull.draft !== true ||
+      text(pull.title) !== input.title ||
+      text(pull.body) !== this.pullBody(input) ||
       text(base?.ref) !== input.baseBranch ||
       text(base?.sha) !== input.baseSha ||
+      text(baseRepository?.full_name) !== input.repository ||
       text(head?.ref) !== deterministicHead(input.runId) ||
       text(head?.sha) !== headSha ||
-      !text(pull.body)?.includes(`<!-- ${this.marker(input)} -->`) ||
+      text(headRepository?.full_name) !== input.repository ||
       !Number.isFinite(createdTime) ||
       !Number.isFinite(updatedTime)
     ) {
@@ -387,9 +528,13 @@ export class LiveGitHubPort implements GitHubPort<GitHubReviewRequest> {
       });
     const commit = object((await this.call("GET", `/git/commits/${headSha}`, "RECONCILE")).body);
     const parents = Array.isArray(commit?.parents) ? commit.parents : [];
+    const headTreeSha = text(object(commit?.tree)?.sha);
     if (
       text(commit?.sha) !== headSha ||
       text(commit?.message) !== this.commitMessage(input) ||
+      parents.length !== 1 ||
+      !headTreeSha ||
+      !gitObjectId.test(headTreeSha) ||
       text(object(parents[0])?.sha) !== input.baseSha
     )
       throw new GitHubEffectError({
@@ -398,6 +543,7 @@ export class LiveGitHubPort implements GitHubPort<GitHubReviewRequest> {
         retry: "NEVER",
         message: "Deterministic branch was not created by this exact authorized effect",
       });
+    await this.verifyReconciledArtifacts(input, headTreeSha);
     const pulls = await this.pulls(input);
     if (pulls.length > 1)
       throw new GitHubEffectError({
@@ -511,6 +657,7 @@ export class LiveGitHubPort implements GitHubPort<GitHubReviewRequest> {
       !gitObjectId.test(headSha) ||
       text(commit?.message) !== this.commitMessage(input) ||
       commitTree !== treeSha ||
+      commitParents.length !== 1 ||
       text(object(commitParents[0])?.sha) !== input.baseSha
     )
       throw new GitHubEffectError({
