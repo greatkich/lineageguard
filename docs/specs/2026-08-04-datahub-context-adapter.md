@@ -39,14 +39,21 @@ domain evidence with stable provenance and fingerprints.
   entity granularity, and exact field paths where applicable; the canonical paths end at the real
   dashboard and model rather than at an intermediate dataset.
 - The pinned MCP server does not accept a column endpoint on only one side of a path request.
-  Therefore each mixed canonical path composes two official read calls in order: a column-to-column
-  path ending at the downstream dataset field, then an entity-to-entity path ending at the dashboard
-  or model. The evidence preserves both invocation IDs and raw response fingerprints.
+  Therefore each mixed canonical path preserves the candidate-discovery `get_lineage` response and
+  composes two official path calls in order: a column-to-column path ending at the downstream
+  dataset field, then an entity-to-entity path ending at the dashboard or model. The evidence
+  preserves all three invocation IDs and raw response fingerprints.
 - Query evidence retains only fields exposed by the approved official MCP tools: the DataHub query
   URN, `SYSTEM` source, exact dataset/schema-field subject, and normalized statement fingerprint.
+  `get_dataset_queries` proves discovery, source, dataset subject, and statement; `get_entities` for
+  the query proves the exact schema-field subject. The adapter cross-checks the shared query fields
+  and preserves both responses because neither response proves the complete record alone.
   Raw SQL is not part of the domain evidence contract. Query usage count and last-observed time are
   verified by the controlled graph lifecycle but are not attributed to MCP collection or shown as
   runtime evidence because the pinned MCP query projections do not expose them.
+- Glossary evidence composes the system glossary-term name bound to the resolved field by
+  `list_schema_fields` with the exact term URN/name returned by `get_entities`; edited glossary terms
+  cannot substitute for the system association. Both responses remain in provenance.
 - Schema, glossary, criticality, lifecycle, classification, and ownership fields remain
   machine-readable. Titles and summaries are presentation data and cannot substitute for them.
 - `impactContextFingerprint` is the stable semantic fingerprint used by policy, generation, and
@@ -58,15 +65,16 @@ domain evidence with stable provenance and fingerprints.
 
 1. Search for the exact platform/environment/dataset and require one source dataset URN.
 2. List schema fields and bind `commerce.orders.customer_id` with its native type/nullability.
-3. Collect downstream lineage and compose exact mixed entity/field paths to the analytics revenue
-   asset, Finance dashboard, fraud feature dataset, and production fraud model from the separately
-   attested column and entity path calls.
+3. Collect downstream candidates with `get_lineage`, then compose exact mixed entity/field paths to
+   the analytics revenue asset, Finance dashboard, fraud feature dataset, and production fraud model
+   from separately attested column and entity path calls.
 4. Read entity details for criticality/lifecycle plus real ownership of the Finance dashboard and
    fraud model.
-5. Collect the ingested PostgreSQL `SYSTEM` query entity that references `customer_id`, preserving
-   its source, exact subject, and normalized statement fingerprint without inventing hidden usage
-   statistics.
-6. Collect the governed Customer Identifier glossary association on the source field.
+5. Discover the ingested PostgreSQL `SYSTEM` query and read its entity details, cross-checking its
+   identity, source, statement fingerprint, dataset subject, and exact schema-field subject without
+   inventing hidden usage statistics.
+6. Bind the system Customer Identifier term name to the source field, then resolve that exact term
+   identity and preserve both official responses.
 7. Normalize, deduplicate, semantically bind, and validate the complete impact context through the
    accepted domain schemas.
 
