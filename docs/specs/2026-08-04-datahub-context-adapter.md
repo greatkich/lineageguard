@@ -35,6 +35,12 @@ domain evidence with stable provenance and fingerprints.
 - A failure before unique resolution is a typed collection-failure result, not an `ImpactContext`
   carrying a fabricated resolved URN. `COMPLETE` and `PARTIAL` contexts exist only after successful
   resolution.
+- Successful live and verified-replay collections are distinct domain outcomes. Every context has a
+  strict collection origin: `LIVE`, or `VERIFIED_REPLAY` bound to the verified fixture-manifest
+  fingerprint, original live collection fingerprint, and preserved semantic context fingerprint.
+  Collection origin changes the audit fingerprint but not the policy/generation semantic
+  fingerprint. Deterministic fixture constructors are not part of the production package API, and
+  parsing an origin proves structure rather than mutation authority.
 - Lineage paths retain ordered typed segments. Each segment records entity endpoints, field or
   entity granularity, and exact field paths where applicable; the canonical paths end at the real
   dashboard and model rather than at an intermediate dataset.
@@ -81,6 +87,9 @@ domain evidence with stable provenance and fingerprints.
 Every normalized item preserves the MCP tool, invocation ID, retrieval timestamp, and SHA-256 of the
 canonical raw response bytes. Stable evidence IDs derive from full normalized semantics, including
 criticality, targets, payload, related evidence, and non-volatile provenance.
+Compound provenance is chronological after resolution. Reusing one invocation across evidence is
+allowed only when its tool, retrieval time, and raw-response fingerprint are identical everywhere;
+an invocation cannot represent both a successful response and a failure.
 
 ## Failure behavior
 
@@ -100,7 +109,8 @@ criticality, targets, payload, related evidence, and non-volatile provenance.
 A fixture may be committed only after the same normalized collection passes live verification. It
 contains no tokens, credentials, private hostnames, raw query literals, personal data, or fabricated
 receipts. A manifest records server/tool versions, collection fingerprint, source scenario marker,
-and redaction method.
+redaction method, preserved semantic context fingerprint, and original live collection fingerprint.
+The replay port verifies the complete manifest before returning the distinct verified-replay result.
 
 ## Verification gates
 
