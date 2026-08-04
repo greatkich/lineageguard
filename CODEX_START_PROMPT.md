@@ -28,7 +28,7 @@ Then:
 2. Report contradictions, missing decisions, environmental blockers, and the minimum questions that require user input.
 3. Produce independently testable feature specifications covering F0–F10 in `docs/IMPLEMENTATION_HANDOFF.md`.
 4. Create a dependency graph, critical path, time budget, risk register, and explicit cut order.
-5. Use Superpowers `writing-plans` to create executable plans under `docs/superpowers/plans/`. Plans must use checkbox steps, exact files and interfaces, red/green TDD for deterministic code, commands with expected outcomes, frequent meaningful commits, and separate specification/code-quality review gates.
+5. Create executable plans under `.project-notes/plans/`. Plans must use checkbox steps, exact files and interfaces, red/green TDD for deterministic code, commands with expected outcomes, frequent meaningful commits, and separate specification/code-quality review gates.
 6. Do not scaffold the full monorepo or implement a feature before the plan set is reviewed.
 7. End with a concise approval packet containing:
    - proposed plan files;

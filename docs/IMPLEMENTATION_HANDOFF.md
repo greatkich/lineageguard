@@ -45,7 +45,7 @@ Then inspect the actual repository tree, current branch, installed skills, avail
 4. Record any contradiction before continuing.
 5. Split the work into independently testable feature specifications.
 6. Use Superpowers `writing-plans` for each feature or tightly coupled feature group.
-7. Save plans under `docs/superpowers/plans/`.
+7. Save plans under `.project-notes/plans/`.
 8. Present the plan set and critical path for approval before implementation.
 
 ## Required feature decomposition

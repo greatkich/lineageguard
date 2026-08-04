@@ -2,11 +2,6 @@
 
 This document records the primary sources used for the initial product, architecture, and agent-harness decisions. Verify current versions and installation commands again at implementation time.
 
-## Product Release
-
-- LineageGuard — overview, requirements, categories, product recognition, reviewers, and review criteria: https://internal release checklist/
-- Release requirements: https://internal release checklist/rules
-
 ## DataHub
 
 - DataHub open-source repository: https://github.com/datahub-project/datahub

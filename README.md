@@ -2,7 +2,7 @@
 
 **A DataHub-powered change guardian that turns risky schema changes into safe, verified migration pull requests.**
 
-LineageGuard is being built for **LineageGuard** in the **Organization-Aware Schema Change Safety** category.
+LineageGuard brings organizational metadata into schema-change review so repository-local automation can reason about downstream impact before code is merged.
 
 A repository-level coding agent can see the code in front of it. It usually cannot see the hidden consumers that live elsewhere in the organization: downstream dbt models, dashboards, ML features, production models, ad-hoc queries, owners, glossary rules, and data-quality expectations. LineageGuard closes that gap.
 
@@ -66,7 +66,7 @@ The product is not a free-form multi-agent swarm. It is a typed, observable work
 | [`docs/PRODUCT_VISION.md`](docs/PRODUCT_VISION.md) | Product, users, problem, scope, and success definition |
 | [`docs/PRODUCT_STRATEGY.md`](docs/PRODUCT_STRATEGY.md) | How the project maps to the review criteria |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | System design, boundaries, data model, runtime, and deployment |
-| [`docs/PRODUCT_WALKTHROUGH.md`](docs/PRODUCT_WALKTHROUGH.md) | The concise concise walkthrough and visual states |
+| [`docs/PRODUCT_WALKTHROUGH.md`](docs/PRODUCT_WALKTHROUGH.md) | The canonical product walkthrough and visual states |
 | [`docs/AGENT_HARNESS.md`](docs/AGENT_HARNESS.md) | How Codex and Superpowers must plan, implement, review, and verify |
 | [`docs/SKILLS_AND_AGENTS.md`](docs/SKILLS_AND_AGENTS.md) | Skills, MCP servers, agent roles, and installation guidance |
 | [`docs/IMPLEMENTATION_HANDOFF.md`](docs/IMPLEMENTATION_HANDOFF.md) | Feature decomposition and planning handoff for Codex |
@@ -113,17 +113,16 @@ Implementation starts only after Codex has:
 2. installed and verified the required skills;
 3. run Superpowers brainstorming to identify contradictions or gaps;
 4. produced feature specifications;
-5. produced bite-sized implementation plans under `docs/superpowers/plans/`;
+5. produced bite-sized implementation plans in local workspace notes;
 6. received approval for the plan.
 
 See [`CODEX_START_PROMPT.md`](CODEX_START_PROMPT.md).
 
-## Product Release target
+## Project direction
 
-- Release release milestone: **the current product milestone, an internal milestone**.
-- Walkthrough guide: **concise**.
-- Repository: **public and Apache 2.0 licensed**.
-- Primary capability: **Organization-Aware Schema Change Safety**.
-- Product ambition: **long-term product impact**.
+- Public, Apache-2.0-licensed development.
+- One reliable canonical schema-change scenario before broader coverage.
+- Reproducible evidence, executable validation, and explicit mutation controls.
+- Architecture that remains useful beyond the initial release.
 
-The full implementation, deployment, and release instructions will be added through the planning workflow.
+Implementation and deployment instructions evolve alongside verified product capabilities.

@@ -54,7 +54,7 @@ Do not let brainstorming reopen the already accepted TypeScript-first hybrid dec
 Each implementation plan must be saved to:
 
 ```text
-docs/superpowers/plans/YYYY-MM-DD-<feature-name>.md
+.project-notes/plans/YYYY-MM-DD-<feature-name>.md
 ```
 
 Plans must include:

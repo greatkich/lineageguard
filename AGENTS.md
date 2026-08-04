@@ -6,7 +6,7 @@ This file is the durable operating contract for every coding agent working in th
 
 Build **LineageGuard**, a DataHub-powered schema change guardian that converts a risky data change into a safe, validated, reviewable migration pull request and writes the verified decision back to DataHub.
 
-The objective is not to maximize feature count. The objective is to deliver the most credible, polished, reproducible concise product release walkthrough while keeping the codebase architecturally clean enough to continue after the initial release.
+The objective is not to maximize feature count. The objective is to deliver a credible, polished, reproducible vertical slice while keeping the codebase architecturally clean enough for continued product development.
 
 ## Source-of-truth order
 
@@ -29,8 +29,7 @@ Do not begin feature implementation from a broad user prompt.
 
 1. Use Superpowers `brainstorming` to validate the requested feature against the product vision.
 2. Write or update an approved feature specification.
-3. Use Superpowers `writing-plans` to create an executable plan in:
-   `docs/superpowers/plans/YYYY-MM-DD-<feature-name>.md`.
+3. Create an executable plan in the local workspace notes before implementation.
 4. Implement through `subagent-driven-development` where available.
 5. Use a fresh implementation context per independently reviewable task.
 6. Run specification review before code-quality review.
@@ -163,7 +162,7 @@ The UI is an operational evidence workspace, not a generic dashboard.
 - Prefer typography, spacing, hierarchy, and evidence density over decorative cards.
 - No card mosaic, glassmorphism, neon AI gradients, or fake terminal animation.
 - Every visible number must come from run state or a checked walkthrough fixture.
-- Support the target walkthrough viewport first: 1440 × 900.
+- Support the reference product viewport first: 1440 × 900.
 - Verify loading, empty, failure, and success states in Playwright.
 
 ## Security rules

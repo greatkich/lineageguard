@@ -1,19 +1,16 @@
-# Walkthrough Storyboard
+# Product Walkthrough
 
 ## Objective
 
-In within the concise walkthrough constraint, prove that DataHub gives an AI coding agent organizational context it cannot obtain from a repository, and that LineageGuard turns that context into a safe, verified migration.
+Show how DataHub gives an AI coding agent organizational context it cannot obtain from a repository, and how LineageGuard turns that context into a safe, verified migration.
 
 The walkthrough should feel like a product, not a narrated architecture diagram.
 
-## Walkthrough target
+## Reference environment
 
-- Keep the walkthrough concise and evidence-focused.
 - Viewport: 1440 × 900.
-- Spoken language: English.
-- Captions: English, burned in or platform captions reviewed manually.
 - Main surfaces: GitHub, LineageGuard Mission Control, DataHub UI.
-- Avoid terminal scrolling except for one short validation proof.
+- Keep validation evidence concise and readable without depending on terminal narration.
 
 ## Narrative arc
 
@@ -21,9 +18,9 @@ The walkthrough should feel like a product, not a narrated architecture diagram.
 Looks safe → hidden danger → decision changes → agent repairs → evidence proves safety → knowledge persists
 ```
 
-## Pre-walkthrough state
+## Readiness state
 
-Prepare before walkthrough:
+Prepare before presenting the workflow:
 
 - DataHub seeded with the canonical graph;
 - a live GitHub PR proposing the unsafe rename;

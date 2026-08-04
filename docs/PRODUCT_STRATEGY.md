@@ -1,27 +1,23 @@
 # Product Strategy
 
-## Target
+## Product focus
 
-Primary capability:
+> **Organization-aware schema-change safety powered by DataHub.**
 
-> **Organization-Aware Schema Change Safety**
+The product should demonstrate a complete, useful, technically credible loop in which DataHub is indispensable.
 
-long-term product impact ambition:
+## Product priorities
 
-> Demonstrate a complete, useful, technically credible product loop in which DataHub is indispensable.
-
-## Official evaluation model
-
-The product release evaluates:
+LineageGuard optimizes for:
 
 1. meaningful use of DataHub;
 2. technical execution;
 3. originality;
 4. real-world usefulness;
-5. release quality;
-6. bonus consideration for a meaningful DataHub open-source contribution.
+5. operational reliability;
+6. reusable open-source value.
 
-The project must remain optimized for those dimensions rather than for the largest possible feature set.
+These priorities matter more than maximizing feature count.
 
 ## Product thesis
 
@@ -31,7 +27,7 @@ The strongest single sentence is:
 
 Every major implementation decision should strengthen that sentence.
 
-## Criterion-by-criterion strategy
+## Priorities in practice
 
 ### 1. Use of DataHub
 
