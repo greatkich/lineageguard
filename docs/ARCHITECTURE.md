@@ -367,7 +367,7 @@ Example rules:
 |---|---|---|
 | `LG001` | destructive/rename/type change with downstream field lineage | `BLOCK` |
 | `LG002` | production ML model downstream | `BLOCK` |
-| `LG003` | recent unmanaged query references field | at least `REVIEW`; `BLOCK` for rename/drop |
+| `LG003` | observed `SYSTEM` query subject references field | at least `REVIEW`; `BLOCK` for rename/drop |
 | `LG004` | critical dashboard downstream | `BLOCK` for incompatible changes |
 | `LG005` | owner missing for affected critical asset | `REVIEW` |
 | `LG006` | additive nullable field with no semantic conflict | `ALLOW` |
