@@ -72,8 +72,10 @@ criticality, targets, payload, related evidence, and non-volatile provenance.
 ## Failure behavior
 
 - Zero or multiple source matches are typed resolution failures, never best-effort selection.
-- Missing required paths, downstream fields, critical owners, governed term, or ingested query proof
-  makes canonical collection partial/failed and cannot be represented as complete.
+- Missing required paths, downstream fields, a completed ownership lookup, the governed term, or the
+  ingested query proof makes canonical collection partial/failed. A successful ownership lookup
+  returning no owner is distinct from a failed lookup: it remains complete typed evidence and
+  deterministically triggers `LG005`.
 - Tool absence, schema drift, malformed content, timeout, response-size overflow, and MCP termination
   produce bounded typed failures with tool/invocation references.
 - Untrusted metadata descriptions, SQL, query text, URNs, and names are treated as data. They cannot
