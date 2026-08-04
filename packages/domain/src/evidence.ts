@@ -561,11 +561,9 @@ export const impactContextSchema = z
     }
 
     for (const [index, item] of context.evidence.entries()) {
-      const provenanceKeys = item.provenance.map(
-        (entry) => `${entry.role}\u0000${entry.tool}\u0000${entry.invocationId}`,
-      );
-      if (new Set(provenanceKeys).size !== provenanceKeys.length) {
-        issue(refinement, "Evidence provenance entries must be unique", [
+      const invocationIds = item.provenance.map((entry) => entry.invocationId);
+      if (new Set(invocationIds).size !== invocationIds.length) {
+        issue(refinement, "Evidence provenance invocation IDs must be unique", [
           "evidence",
           index,
           "provenance",

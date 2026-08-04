@@ -463,6 +463,65 @@ describe("canonical impact evidence", () => {
     expect(impactContextSchema.safeParse(contradictoryInvocation).success).toBe(false);
   });
 
+  it("rejects one raw invocation reused for distinct provenance roles within an evidence item", () => {
+    const context = createCanonicalImpactContextFixture(canonicalChange().id);
+    const lineage = required(
+      context.evidence.find((item) => item.kind === "LINEAGE_PATH"),
+      "lineage evidence",
+    );
+    const fieldPath = required(
+      lineage.provenance.find((entry) => entry.role === "FIELD_PATH"),
+      "field path provenance",
+    );
+    const duplicateInvocation = reboundContext(context, {
+      evidence: context.evidence.map((item) =>
+        item.id === lineage.id
+          ? {
+              ...item,
+              provenance: item.provenance.map((entry) =>
+                entry.role === "ENTITY_PATH"
+                  ? { ...fieldPath, role: "ENTITY_PATH" as const }
+                  : entry,
+              ),
+            }
+          : item,
+      ),
+    });
+
+    expect(impactContextSchema.safeParse(duplicateInvocation).success).toBe(false);
+  });
+
+  it("allows one identical raw invocation to support schema and glossary evidence", () => {
+    const context = createCanonicalImpactContextFixture(canonicalChange().id);
+    const schema = required(
+      context.evidence.find((item) => item.kind === "SCHEMA"),
+      "schema evidence",
+    );
+    const glossary = required(
+      context.evidence.find((item) => item.kind === "GLOSSARY_TERM"),
+      "glossary evidence",
+    );
+    const schemaInvocation = required(schema.provenance[0], "schema provenance");
+    const sharedInvocation = reboundContext(context, {
+      evidence: context.evidence.map((item) =>
+        item.id === glossary.id
+          ? {
+              ...item,
+              provenance: item.provenance.map((entry) =>
+                entry.role === "GLOSSARY_BINDING"
+                  ? { ...schemaInvocation, role: "GLOSSARY_BINDING" as const }
+                  : entry,
+              ),
+            }
+          : item,
+      ),
+    });
+
+    expect(impactContextSchema.safeParse(sharedInvocation).success).toBe(true);
+    expect(sharedInvocation.impactContextFingerprint).toBe(context.impactContextFingerprint);
+    expect(sharedInvocation.collectionFingerprint).not.toBe(context.collectionFingerprint);
+  });
+
   it("binds evidence ID and fingerprint to policy-relevant normalized fields", () => {
     const context = createCanonicalImpactContextFixture(canonicalChange().id);
     const item = context.evidence.find((evidence) => evidence.kind === "DASHBOARD");
