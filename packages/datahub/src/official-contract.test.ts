@@ -70,6 +70,29 @@ describe("official DataHub MCP v0.6.0 response contracts", () => {
     });
   });
 
+  it("accepts the official column-lineage traversal flags", () => {
+    expect(
+      parseLineagePage({
+        downstreams: {
+          hasMore: false,
+          offset: 0,
+          returned: 1,
+          searchResults: [
+            {
+              degree: 1,
+              entity: { urn: "urn:li:dataset:test" },
+              explored: true,
+              ignoredAsHop: false,
+              lineageColumns: ["customer_id"],
+              truncatedChildren: false,
+            },
+          ],
+          total: 1,
+        },
+      }).downstreams?.searchResults[0],
+    ).toMatchObject({ explored: true, ignoredAsHop: false, truncatedChildren: false });
+  });
+
   it.each([
     ["search", () => parseSearchPage({ count: "1", start: 0, total: 1 })],
     [

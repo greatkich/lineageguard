@@ -90,7 +90,10 @@ const lineageResultSchema = z
   .object({
     degree: nonnegativeInteger,
     entity: lineageEntitySchema,
+    explored: z.boolean().optional(),
+    ignoredAsHop: z.boolean().optional(),
     lineageColumns: z.array(boundedText).max(200).optional(),
+    truncatedChildren: z.boolean().optional(),
   })
   .strict();
 
