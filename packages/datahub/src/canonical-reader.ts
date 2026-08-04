@@ -167,6 +167,17 @@ export async function collectCanonicalObservations(
       },
     );
   }
+  if (schemaFields.data.matchingCount === null || schemaFields.data.matchingCount === undefined) {
+    throw new DataHubAdapterError(
+      "MALFORMED_RESPONSE",
+      "DataHub schema response omitted the filtered-field match count.",
+      {
+        invocationId: schemaFields.invocation.invocationId,
+        tool: schemaFields.invocation.tool,
+      },
+    );
+  }
+  requireUniqueResolution(schemaFields.data.matchingCount, schemaFields.invocation, "schema field");
   requireUniqueResolution(
     schemaFields.data.fields.filter((field) => field.fieldPath === targets.field).length,
     schemaFields.invocation,

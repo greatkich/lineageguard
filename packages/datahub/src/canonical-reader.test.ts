@@ -255,6 +255,37 @@ describe("canonical official MCP reader", () => {
     expect(invoke).toHaveBeenCalledTimes(2);
   });
 
+  it("uses the server-wide matching count when a schema page is truncated", async () => {
+    let call = 0;
+    const invoke = vi.fn(async (tool: ReadToolName): Promise<RawToolInvocation> => {
+      call += 1;
+      const payload =
+        tool === "search"
+          ? payloadFor(tool, call)
+          : {
+              fields: [{ fieldPath: "customer_id", nativeDataType: "bigint", nullable: false }],
+              matchingCount: 2,
+              offset: 0,
+              remainingCount: 99,
+              returned: 1,
+              totalFields: 100,
+              urn: sourceUrn,
+            };
+      return {
+        invocationId: `inv_truncated_schema_${call}`,
+        payload,
+        responseFingerprint: String(call).padStart(64, "0"),
+        retrievedAt: `2026-08-04T08:00:0${call}.000Z`,
+        tool,
+      };
+    });
+
+    await expect(collectCanonicalObservations({ invoke }, targets)).rejects.toMatchObject({
+      code: "AMBIGUOUS",
+    });
+    expect(invoke).toHaveBeenCalledTimes(2);
+  });
+
   it("rejects unbounded or query-shaping target identifiers before transport", async () => {
     const invoke = vi.fn();
 
