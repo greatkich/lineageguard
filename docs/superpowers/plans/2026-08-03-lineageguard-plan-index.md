@@ -6,7 +6,7 @@
 
 **Architecture:** Follow the accepted TypeScript-first hybrid architecture and deterministic control-plane ADRs. Merge gate-first: prove real DataHub context and the decision flip before generation, validation, external mutations, UI polish, replay, or submission work.
 
-**Tech Stack:** Node.js 24.18.0, pnpm 11.20.0, TypeScript 6.0.3, Next.js 16.2.12, React 19.2.8, PostgreSQL 17.10, OpenAI Agents SDK 0.14.2, Zod 4.4.3, DataHub OSS 1.6.0, MCP server 0.6.0, Python 3.12.13, uv 0.11.32, dbt Core 1.12.0, dbt-postgres 1.11.0, Biome 2.5.6, Vitest 4.1.10, Playwright 1.62.1.
+**Tech Stack:** Node.js 24.18.0, pnpm 11.20.0, TypeScript 6.0.3, Next.js 16.2.12, React 19.2.8, PostgreSQL 17.10, OpenAI Agents SDK 0.14.2, Zod 4.4.3, DataHub OSS 1.6.0, MCP server 0.6.0, Python 3.12.13, uv 0.11.32, dbt Core 1.12.0, dbt-postgres 1.11.0, Biome 2.5.6, Vitest 4.1.10, Playwright 1.62.1, YAML 2.9.0.
 
 ## Global Constraints
 

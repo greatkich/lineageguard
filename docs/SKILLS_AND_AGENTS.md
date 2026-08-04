@@ -47,15 +47,15 @@ Use Superpowers as the delivery methodology. Do not copy its planning logic into
 
 ## Required DataHub skills
 
-Source: official `datahub-project/datahub-skills` repository.
+Source: official `datahub-project/datahub-skills` repository, vendored from commit `f22f93074cf265ba6f9401947404f090c2584d9d` under Apache-2.0.
 
-Install project-level skills for Codex from the repository root:
+Verify the committed project-level snapshot from the repository root:
 
 ```bash
-npx skills add datahub-project/datahub-skills -a codex
+bash scripts/bootstrap-agent-tooling.sh
 ```
 
-The installer places compatible skills in `.agents/skills/`.
+This command is offline and does not install or update anything. The exact eight-root, 55-file manifest and the reviewed `datahub-setup` security patch are documented in `docs/THIRD_PARTY_SKILLS.md` and authenticated by `skills-lock.json`.
 
 Required skills for this project:
 
@@ -288,13 +288,13 @@ Target Node is 24 LTS and Python is 3.12.
 
 Use `/plugins` in Codex and restart the session after installation.
 
-### Step 3 — install DataHub skills
+### Step 3 — verify DataHub skills
 
 ```bash
-npx skills add datahub-project/datahub-skills -a codex
+bash scripts/bootstrap-agent-tooling.sh
 ```
 
-Review the resulting diff before committing third-party skill files. Preserve their licenses and attribution.
+The bootstrap must report the committed snapshot verified without network access. For a controlled upstream update, follow `docs/THIRD_PARTY_SKILLS.md`; do not run a floating installer against the working tree.
 
 ### Step 4 — install curated Codex skills
 
@@ -320,6 +320,8 @@ Install only after a plan explicitly requires them.
 
 - Verify current versions from official sources at planning time.
 - Pin package versions in lockfiles.
+- Pin vendored skills to an immutable upstream commit and authenticate every file with `skills-lock.json`.
+- Keep skill bootstrap verification offline; update the snapshot only through the reviewed procedure in `docs/THIRD_PARTY_SKILLS.md`.
 - Do not use unreviewed skills from broad community indexes for core implementation.
 - Review skill files before installation because skills are executable instructions.
 - Keep third-party licenses intact.

@@ -6,7 +6,7 @@
 
 **Architecture:** The root coordinates TypeScript workspaces and delegates Python-only DataHub ingestion utilities to a locked uv project. Minimal web, worker, and package entry points establish boundaries; Compose keeps application PostgreSQL, validation PostgreSQL, and the pinned DataHub stack separate.
 
-**Tech Stack:** Node.js 24.18.0, pnpm 11.20.0, TypeScript 6.0.3, Next.js 16.2.12, React 19.2.8, Python 3.12.13, uv 0.11.32, PostgreSQL 17.10, Docker Compose v2 or v5 via `docker compose`, Biome 2.5.6, Vitest 4.1.10, Playwright 1.62.1.
+**Tech Stack:** Node.js 24.18.0, pnpm 11.20.0, TypeScript 6.0.3, Next.js 16.2.12, React 19.2.8, Python 3.12.13, uv 0.11.32, PostgreSQL 17.10, Docker Compose v2 or v5 via `docker compose`, Biome 2.5.6, Vitest 4.1.10, Playwright 1.62.1, YAML 2.9.0.
 
 ## Global Constraints
 
@@ -135,6 +135,8 @@ git commit -m "chore: pin runtime environment policy"
 - Create: `vitest.workspace.ts`
 - Create: `playwright.config.ts`
 - Create: `tests/foundation/workspace.test.ts`
+- Create: `tests/foundation/fixtures/implicit-any/tsconfig.json`
+- Create: `tests/foundation/fixtures/implicit-any/index.ts`
 - Create: `pnpm-lock.yaml` through `pnpm install`
 
 **Interfaces:**
@@ -176,7 +178,7 @@ describe("workspace contract", () => {
 
 - [ ] **Step 2: Create only enough package metadata to run the red test**
 
-Create the root `package.json` with `private: true`, `type: "module"`, `packageManager: "pnpm@11.20.0"`, `engines.node: ">=24 <25"`, and dev dependencies pinned to TypeScript 6.0.3, Biome 2.5.6, Vitest 4.1.10, and Playwright 1.62.1. Initially omit `demo:verify`, then run:
+Create the root `package.json` with `private: true`, `type: "module"`, `packageManager: "pnpm@11.20.0"`, `engines.node: ">=24 <25"`, and dev dependencies pinned to TypeScript 6.0.3, Biome 2.5.6, Vitest 4.1.10, Playwright 1.62.1, and YAML 2.9.0. The contract test parses `package.json` and asserts each exact version. Initially omit `demo:verify`, then run:
 
 Run: `corepack pnpm install && corepack pnpm vitest run tests/foundation/workspace.test.ts`
 Expected: FAIL because `demo:verify` is absent.
@@ -206,6 +208,8 @@ Use these script contracts:
 
 Set `strict`, `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`, `useUnknownInCatchVariables`, `noImplicitOverride`, and `noFallthroughCasesInSwitch` to `true` in `tsconfig.base.json`. Configure Biome for two-space indentation, double quotes, organized imports, recommended lint rules, and generated-directory ignores. Configure Playwright with one `chromium` project and `tests/e2e` as its directory. `browser:install` resolves the pinned workspace Playwright 1.62.1 binary; it provisions Chromium as setup and never changes `test:e2e` behavior.
 
+Add an executable negative fixture whose `tsconfig.json` extends the repository's real `tsconfig.base.json` and whose `index.ts` contains `export function unsafe(value) { return value; }`. The workspace contract spawns `pnpm exec tsc --project tests/foundation/fixtures/implicit-any/tsconfig.json --noEmit --pretty false`, asserts a nonzero status, and asserts the combined output contains `TS7006`. This proves `noImplicitAny` is enforced by the shared configuration used by repository typecheck commands, rather than merely checking a JSON flag.
+
 - [ ] **Step 4: Run the workspace contract and static gates**
 
 Run: `pnpm vitest run tests/foundation/workspace.test.ts`
@@ -217,7 +221,7 @@ Expected: both exit zero.
 - [ ] **Step 5: Commit workspace configuration and lockfile**
 
 ```bash
-git add package.json pnpm-workspace.yaml pnpm-lock.yaml .npmrc tsconfig.base.json biome.jsonc vitest.workspace.ts playwright.config.ts tests/foundation/workspace.test.ts
+git add package.json pnpm-workspace.yaml pnpm-lock.yaml .npmrc tsconfig.base.json biome.jsonc vitest.workspace.ts playwright.config.ts tests/foundation/workspace.test.ts tests/foundation/fixtures/implicit-any
 git commit -m "chore: establish strict pnpm workspace gates"
 ```
 
@@ -420,11 +424,16 @@ git commit -m "chore: lock python and database service boundaries"
 - Create: `.github/workflows/ci.yml`
 - Create: `Makefile`
 - Create: `scripts/verify-foundation.sh`
+- Create: `tests/foundation/tooling-contracts.test.ts`
 - Create: `docs/DECISIONS/ADR-003-datahub-mcp-capability-boundaries.md`
 - Create: `docs/DECISIONS/ADR-004-durable-workflow-and-idempotency.md`
 - Create: `docs/DECISIONS/ADR-005-demo-deployment-and-exposure.md`
 - Modify: `.codex/config.toml.example`
-- Modify: `scripts/bootstrap-agent-tooling.sh`
+- Verify: `scripts/bootstrap-agent-tooling.sh`
+- Verify: `scripts/verify-agent-skills.mjs`
+- Verify: `scripts/verify-agent-skills.test.mjs`
+- Verify: `skills-lock.json`
+- Verify: `docs/THIRD_PARTY_SKILLS.md`
 - Modify: `docs/ARCHITECTURE.md`
 - Modify: `README.md`
 - Modify: `docs/SOURCES.md`
@@ -433,39 +442,29 @@ git commit -m "chore: lock python and database service boundaries"
 - Consumes: all F0 gates and the pinned Playwright CLI from Task 2.
 - Produces: CI job matrix, local `make setup`/`make browser-install`/`make verify-foundation` ownership, clean-clone README commands, and accepted architecture records for dependent plans.
 
-- [ ] **Step 1: Write a failing documentation/config contract test**
+- [ ] **Step 1: Write failing executable tooling-contract tests**
 
-Extend `tests/foundation/workspace.test.ts` to assert:
+Create `tests/foundation/tooling-contracts.test.ts` with these behavior-level checks:
 
-```ts
-const codexExample = await readFile(".codex/config.toml.example", "utf8");
-const bootstrap = await readFile("scripts/bootstrap-agent-tooling.sh", "utf8");
-expect(codexExample).toContain("mcp-server-datahub==0.6.0");
-expect(bootstrap).toContain("uvx");
-expect(`${codexExample}\n${bootstrap}`).not.toContain("@acryldata/mcp-server-datahub");
-
-const makefile = await readFile("Makefile", "utf8");
-const readme = await readFile("README.md", "utf8");
-const ci = await readFile(".github/workflows/ci.yml", "utf8");
-expect(makefile).toContain("pnpm exec playwright install chromium");
-expect(readme).toContain("make setup");
-expect(ci).toContain("pnpm exec playwright install --with-deps chromium");
-```
+- Spawn `uv run --python 3.12 python -c` with Python's standard-library `tomllib` to parse `.codex/config.toml.example` and emit the effective `mcp_servers.datahub` object as JSON. Assert `command === "uvx"`, `args` exactly equal `['--from', 'mcp-server-datahub==0.6.0', 'mcp-server-datahub']`, and `env.TOOLS_IS_MUTATION_ENABLED === "false"`. Do not inspect source substrings.
+- Create a temporary `PATH` directory containing executable shims for `corepack`, `pnpm`, `uv`, and `bash`; each shim appends its command name and arguments to a log and exits zero. Run the real `make setup` with that controlled `PATH` and assert the exact ordered log is `corepack pnpm install --frozen-lockfile`, `uv sync --project tools/datahub --locked`, then `pnpm exec playwright install chromium`. Run the real `make verify-foundation` and assert it delegates exactly to `bash scripts/verify-foundation.sh`.
+- Parse `.github/workflows/ci.yml` with the pinned `yaml@2.9.0` package, collect actual step `run` values, and assert the frozen pnpm install precedes `pnpm exec playwright install --with-deps chromium`, which precedes `bash scripts/verify-foundation.sh`. YAML comments and unrelated strings cannot satisfy the test.
+- Spawn `node --test scripts/verify-agent-skills.test.mjs` and `bash scripts/bootstrap-agent-tooling.sh`; require zero exits. The existing verifier suite covers valid snapshot, tampered, missing and extra files, invalid and missing immutable refs, local-patch hash mismatch, and an offline bootstrap whose controlled `PATH` fails if `npx`, `npm`, `git`, `curl`, or `wget` is invoked.
 
 - [ ] **Step 2: Run the contract and observe stale/missing setup contracts**
 
-Run: `pnpm vitest run tests/foundation/workspace.test.ts`
-Expected: FAIL because the obsolete npm MCP launcher remains and the Makefile/CI browser-provisioning contracts do not exist yet.
+Run: `pnpm vitest run tests/foundation/workspace.test.ts tests/foundation/tooling-contracts.test.ts`
+Expected: FAIL because the effective MCP command plus Makefile/CI behavior are stale or missing.
 
 - [ ] **Step 3: Implement CI and documents**
 
-Update both MCP examples to use the absolute `uvx` resolution pattern and `uvx --from mcp-server-datahub==0.6.0 mcp-server-datahub`, with `TOOLS_IS_MUTATION_ENABLED=false` in the read profile. Update architecture from Elasticsearch to OpenSearch where describing pinned Quickstart.
+Update `.codex/config.toml.example` to use `uvx --from mcp-server-datahub==0.6.0 mcp-server-datahub`, with `TOOLS_IS_MUTATION_ENABLED="false"` in the read profile. Keep `scripts/bootstrap-agent-tooling.sh` separate and offline-only: it authenticates the committed DataHub skill snapshot and never installs or launches MCP. Update architecture from Elasticsearch to OpenSearch where describing pinned Quickstart.
 
 The delivery design was approved on 2026-08-04, so create each ADR with `Status: Accepted`. ADR-003 records deterministic context collection plus split read/write/verifier ports; ADR-004 records the accepted status/failure table, `FOR UPDATE SKIP LOCKED`, 60-second lease/20-second heartbeat, 1/5/30-second retry delays, polling, and idempotency keys; ADR-005 records public replay/operator-only live mode. Later evidence may change these only through an explicit superseding ADR.
 
 Makefile owns these local targets: `browser-install` runs `pnpm exec playwright install chromium`; `setup` runs the frozen Corepack/pnpm install, locked uv sync, and then `browser-install`; `verify-foundation` runs `bash scripts/verify-foundation.sh` without silently provisioning or skipping a browser. README's clean-clone path is exactly `make setup` followed by `make verify-foundation`, explains that setup downloads pinned Chromium, and gives `pnpm exec playwright install chromium` as the direct recovery command.
 
-Linux CI uses setup-node with `node-version-file`, Corepack, frozen install, `astral-sh/setup-uv` pinned to 0.11.32, and `uv sync --locked`. After the frozen pnpm install and before `bash scripts/verify-foundation.sh`, it must run `pnpm exec playwright install --with-deps chromium` so both the pinned browser and required Linux system packages exist. `scripts/verify-foundation.sh` executes the F0 gate commands in specification order and prints the failing command through shell tracing without environment dumps; it never converts an absent browser into success.
+Linux CI uses setup-node with `node-version-file`, Corepack, frozen install, `astral-sh/setup-uv` pinned to 0.11.32, and `uv sync --locked`. After the frozen pnpm install and before `bash scripts/verify-foundation.sh`, it must run `pnpm exec playwright install --with-deps chromium` so both the pinned browser and required Linux system packages exist. `scripts/verify-foundation.sh` first runs `node --test scripts/verify-agent-skills.test.mjs` and `bash scripts/bootstrap-agent-tooling.sh`, then executes the remaining F0 gate commands in specification order. It prints the failing command through shell tracing without environment dumps and never converts an absent browser into success.
 
 - [ ] **Step 4: Run the complete F0 gate**
 
@@ -478,7 +477,7 @@ Expected: no lockfile drift.
 - [ ] **Step 5: Commit CI and architecture records**
 
 ```bash
-git add .github/workflows/ci.yml Makefile scripts/verify-foundation.sh .codex/config.toml.example scripts/bootstrap-agent-tooling.sh docs/DECISIONS docs/ARCHITECTURE.md docs/SOURCES.md README.md tests/foundation/workspace.test.ts
+git add .github/workflows/ci.yml Makefile scripts/verify-foundation.sh .codex/config.toml.example docs/DECISIONS docs/ARCHITECTURE.md docs/SOURCES.md README.md tests/foundation/workspace.test.ts tests/foundation/tooling-contracts.test.ts
 git commit -m "docs: align foundation with current runtime contracts"
 ```
 
@@ -510,6 +509,8 @@ Run:
 
 ```bash
 make setup
+node --test scripts/verify-agent-skills.test.mjs
+bash scripts/bootstrap-agent-tooling.sh
 pnpm env:check
 pnpm format:check
 pnpm lint

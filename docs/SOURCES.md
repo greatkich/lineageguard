@@ -12,7 +12,8 @@ This document records the primary sources used for the initial product, architec
 - DataHub open-source repository: https://github.com/datahub-project/datahub
 - Official DataHub MCP Server: https://github.com/acryldata/mcp-server-datahub
 - DataHub MCP documentation: https://docs.datahub.com/docs/features/feature-guides/mcp
-- Official DataHub skills for agents: https://github.com/datahub-project/datahub-skills
+- Official DataHub skills for agents, vendored from immutable commit `f22f93074cf265ba6f9401947404f090c2584d9d` under Apache-2.0: https://github.com/datahub-project/datahub-skills/tree/f22f93074cf265ba6f9401947404f090c2584d9d
+- Vendored skill provenance, complete manifest policy, local security divergence, and update procedure: `docs/THIRD_PARTY_SKILLS.md`
 - DataHub lineage SDK tutorial: https://github.com/datahub-project/datahub/blob/master/docs/api/tutorials/lineage.md
 
 ## Codex and agent skills
@@ -38,6 +39,7 @@ This document records the primary sources used for the initial product, architec
 - Node.js release schedule: https://nodejs.org/en/about/previous-releases
 - Biome documentation: https://biomejs.dev/
 - Playwright documentation: https://playwright.dev/docs/intro
+- YAML package used to parse CI contracts as data: https://eemeli.org/yaml/
 - pnpm workspaces: https://pnpm.io/workspaces
 - Docker Compose history and supported CLI versions: https://docs.docker.com/compose/intro/history/
 

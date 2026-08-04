@@ -4,7 +4,7 @@ description: |
   Use this skill when the user needs to set up a DataHub connection, install the DataHub CLI, configure authentication, verify connectivity, set default scopes, or create agent configuration profiles. Triggers on: "set up DataHub", "connect to DataHub", "install datahub CLI", "configure DataHub", "set default platform", "focus on domain X", "create profile", or any request to establish, configure, or troubleshoot DataHub connectivity.
 user-invocable: true
 min-cli-version: 1.5.0.1rc1
-allowed-tools: Bash(datahub *), Bash(pip install *acryl-datahub*), Bash(which datahub), Bash(python3 -c *), Bash(python3 -m venv *), Bash(cat ~/.datahubenv)
+allowed-tools: Bash(datahub *), Bash(pip install *acryl-datahub*), Bash(which datahub), Bash(python3 --version), Bash(python3 -m venv *), Bash(test -f ~/.datahubenv), Bash(stat * ~/.datahubenv)
 ---
 
 # DataHub Setup
@@ -50,7 +50,11 @@ This skill is designed to work across multiple coding agents (Claude Code, Curso
 
 - **Never display tokens or secrets in output.** When showing configuration, mask tokens as `<REDACTED>`.
 - **Never log credentials.** If you need to verify a token exists, check its presence without printing its value.
-- **Validate GMS URLs.** Confirm the URL looks like a valid HTTP(S) endpoint before using it.
+- **Never request or accept a PAT/token in chat.** The user enters it locally through a secret manager, protected file, or non-echoing shell prompt.
+- **Inspect only configuration-file presence, owner, and permissions.** Never `cat`, parse, print, or summarize `~/.datahubenv`; prove credentials with an authenticated probe.
+- **Require verified TLS whenever credentials are sent.** Never use `--disable-ssl-verification`; configure a CA bundle or trusted certificate instead.
+- **Validate GMS URLs.** Reject embedded credentials. Use plain HTTP only for loopback local development; authenticated remote endpoints require HTTPS.
+- **Contain exposed credentials.** If a token enters chat or output, do not use or repeat it; stop authenticated troubleshooting and require immediate revocation/rotation.
 - **Use virtual environments.** Always install the CLI in a Python virtual environment (venv).
 
 ---
@@ -66,8 +70,8 @@ Assess what's already configured before making changes.
 1. **Python available?** — Run `python3 --version`
 2. **Virtual environment?** — Check if a `.venv` exists or is active
 3. **CLI installed?** — Run `which datahub` and `datahub version`
-4. **Configuration file?** — Check if `~/.datahubenv` exists (do NOT display token values)
-5. **Environment variables?** — Check if `DATAHUB_GMS_URL` is set (do NOT display `DATAHUB_GMS_TOKEN` value, only confirm presence/absence)
+4. **Configuration file?** — Run only `test -f ~/.datahubenv`, then use `stat` to confirm the current user owns it and group/other permission bits are zero. Never read its contents.
+5. **Environment variables?** — Use a host-provided secret-status interface that emits presence booleans only. If unavailable, report `not inspected`; never run `env`, `printenv`, shell tracing, or a command that prints either value.
 6. **MCP server configured?** — Check for DataHub MCP server in the agent's MCP configuration
 
 Present a status table:
@@ -77,8 +81,8 @@ Present a status table:
 | Python      | installed / missing      | version            |
 | Virtual env | active / found / missing | path               |
 | DataHub CLI | installed / missing      | version            |
-| GMS URL     | configured / not set     | URL value          |
-| GMS Token   | configured / not set     | (never show value) |
+| GMS URL     | configured / not set     | value not displayed |
+| GMS Token   | not inspected / verified | value never displayed |
 | MCP Server  | configured / not found   | —                  |
 
 ### MCP Detected → Skip to Verification
@@ -97,7 +101,7 @@ Then proceed to Phase 2 (scope configuration) if needed, or exit.
 Skip if already installed and up to date. Also skip if MCP tools are available (see above).
 
 1. Create or activate a virtual environment: `python3 -m venv .venv && source .venv/bin/activate`
-2. Install: `pip install acryl-datahub`
+2. Install the project-approved version: `pip install "acryl-datahub==1.6.0.17"`
 3. Verify: `datahub version`
 
 **Troubleshooting:**
@@ -118,31 +122,31 @@ gms:
   token: "<PERSONAL_ACCESS_TOKEN>"
 ```
 
-Ask the user for their GMS URL and personal access token. Suggest a URL based on their deployment:
+Ask only for deployment type and the non-secret GMS URL. Explicitly tell the user not to paste a PAT/token into chat. The user must enter the token locally; the agent handles placeholders and status only.
 
 | Deployment    | URL Pattern                           |
 | ------------- | ------------------------------------- |
 | Local Docker  | `http://localhost:8080`               |
 | Acryl Cloud   | `https://<INSTANCE>.acryl.io/gms`     |
-| Kubernetes    | `http://datahub-gms.<NAMESPACE>:8080` |
-| Remote server | `http://<HOST>:<PORT>`                |
+| Kubernetes    | `https://datahub-gms.<NAMESPACE>`     |
+| Remote server | `https://<HOST>`                      |
 
-Set permissions: `chmod 600 ~/.datahubenv`.
+The user creates or edits this file locally with a trusted editor or secret manager; never ask them to paste its completed contents. Set permissions to `600`. The agent may check only file presence, owner, and mode with `test`/`stat`, never file contents.
 
 **Option B — Environment variables:**
 
 ```bash
-export DATAHUB_GMS_URL="<GMS_URL>"
-export DATAHUB_GMS_TOKEN="<TOKEN>"
+export DATAHUB_GMS_URL="<NON_SECRET_GMS_URL>"
+read -rsp "DataHub PAT: " DATAHUB_GMS_TOKEN && export DATAHUB_GMS_TOKEN && printf '\n'
 ```
 
-Environment variables take precedence over `~/.datahubenv`.
+The user runs the non-echoing token command in their own local shell, outside agent tools and chat. Environment variables take precedence over `~/.datahubenv`.
 
 **Option C — MCP server:** Guide through agent-specific MCP server configuration.
 
 ### Step 4: Verify Connectivity
 
-Run these checks in order, stopping at first failure:
+Before sending credentials, establish endpoint identity: remote endpoints must use HTTPS with hostname verification and either a publicly trusted certificate or the organization's private CA installed through the OS/Python trust store or an approved CA-bundle setting. Never disable certificate verification. Then run these checks in order, stopping at first failure:
 
 1. `datahub get --urn "urn:li:corpuser:datahub"` (this entity always exists)
 2. `datahub search "*" --limit 1` (confirms search index works)
@@ -155,7 +159,7 @@ Run these checks in order, stopping at first failure:
 | Connection refused    | Wrong URL or GMS not running | Verify URL and server status          |
 | 401 Unauthorized      | Invalid or expired token     | Regenerate token in DataHub UI        |
 | 403 Forbidden         | Insufficient permissions     | Check token scope                     |
-| SSL certificate error | Self-signed cert             | May need `--disable-ssl-verification` |
+| SSL certificate error | Private/self-signed CA       | Install the approved CA certificate in the OS/Python trust store or configure the supported CA bundle; do not send credentials until verification succeeds |
 | Search returns empty  | No metadata ingested yet     | Normal for new instances              |
 
 ---
@@ -252,13 +256,15 @@ Available interaction skills:
 
 - **Installing without a virtual environment.** Never `pip install` globally or with `sudo`. Always create and activate a venv first.
 - **Displaying tokens in output.** Never echo, print, or include tokens in any response. Mask as `<REDACTED>`.
+- **Reading credential files.** Never `cat`, parse, or summarize `~/.datahubenv`; check only presence, owner, and permissions.
+- **Disabling TLS verification.** Never use `--disable-ssl-verification` when configuring or verifying an authenticated endpoint. Repair CA trust instead.
 - **Declaring success without verification.** Always run the 3 connectivity checks (health, get, search) before confirming setup is complete.
 - **Confusing "configure scope" with "assign domain".** "Focus on Finance domain" is a scope configuration (Setup). "Assign these tables to Finance domain" is domain management (Govern).
 - **Disabling telemetry.** Do not modify telemetry settings. The CLI may show telemetry prompts — ignore them. Leave telemetry as-is unless the user explicitly asks to change it.
 
 ## Red Flags
 
-- **Token appears in output** → immediately note the exposure and advise regeneration.
+- **Token appears in chat or output** → do not repeat, use, or store it; stop authenticated work and require immediate revocation/rotation before resuming with a replacement entered locally.
 - **User wants to assign entities to a domain** → redirect to `/datahub-govern`.
 - **Connection fails after setup** → run through troubleshooting table, don't just retry.
 - **User provides a URL that doesn't look like HTTP(S)** → validate before using.
