@@ -83,6 +83,54 @@ class OperationReceipt:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class ExactOperationIdentity:
+    scenario_id: str
+    operation_kind: str
+    entity_urn: str | None
+    aspect_name: str | None
+    idempotency_key: str
+    proposal_hash: str
+
+
+@dataclass(frozen=True, slots=True)
+class ResolvedOperationReceipt:
+    index: int
+    receipt: OperationReceipt
+
+
+def resolve_latest_exact_operation(
+    receipts: tuple[OperationReceipt, ...],
+    identity: ExactOperationIdentity,
+    *,
+    expected_outcomes: frozenset[tuple[ReceiptStatus, str]],
+    error_prefix: str,
+) -> ResolvedOperationReceipt:
+    """Resolve by append order; an older success never masks a newer exact-operation failure."""
+    if not expected_outcomes or any(
+        status not in {ReceiptStatus.SUCCESS, ReceiptStatus.SKIPPED}
+        for status, _ in expected_outcomes
+    ):
+        raise TypeError("RECEIPT_EXPECTED_OUTCOMES_INVALID")
+    candidates = [
+        (index, receipt)
+        for index, receipt in enumerate(receipts)
+        if receipt.scenario_id == identity.scenario_id
+        and receipt.operation_kind == identity.operation_kind
+        and receipt.entity_urn == identity.entity_urn
+        and receipt.aspect_name == identity.aspect_name
+        and receipt.idempotency_key == identity.idempotency_key
+    ]
+    if not candidates:
+        raise ValueError(f"{error_prefix}_MISSING")
+    index, latest = candidates[-1]
+    if latest.proposal_hash != identity.proposal_hash:
+        raise ValueError(f"{error_prefix}_PROPOSAL_MISMATCH")
+    if (latest.status, latest.detail_code) not in expected_outcomes:
+        raise ValueError(f"{error_prefix}_NOT_CURRENT")
+    return ResolvedOperationReceipt(index=index, receipt=latest)
+
+
 class ReceiptStore:
     def __init__(self, path: Path) -> None:
         self.path = path
@@ -440,15 +488,15 @@ class ReceiptStore:
         )
 
     def latest_success(self, scenario_id: str, operation_kind: str) -> dict[str, OperationReceipt]:
-        successful: dict[str, OperationReceipt] = {}
+        latest: dict[str, OperationReceipt] = {}
         for receipt in self.read_all():
-            if (
-                receipt.scenario_id == scenario_id
-                and receipt.operation_kind == operation_kind
-                and receipt.status is ReceiptStatus.SUCCESS
-            ):
-                successful[receipt.idempotency_key] = receipt
-        return successful
+            if receipt.scenario_id == scenario_id and receipt.operation_kind == operation_kind:
+                latest[receipt.idempotency_key] = receipt
+        return {
+            key: receipt
+            for key, receipt in latest.items()
+            if receipt.status is ReceiptStatus.SUCCESS
+        }
 
     def unresolved(self, scenario_id: str) -> tuple[OperationReceipt, ...]:
         latest: dict[tuple[str, str | None, str | None, str], OperationReceipt] = {}

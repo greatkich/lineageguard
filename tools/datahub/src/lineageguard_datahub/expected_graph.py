@@ -163,6 +163,8 @@ CANONICAL_QUERY_SEMANTICS = (
     "lineageguard:finance-monthly-close",
     "walkthrough/warehouse/queries/finance-monthly-close.sql",
     "customer_id",
+    ("urn:li:corpGroup:lineageguard-canonical.finance-analytics",),
+    OwnershipType.BUSINESS_OWNER,
 )
 
 
@@ -362,12 +364,23 @@ def _query(raw: dict[str, Any]) -> QueryEvidence:
             "datasetUrn",
             "fieldPath",
             "sha256",
+            "ownerUrns",
+            "ownershipType",
         },
         "queryEvidence",
     )
     digest = _string(raw["sha256"], "queryEvidence.sha256")
     if len(digest) != 64 or any(character not in "0123456789abcdef" for character in digest):
         raise GraphContractError("queryEvidence.sha256 must be a lowercase SHA-256 digest")
+    try:
+        ownership_type = OwnershipType(_string(raw["ownershipType"], "queryEvidence.ownershipType"))
+    except ValueError as error:
+        raise GraphContractError(
+            f"unsupported query ownershipType: {raw['ownershipType']}"
+        ) from error
+    owner_urns = _strings(raw["ownerUrns"], "queryEvidence.ownerUrns")
+    if not owner_urns:
+        raise GraphContractError("queryEvidence.ownerUrns must not be empty")
     return QueryEvidence(
         logical_key=_string(raw["logicalKey"], "queryEvidence.logicalKey"),
         query_urn=_string(raw["queryUrn"], "queryEvidence.queryUrn"),
@@ -376,6 +389,8 @@ def _query(raw: dict[str, Any]) -> QueryEvidence:
         dataset_urn=_string(raw["datasetUrn"], "queryEvidence.datasetUrn"),
         field_path=_string(raw["fieldPath"], "queryEvidence.fieldPath"),
         sha256=digest,
+        owner_urns=owner_urns,
+        ownership_type=ownership_type,
     )
 
 
@@ -393,6 +408,9 @@ def _validate_references(graph: ExpectedGraph) -> None:
             raise GraphContractError(f"node {node.logical_key} references an unknown owner")
         if not set(node.tag_urns) <= tag_urns:
             raise GraphContractError(f"node {node.logical_key} references an unknown tag")
+    for query in graph.query_evidence:
+        if not set(query.owner_urns) <= owner_urns:
+            raise GraphContractError(f"query {query.logical_key} references an unknown owner")
     for edge in graph.edges:
         upstream = node_by_urn.get(edge.upstream_urn)
         downstream = node_by_urn.get(edge.downstream_urn)
@@ -476,6 +494,8 @@ def _validate_canonical_allowlist(graph: ExpectedGraph) -> None:
         query.marker,
         query.sql_path,
         query.field_path,
+        query.owner_urns,
+        query.ownership_type,
     ) != CANONICAL_QUERY_SEMANTICS:
         raise GraphContractError("canonical query logical mapping mismatch")
     if (
@@ -556,7 +576,15 @@ def graph_fingerprint(graph: ExpectedGraph) -> str:
             for node in graph.nodes
         ),
         "edges": tuple(edge.logical_key for edge in graph.edges),
-        "queries": tuple((query.logical_key, query.sha256) for query in graph.query_evidence),
+        "queries": tuple(
+            (
+                query.logical_key,
+                query.sha256,
+                query.owner_urns,
+                query.ownership_type,
+            )
+            for query in graph.query_evidence
+        ),
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
     return hashlib.sha256(encoded).hexdigest()

@@ -344,6 +344,22 @@ class OwnershipTypeSwapReader:
         return []
 
 
+class QueryOwnershipReader(OwnershipTypeSwapReader):
+    def __init__(self, graph: ExpectedGraph, owners: tuple[tuple[str, str], ...]) -> None:
+        super().__init__(graph, "")
+        self.query_owners = owners
+
+    def get_aspect(self, entity_urn: str, aspect_type: type[Any], version: int = 0) -> Any | None:
+        if aspect_type is OwnershipClass and entity_urn == self.graph.query_evidence[0].query_urn:
+            return OwnershipClass(
+                owners=[
+                    OwnerClass(owner=owner, type=owner_type)
+                    for owner, owner_type in self.query_owners
+                ]
+            )
+        return super().get_aspect(entity_urn, aspect_type, version)
+
+
 @pytest.mark.parametrize(
     ("logical_key", "expected_type", "swapped_type"),
     [
@@ -378,6 +394,42 @@ def test_live_verification_rejects_swapped_ownership_type(
     assert swapped_type in owner_failure.detail
 
 
+@pytest.mark.parametrize(
+    "owners",
+    [
+        (),
+        (
+            (
+                "urn:li:corpGroup:lineageguard-canonical.finance-analytics",
+                OwnershipTypeClass.BUSINESS_OWNER,
+            ),
+            (
+                "urn:li:corpGroup:lineageguard-canonical.risk-ml",
+                OwnershipTypeClass.TECHNICAL_OWNER,
+            ),
+        ),
+        (
+            (
+                "urn:li:corpGroup:lineageguard-canonical.risk-ml",
+                OwnershipTypeClass.BUSINESS_OWNER,
+            ),
+        ),
+        (
+            (
+                "urn:li:corpGroup:lineageguard-canonical.finance-analytics",
+                OwnershipTypeClass.TECHNICAL_OWNER,
+            ),
+        ),
+    ],
+)
+def test_live_verification_rejects_missing_extra_wrong_query_owner_or_type(
+    expected_graph: ExpectedGraph, owners: tuple[tuple[str, str], ...]
+) -> None:
+    observed = observe_live(QueryOwnershipReader(expected_graph, owners), expected_graph)
+    report = compare_observed_graph(expected_graph, observed)
+    assert "OWNER_MISMATCH" in {failure.code for failure in report.failures}
+
+
 def test_missing_receipts_cannot_report_live_success(expected_graph: ExpectedGraph) -> None:
     report = compare_observed_graph(expected_graph, expected_observation(expected_graph))
     assert report.ok is False
@@ -397,10 +449,6 @@ def test_missing_receipts_cannot_report_live_success(expected_graph: ExpectedGra
         (
             lambda item: replace(item, entity_urn="urn:li:query:third"),
             "LIVE_QUERY_RECEIPT_URN_MISMATCH",
-        ),
-        (
-            lambda item: replace(item, recorded_at="2026-08-04T09:00:00+00:00"),
-            "LIVE_QUERY_RECEIPT_STALE",
         ),
         (
             lambda item: replace(item, metrics=item.metrics | {"executionCount": 99}),
@@ -423,6 +471,26 @@ def test_live_receipts_are_exactly_bound(
     changed[live_index] = mutation(changed[live_index])
     report = compare_observed_graph(expected_graph, observed, tuple(changed))
     assert expected_code in {item.code for item in report.failures}
+
+
+def test_live_receipt_before_current_postgres_ingest_is_stale_by_append_order(
+    expected_graph: ExpectedGraph, repository_root: Path
+) -> None:
+    observed, receipts = _live_bundle(expected_graph, repository_root)
+    changed = list(receipts)
+    live_index = next(
+        index for index, item in enumerate(changed) if item.operation_kind == "ingest-query"
+    )
+    live = changed.pop(live_index)
+    postgres_index = next(
+        index
+        for index, item in enumerate(changed)
+        if item.operation_kind == "ingest"
+        and item.aspect_name == "walkthrough/metadata/postgres-ingestion.yml"
+    )
+    changed.insert(postgres_index, live)
+    report = compare_observed_graph(expected_graph, observed, tuple(changed))
+    assert "LIVE_QUERY_RECEIPT_STALE" in {item.code for item in report.failures}
 
 
 def test_manual_signal_and_extra_schema_field_are_rejected(

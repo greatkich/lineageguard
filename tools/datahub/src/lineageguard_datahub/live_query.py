@@ -15,6 +15,9 @@ from datahub.emitter.mcp import MetadataChangeProposalWrapper
 from datahub.metadata.schema_classes import (
     AuditStampClass,
     DataPlatformInstanceClass,
+    OwnerClass,
+    OwnershipClass,
+    OwnershipTypeClass,
     QueryLanguageClass,
     QueryPropertiesClass,
     QuerySourceClass,
@@ -40,7 +43,14 @@ from lineageguard_datahub.provenance import (
     receipt_has_registry_binding,
 )
 from lineageguard_datahub.query_history import plan_query_execution
-from lineageguard_datahub.receipts import OperationReceipt, ReceiptStatus, ReceiptStore
+from lineageguard_datahub.receipts import (
+    ExactOperationIdentity,
+    OperationReceipt,
+    ReceiptStatus,
+    ReceiptStore,
+    ResolvedOperationReceipt,
+    resolve_latest_exact_operation,
+)
 from lineageguard_datahub.seed import (
     OWNERSHIP_NONCE_KEY,
     SCENARIO_MARKER_KEY,
@@ -75,22 +85,35 @@ def _idempotency_key(proposal: MetadataChangeProposalWrapper) -> str:
 def latest_pg_stat_receipt(
     graph: ExpectedGraph,
     receipts: tuple[OperationReceipt, ...],
+    root: Path,
     *,
     ownership_nonce: str,
     warehouse_target_fingerprint: str,
-) -> OperationReceipt:
-    candidates = [
-        receipt
-        for receipt in receipts
-        if receipt.scenario_id == graph.scenario_id
-        and receipt.operation_kind == "query"
-        and receipt.status is ReceiptStatus.SUCCESS
-        and receipt.detail_code == "PG_STAT_OBSERVED"
-    ]
-    if not candidates:
-        raise ValueError("PG_STAT_RECEIPT_REQUIRED")
-    receipt = max(candidates, key=lambda item: item.recorded_at)
+    after_index: int,
+) -> ResolvedOperationReceipt:
     query = graph.query_evidence[0]
+    expected_fingerprint = plan_query_execution(root, query).normalized_fingerprint
+    try:
+        resolved = resolve_latest_exact_operation(
+            receipts,
+            ExactOperationIdentity(
+                scenario_id=graph.scenario_id,
+                operation_kind="query",
+                entity_urn=None,
+                aspect_name="pg_stat_statements",
+                idempotency_key=expected_fingerprint,
+                proposal_hash=expected_fingerprint,
+            ),
+            expected_outcomes=frozenset({(ReceiptStatus.SUCCESS, "PG_STAT_OBSERVED")}),
+            error_prefix="PG_STAT_RECEIPT",
+        )
+    except ValueError as error:
+        if str(error).endswith("_MISSING"):
+            raise ValueError("PG_STAT_RECEIPT_REQUIRED") from error
+        raise
+    if resolved.index <= after_index:
+        raise ValueError("PG_STAT_RECEIPT_PRECEDES_CURRENT_DBT_ARTIFACTS")
+    receipt = resolved.receipt
     required_metrics = {
         "queryId",
         "executionCount",
@@ -118,7 +141,7 @@ def latest_pg_stat_receipt(
         warehouse_target_fingerprint=warehouse_target_fingerprint,
     ):
         raise ValueError("PG_STAT_REGISTRY_BINDING_INVALID")
-    return receipt
+    return resolved
 
 
 def build_live_query_plan(
@@ -169,6 +192,21 @@ def build_live_query_plan(
             aspect=DataPlatformInstanceClass(
                 platform="urn:li:dataPlatform:postgres",
                 instance=make_dataplatform_instance_urn("postgres", graph.platform_instance),
+            ),
+        ),
+        MetadataChangeProposalWrapper(
+            entityUrn=urn,
+            aspect=OwnershipClass(
+                owners=[
+                    OwnerClass(
+                        owner=owner_urn,
+                        type={
+                            "BUSINESS_OWNER": OwnershipTypeClass.BUSINESS_OWNER,
+                            "TECHNICAL_OWNER": OwnershipTypeClass.TECHNICAL_OWNER,
+                        }[query.ownership_type.value],
+                    )
+                    for owner_urn in query.owner_urns
+                ]
             ),
         ),
         MetadataChangeProposalWrapper(entityUrn=urn, aspect=StatusClass(removed=False)),
@@ -228,17 +266,11 @@ def _emit_live_query_evidence_under_lock(
 ) -> int:
     receipts = store.read_all()
     nonce = store.ownership_nonce
-    receipt = latest_pg_stat_receipt(
-        graph,
-        receipts,
-        ownership_nonce=nonce,
-        warehouse_target_fingerprint=warehouse_target_fingerprint,
-    )
     artifacts = verify_dbt_ingestion_artifacts(root)
     artifact_metrics = dbt_artifact_metrics(artifacts)
     project_fingerprint = dbt_project_fingerprint(root)
     snapshot_fingerprint = ingestion_snapshot_fingerprint(build_ingestion_plan(root), artifacts)
-    require_dbt_build_provenance(
+    dbt_artifacts = require_dbt_build_provenance(
         receipts,
         scenario_id=graph.scenario_id,
         ownership_nonce=nonce,
@@ -246,6 +278,15 @@ def _emit_live_query_evidence_under_lock(
         dbt_project_sha256=project_fingerprint,
         artifact_metrics=artifact_metrics,
     )
+    query_operation = latest_pg_stat_receipt(
+        graph,
+        receipts,
+        root,
+        ownership_nonce=nonce,
+        warehouse_target_fingerprint=warehouse_target_fingerprint,
+        after_index=dbt_artifacts.index,
+    )
+    receipt = query_operation.receipt
     binding_metrics: dict[str, int | float | str] = (
         datahub_target_metrics(
             nonce,
@@ -260,29 +301,37 @@ def _emit_live_query_evidence_under_lock(
         }
     )
     recipe_digest = RECIPE_DIGESTS["walkthrough/metadata/postgres-ingestion.yml"]
-    ingest_receipts = [
-        item
-        for item in receipts
-        if item.operation_kind == "ingest"
-        and item.aspect_name == "walkthrough/metadata/postgres-ingestion.yml"
-        and item.status is ReceiptStatus.SUCCESS
-        and item.idempotency_key == recipe_digest
-        and item.proposal_hash == recipe_digest
-        and receipt_has_registry_binding(
-            item,
+    try:
+        ingest_operation = resolve_latest_exact_operation(
+            receipts,
+            ExactOperationIdentity(
+                scenario_id=graph.scenario_id,
+                operation_kind="ingest",
+                entity_urn=None,
+                aspect_name="walkthrough/metadata/postgres-ingestion.yml",
+                idempotency_key=recipe_digest,
+                proposal_hash=recipe_digest,
+            ),
+            expected_outcomes=frozenset({(ReceiptStatus.SUCCESS, "INGESTED")}),
+            error_prefix="POSTGRES_INGEST_RECEIPT",
+        )
+    except ValueError as error:
+        if str(error).endswith("_MISSING"):
+            raise ValueError("POSTGRES_INGEST_RECEIPT_REQUIRED") from error
+        raise
+    latest_ingest = ingest_operation.receipt
+    if (
+        not receipt_has_registry_binding(
+            latest_ingest,
             ownership_nonce=nonce,
             warehouse_target_fingerprint=warehouse_target_fingerprint,
         )
-        and item.metrics.get("targetAttestation") == target_attestation
-        and item.metrics.get("targetFingerprint") == target_fingerprint
-        and all(item.metrics.get(key) == value for key, value in binding_metrics.items())
-    ]
-    if not ingest_receipts:
-        raise ValueError("POSTGRES_INGEST_RECEIPT_REQUIRED")
-    latest_ingest = max(ingest_receipts, key=lambda item: item.recorded_at)
-    if datetime.fromisoformat(latest_ingest.recorded_at) < datetime.fromisoformat(
-        receipt.recorded_at
+        or latest_ingest.metrics.get("targetAttestation") != target_attestation
+        or latest_ingest.metrics.get("targetFingerprint") != target_fingerprint
+        or any(latest_ingest.metrics.get(key) != value for key, value in binding_metrics.items())
     ):
+        raise ValueError("POSTGRES_INGEST_RECEIPT_BINDING_MISMATCH")
+    if ingest_operation.index <= query_operation.index:
         raise ValueError("POSTGRES_INGEST_PRECEDES_QUERY")
     plan = build_live_query_plan(graph, root, receipt, nonce)
     urn = plan[0].proposal.entityUrn
@@ -539,16 +588,27 @@ def reconcile_live_query_evidence(
     """Resolve an interrupted query upsert only from exact live DataHub aspects."""
     nonce = store.ownership_nonce
     receipts = store.read_all()
-    query_receipt = latest_pg_stat_receipt(
-        graph,
-        receipts,
-        ownership_nonce=nonce,
-        warehouse_target_fingerprint=warehouse_target_fingerprint,
-    )
     artifacts = verify_dbt_ingestion_artifacts(root)
     artifact_metrics = dbt_artifact_metrics(artifacts)
     project_fingerprint = dbt_project_fingerprint(root)
     snapshot_fingerprint = ingestion_snapshot_fingerprint(build_ingestion_plan(root), artifacts)
+    dbt_artifacts = require_dbt_build_provenance(
+        receipts,
+        scenario_id=graph.scenario_id,
+        ownership_nonce=nonce,
+        warehouse_target_fingerprint=warehouse_target_fingerprint,
+        dbt_project_sha256=project_fingerprint,
+        artifact_metrics=artifact_metrics,
+    )
+    query_operation = latest_pg_stat_receipt(
+        graph,
+        receipts,
+        root,
+        ownership_nonce=nonce,
+        warehouse_target_fingerprint=warehouse_target_fingerprint,
+        after_index=dbt_artifacts.index,
+    )
+    query_receipt = query_operation.receipt
     recipe_digest = RECIPE_DIGESTS["walkthrough/metadata/postgres-ingestion.yml"]
     binding_metrics: dict[str, int | float | str] = (
         datahub_target_metrics(
@@ -563,6 +623,25 @@ def reconcile_live_query_evidence(
             "ingestionSnapshotFingerprint": snapshot_fingerprint,
         }
     )
+    ingest_operation = resolve_latest_exact_operation(
+        receipts,
+        ExactOperationIdentity(
+            scenario_id=graph.scenario_id,
+            operation_kind="ingest",
+            entity_urn=None,
+            aspect_name="walkthrough/metadata/postgres-ingestion.yml",
+            idempotency_key=recipe_digest,
+            proposal_hash=recipe_digest,
+        ),
+        expected_outcomes=frozenset({(ReceiptStatus.SUCCESS, "INGESTED")}),
+        error_prefix="POSTGRES_INGEST_RECEIPT",
+    )
+    if ingest_operation.index <= query_operation.index:
+        raise ValueError("POSTGRES_INGEST_PRECEDES_QUERY")
+    if any(
+        ingest_operation.receipt.metrics.get(key) != value for key, value in binding_metrics.items()
+    ):
+        raise ValueError("POSTGRES_INGEST_RECEIPT_BINDING_MISMATCH")
     plan = build_live_query_plan(graph, root, query_receipt, nonce)
     by_identity = {
         (item.proposal.entityUrn, item.proposal.aspectName, item.idempotency_key): item

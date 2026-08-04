@@ -33,6 +33,7 @@ uv run --project tools/datahub lineageguard-datahub dbt-build
 uv run --project tools/datahub lineageguard-datahub query
 uv run --project tools/datahub lineageguard-datahub ingest
 uv run --project tools/datahub lineageguard-datahub metadata-seed
+uv run --project tools/datahub lineageguard-datahub bootstrap-target
 uv run --project tools/datahub lineageguard-datahub manifest
 ```
 
@@ -44,10 +45,22 @@ ownership nonce read back from the server. A manifest or public marker never aut
 overwrite. An exact pre-existing entity is skipped without becoming a reset target; any differing
 pre-existing entity is refused unless its creation provenance is already protected by this tool.
 
-Metadata mutation and connector-ingestion targets must use a numeric loopback address and the exact
-canonical target attestation; the tool denies both operations against remote DataHub. Remote
-PostgreSQL requires `sslmode=verify-full` and its own opt-in. DataHub read, mutation, and ingestion
-tokens are separate variables and must contain distinct non-empty values. PostgreSQL bootstrap
+Metadata mutation and connector-ingestion target only the exact canonical GMS URL
+`http://127.0.0.1:8080`; userinfo, query strings, fragments, alternate ports, trailing paths, and
+remote DataHub targets are refused. A one-time bootstrap creates a random 256-bit live-instance ID
+in a dedicated `dataPlatformInstanceProperties` marker and binds it to ignored, owner-only `0600`
+local state. Every ingestion, mutation, reset, reconciliation, and verification reads that marker
+with `DATAHUB_READ_TOKEN` before a write or ingestion token is loaded into a transport. Missing,
+empty, substituted, or extended markers fail closed. The resulting target fingerprint is
+`sha256(canonicalGmsUrl|liveInstanceId)`; neither a URL nor a checked-in constant is an attestation.
+
+`DATAHUB_BOOTSTRAP_TOKEN` must be a short-lived, least-privilege credential limited to creating the
+dedicated target marker. It is distinct from the read, mutation, and ingestion credentials and
+should be revoked or removed from the environment immediately after bootstrap. The bootstrap
+refuses a target containing any canonical graph URN and never overwrites an existing conflicting
+marker. Remote PostgreSQL requires `sslmode=verify-full` and its own opt-in. DataHub read,
+bootstrap, mutation, and ingestion tokens are separate variables and must contain distinct
+non-empty values. PostgreSQL bootstrap
 admin, fixed `lineageguard_seed`, fixed `lineageguard_query`, fixed `lineageguard_ingest`, and fixed
 `lineageguard_dbt` credentials are separate; the query and ingestion LOGIN roles inherit separate
 NOLOGIN groups. The query role can select only `analytics.customer_revenue`; the ingestion role can
@@ -72,6 +85,22 @@ The supported DataHub setup is the official CLI quickstart pinned to OSS v1.6.0:
 ```bash
 uv run --project tools/datahub lineageguard-datahub quickstart --execute
 ```
+
+Before any connector ingestion or metadata mutation, attest the empty canonical DataHub target.
+The confirmation and environment gate make this a separate, explicit one-time action:
+
+```bash
+uv run --project tools/datahub lineageguard-datahub bootstrap-target \
+  --execute \
+  --confirm canonical-customer-id-rename
+unset DATAHUB_BOOTSTRAP_TOKEN
+```
+
+The command first uses the read credential to prove that the marker and every canonical URN are
+absent. Only then does it construct the bootstrap writer, create the immutable marker, and read it
+back through the separate read credential. Safe recovery from an interrupted first attempt reuses
+the protected local ID; an existing marker is accepted only when it is byte-for-byte equivalent to
+that binding and the canonical graph is still absent.
 
 After PostgreSQL is available, the canonical live sequence is:
 
@@ -105,17 +134,18 @@ entities created by this tool and never deletes connector-owned Dataset URNs.
 `fraud.customer_features`. It runs in a minimal environment containing only the ingestion token and
 read-only ingestion database credential. The checked `pg_stat_statements` observation is reconciled
 into one deterministic namespaced Query. Stable query identity lives in official SYSTEM
-`QueryProperties`, `QuerySubjects`, and `DataPlatformInstance` aspects; each later observation is a
-monotonic `QueryUsageStatistics` timeseries update. Verification fetches that URN directly and
-accepts it only when its statement, exact subject field, instance, timestamp, usage count, pg_stat
-id/count/time, recipe digest, proposal keys, and ordered receipts all agree.
+`QueryProperties`, `QuerySubjects`, `DataPlatformInstance`, and official `Ownership` aspects; each
+later observation is a monotonic `QueryUsageStatistics` timeseries update. The manifest immutably
+binds the Query to Finance Analytics as `BUSINESS_OWNER`. Verification fetches that URN directly
+and accepts it only when its statement, exact subject field, instance, owner/type, timestamp, usage
+count, pg_stat id/count/time, recipe digest, proposal keys, and ordered receipts all agree.
 
 MANUAL Query examples may remain in committed replay fixtures, but are never emitted or accepted by
-the LIVE path. DataHub 1.6 does not support the `Ownership` aspect on Query entities, so the tool
-does not claim query ownership or encode a custom owner substitute. Official Ownership is verified
-on the Finance revenue/dashboard and Risk ML assets. The canonical manifest fixes the Finance
-dashboard edge as `BUSINESS_OWNER` and the fraud model edge as `TECHNICAL_OWNER`; changing either
-type is contract drift.
+the LIVE path. Ownership is represented only by DataHub's official `OwnershipClass`; no custom
+property substitutes for an owner. Official Ownership is verified on the Query, Finance
+revenue/dashboard, and Risk ML assets. The canonical manifest fixes the Query and Finance dashboard
+as `BUSINESS_OWNER` and the fraud model as `TECHNICAL_OWNER`; changing any owner or type is contract
+drift.
 
 Reset only LineageGuard-owned DataHub entities:
 
@@ -147,8 +177,11 @@ uv run --project tools/datahub lineageguard-datahub reconcile-reset --execute --
 ```
 
 The warehouse, dbt, read-query, and connector commands are declarative or read-only; a failed run
-is retried through the same exact command, and no downstream step accepts an older warehouse/dbt or
-connector success after a newer failed attempt.
+is retried through the same exact command. One shared resolver uses authenticated append order and
+the exact scenario/kind/entity/aspect/idempotency/proposal identity, so an older success never masks
+a newer failure. The current Query success must follow the current dbt artifact receipt, and the
+current PostgreSQL ingestion success must follow that Query before live Query aspects can be emitted,
+reconciled, or verified.
 
 `metadata-seed --execute` requires a registry-bound warehouse receipt, the exact ordered dbt command
 and three-artifact receipts, and current successful receipts for both captured connector recipes in

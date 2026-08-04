@@ -11,7 +11,7 @@ class ConfigurationError(ValueError):
     """Required configuration is missing or unsafe."""
 
 
-CANONICAL_TARGET_ATTESTATION = "canonical-local-lineageguard-v1"
+CANONICAL_GMS_URL = "http://127.0.0.1:8080"
 
 
 @dataclass(frozen=True, slots=True)
@@ -20,13 +20,6 @@ class DataHubConfig:
     token: str | None = field(repr=False)
     remote: bool = False
     credential_kind: str = "read"
-    target_attestation: str | None = None
-
-    @property
-    def target_fingerprint(self) -> str:
-        if self.target_attestation is None:
-            raise ConfigurationError("DATAHUB_TARGET_ATTESTATION_REQUIRED")
-        return hashlib.sha256(f"{self.server}|{self.target_attestation}".encode()).hexdigest()
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,19 +67,15 @@ def _is_loopback(host: str | None) -> bool:
         return False
 
 
-def _is_numeric_loopback(host: str | None) -> bool:
-    if host is None:
-        return False
-    try:
-        return ip_address(host).is_loopback
-    except ValueError:
-        return False
-
-
 def _require_distinct_datahub_tokens(values: dict[str, str]) -> None:
     tokens = [
         value
-        for name in ("DATAHUB_READ_TOKEN", "DATAHUB_INGEST_TOKEN", "DATAHUB_MUTATION_TOKEN")
+        for name in (
+            "DATAHUB_READ_TOKEN",
+            "DATAHUB_INGEST_TOKEN",
+            "DATAHUB_MUTATION_TOKEN",
+            "DATAHUB_BOOTSTRAP_TOKEN",
+        )
         if (value := values.get(name)) is not None and value != ""
     ]
     if len(tokens) != len(set(tokens)):
@@ -98,8 +87,9 @@ def load_datahub_config(
     *,
     write: bool = False,
     ingest: bool = False,
+    bootstrap: bool = False,
 ) -> DataHubConfig:
-    if write and ingest:
+    if sum((write, ingest, bootstrap)) > 1:
         raise ConfigurationError("DATAHUB_CREDENTIAL_PURPOSE_CONFLICT")
     values = dict(os.environ if environ is None else environ)
     _require_distinct_datahub_tokens(values)
@@ -107,34 +97,34 @@ def load_datahub_config(
     parsed = urlsplit(server)
     if parsed.scheme not in {"http", "https"} or parsed.hostname is None:
         raise ConfigurationError("DATAHUB_GMS_URL_INVALID")
-    if parsed.username is not None or parsed.password is not None or parsed.fragment:
+    if (
+        parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+    ):
         raise ConfigurationError("DATAHUB_GMS_URL_UNSAFE_COMPONENT")
-    local = _is_loopback(parsed.hostname)
-    if parsed.scheme == "http" and not local:
-        raise ConfigurationError("REMOTE_DATAHUB_HTTPS_REQUIRED")
-    if not local and values.get("LINEAGEGUARD_REMOTE_DATAHUB") != "approved":
-        raise ConfigurationError("REMOTE_DATAHUB_OPT_IN_REQUIRED")
-    credential_kind = "ingest" if ingest else ("mutation" if write else "read")
+    if parsed.path not in {"", "/"}:
+        raise ConfigurationError("DATAHUB_GMS_URL_PATH_DENIED")
+    if server != CANONICAL_GMS_URL:
+        raise ConfigurationError("CANONICAL_DATAHUB_GMS_URL_REQUIRED")
+    credential_kind = (
+        "bootstrap" if bootstrap else ("ingest" if ingest else ("mutation" if write else "read"))
+    )
     token_name = {
         "read": "DATAHUB_READ_TOKEN",
         "mutation": "DATAHUB_MUTATION_TOKEN",
         "ingest": "DATAHUB_INGEST_TOKEN",
+        "bootstrap": "DATAHUB_BOOTSTRAP_TOKEN",
     }[credential_kind]
     token = values.get(token_name) or None
-    if credential_kind != "read" and token is None:
+    if token is None:
         raise ConfigurationError(f"{token_name}_REQUIRED")
-    target_attestation = values.get("LINEAGEGUARD_DATAHUB_TARGET_ATTESTATION")
-    if credential_kind in {"mutation", "ingest"}:
-        if not _is_numeric_loopback(parsed.hostname):
-            raise ConfigurationError("CANONICAL_DATAHUB_NUMERIC_LOOPBACK_REQUIRED")
-        if target_attestation != CANONICAL_TARGET_ATTESTATION:
-            raise ConfigurationError("DATAHUB_TARGET_ATTESTATION_REQUIRED")
     return DataHubConfig(
-        server=server.rstrip("/"),
+        server=server,
         token=token,
-        remote=not local,
+        remote=False,
         credential_kind=credential_kind,
-        target_attestation=target_attestation,
     )
 
 

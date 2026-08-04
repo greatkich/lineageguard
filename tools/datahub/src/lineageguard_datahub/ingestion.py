@@ -20,9 +20,12 @@ from lineageguard_datahub.provenance import (
 )
 from lineageguard_datahub.receipts import (
     LIVE_RECONCILIATION_KINDS,
+    ExactOperationIdentity,
     MetricValue,
     OperationReceipt,
     ReceiptStatus,
+    ResolvedOperationReceipt,
+    resolve_latest_exact_operation,
 )
 
 RECIPE_DIGESTS = {
@@ -378,6 +381,7 @@ def ingestion_prerequisite_failures(
     dbt_project_sha256: str,
     artifact_metrics: Mapping[str, MetricValue],
     snapshot_fingerprint: str,
+    query_fingerprint: str,
     require_seed_after: bool = False,
 ) -> tuple[str, ...]:
     failures: list[str] = []
@@ -487,6 +491,36 @@ def ingestion_prerequisite_failures(
             and command_indexes["build"] >= command_indexes["docs-generate"]
         ):
             failures.append("DBT_COMMAND_ORDER_INVALID")
+    query_index = -1
+    try:
+        query_operation = resolve_latest_exact_operation(
+            receipts,
+            ExactOperationIdentity(
+                scenario_id=scenario_id,
+                operation_kind="query",
+                entity_urn=None,
+                aspect_name="pg_stat_statements",
+                idempotency_key=query_fingerprint,
+                proposal_hash=query_fingerprint,
+            ),
+            expected_outcomes=frozenset({(ReceiptStatus.SUCCESS, "PG_STAT_OBSERVED")}),
+            error_prefix="PG_STAT_RECEIPT",
+        )
+        query_index = query_operation.index
+        if not receipt_has_registry_binding(
+            query_operation.receipt,
+            ownership_nonce=ownership_nonce,
+            warehouse_target_fingerprint=warehouse_target_fingerprint,
+        ):
+            failures.append("PG_STAT_RECEIPT_BINDING_INVALID")
+        if dbt_index < 0 or query_index <= dbt_index:
+            failures.append("PG_STAT_RECEIPT_PRECEDES_CURRENT_DBT_ARTIFACTS")
+    except ValueError as error:
+        failures.append(
+            "PG_STAT_RECEIPT_MISSING"
+            if str(error).endswith("_MISSING")
+            else "PG_STAT_RECEIPT_NOT_CURRENT"
+        )
     success_indexes: dict[str, int] = {}
     for relative, digest in RECIPE_DIGESTS.items():
         candidates = [
@@ -499,13 +533,28 @@ def ingestion_prerequisite_failures(
         if not candidates:
             failures.append(f"INGEST_PREREQUISITE_MISSING:{relative}")
             continue
-        index, latest = candidates[-1]
-        if latest.status is not ReceiptStatus.SUCCESS or latest.detail_code != "INGESTED":
-            failures.append(f"INGEST_PREREQUISITE_NOT_CURRENT:{relative}")
-            continue
-        if latest.idempotency_key != digest or latest.proposal_hash != digest:
+        _, latest_any = candidates[-1]
+        if latest_any.idempotency_key != digest or latest_any.proposal_hash != digest:
             failures.append(f"INGEST_PREREQUISITE_DIGEST_MISMATCH:{relative}")
             continue
+        try:
+            resolved = resolve_latest_exact_operation(
+                receipts,
+                ExactOperationIdentity(
+                    scenario_id=scenario_id,
+                    operation_kind="ingest",
+                    entity_urn=None,
+                    aspect_name=relative,
+                    idempotency_key=digest,
+                    proposal_hash=digest,
+                ),
+                expected_outcomes=frozenset({(ReceiptStatus.SUCCESS, "INGESTED")}),
+                error_prefix="INGEST_PREREQUISITE",
+            )
+        except ValueError:
+            failures.append(f"INGEST_PREREQUISITE_NOT_CURRENT:{relative}")
+            continue
+        index, latest = resolved.index, resolved.receipt
         if (
             latest.metrics.get("targetAttestation") != target_attestation
             or latest.metrics.get("targetFingerprint") != target_fingerprint
@@ -525,6 +574,10 @@ def ingestion_prerequisite_failures(
             continue
         success_indexes[relative] = index
     postgres_path, dbt_path = RECIPE_DIGESTS
+    if postgres_path in success_indexes and (
+        query_index < 0 or success_indexes[postgres_path] <= query_index
+    ):
+        failures.append("POSTGRES_INGEST_PRECEDES_QUERY")
     if (
         postgres_path in success_indexes
         and dbt_path in success_indexes
@@ -569,28 +622,35 @@ def require_dbt_build_provenance(
     warehouse_target_fingerprint: str,
     dbt_project_sha256: str,
     artifact_metrics: Mapping[str, MetricValue],
-) -> None:
+) -> ResolvedOperationReceipt:
     expected = dict(artifact_metrics) | {"dbtProjectFingerprint": dbt_project_sha256}
-    candidates = [
-        (index, receipt)
-        for index, receipt in enumerate(receipts)
-        if receipt.scenario_id == scenario_id
-        and receipt.operation_kind == "dbt-build"
-        and receipt.aspect_name == "artifact-set"
-        and receipt.status is ReceiptStatus.SUCCESS
-        and receipt.detail_code == "DBT_ARTIFACTS_VERIFIED"
-        and receipt.idempotency_key == DBT_ARTIFACT_VERIFICATION_FINGERPRINT
-        and receipt.proposal_hash == dbt_project_sha256
-        and receipt_has_registry_binding(
-            receipt,
-            ownership_nonce=ownership_nonce,
-            warehouse_target_fingerprint=warehouse_target_fingerprint,
+    try:
+        artifact = resolve_latest_exact_operation(
+            receipts,
+            ExactOperationIdentity(
+                scenario_id=scenario_id,
+                operation_kind="dbt-build",
+                entity_urn=None,
+                aspect_name="artifact-set",
+                idempotency_key=DBT_ARTIFACT_VERIFICATION_FINGERPRINT,
+                proposal_hash=dbt_project_sha256,
+            ),
+            expected_outcomes=frozenset({(ReceiptStatus.SUCCESS, "DBT_ARTIFACTS_VERIFIED")}),
+            error_prefix="DBT_BUILD_RECEIPT",
         )
-        and all(receipt.metrics.get(key) == value for key, value in expected.items())
-    ]
-    if not candidates:
-        raise ValueError("DBT_BUILD_RECEIPT_REQUIRED")
-    artifact_index = candidates[-1][0]
+    except ValueError as error:
+        code = str(error)
+        if code.endswith("_MISSING"):
+            raise ValueError("DBT_BUILD_RECEIPT_REQUIRED") from error
+        raise ValueError("DBT_BUILD_RECEIPT_NOT_CURRENT") from error
+    artifact_index = artifact.index
+    artifact_receipt = artifact.receipt
+    if not receipt_has_registry_binding(
+        artifact_receipt,
+        ownership_nonce=ownership_nonce,
+        warehouse_target_fingerprint=warehouse_target_fingerprint,
+    ) or any(artifact_receipt.metrics.get(key) != value for key, value in expected.items()):
+        raise ValueError("DBT_BUILD_RECEIPT_BINDING_MISMATCH")
     latest_dbt_index = max(
         index
         for index, receipt in enumerate(receipts)
@@ -603,25 +663,29 @@ def require_dbt_build_provenance(
         ("build", DBT_BUILD_COMMAND_FINGERPRINT),
         ("docs-generate", DBT_DOCS_COMMAND_FINGERPRINT),
     ):
-        commands = [
-            (index, receipt)
-            for index, receipt in enumerate(receipts[:artifact_index])
-            if receipt.scenario_id == scenario_id
-            and receipt.operation_kind == "dbt-build"
-            and receipt.aspect_name == aspect
-            and receipt.status is ReceiptStatus.SUCCESS
-            and receipt.detail_code == "DBT_COMMAND_SUCCEEDED"
-            and receipt.idempotency_key == digest
-            and receipt.proposal_hash == dbt_project_sha256
-            and receipt_has_registry_binding(
-                receipt,
-                ownership_nonce=ownership_nonce,
-                warehouse_target_fingerprint=warehouse_target_fingerprint,
+        try:
+            command = resolve_latest_exact_operation(
+                receipts,
+                ExactOperationIdentity(
+                    scenario_id=scenario_id,
+                    operation_kind="dbt-build",
+                    entity_urn=None,
+                    aspect_name=aspect,
+                    idempotency_key=digest,
+                    proposal_hash=dbt_project_sha256,
+                ),
+                expected_outcomes=frozenset({(ReceiptStatus.SUCCESS, "DBT_COMMAND_SUCCEEDED")}),
+                error_prefix="DBT_COMMAND_RECEIPT",
             )
-        ]
-        if not commands:
-            raise ValueError(f"DBT_COMMAND_RECEIPT_REQUIRED:{aspect}")
-        indexes[aspect] = commands[-1][0]
+        except ValueError as error:
+            raise ValueError(f"DBT_COMMAND_RECEIPT_REQUIRED:{aspect}") from error
+        if command.index >= artifact_index or not receipt_has_registry_binding(
+            command.receipt,
+            ownership_nonce=ownership_nonce,
+            warehouse_target_fingerprint=warehouse_target_fingerprint,
+        ):
+            raise ValueError(f"DBT_COMMAND_RECEIPT_NOT_CURRENT:{aspect}")
+        indexes[aspect] = command.index
     if indexes["build"] >= indexes["docs-generate"]:
         raise ValueError("DBT_COMMAND_ORDER_INVALID")
     warehouse = latest_warehouse_receipt(
@@ -632,6 +696,7 @@ def require_dbt_build_provenance(
     )
     if receipts.index(warehouse) >= indexes["build"]:
         raise ValueError("DBT_WAREHOUSE_ORDER_INVALID")
+    return artifact
 
 
 def require_ingestion_prerequisites(
@@ -645,6 +710,7 @@ def require_ingestion_prerequisites(
     dbt_project_sha256: str,
     artifact_metrics: Mapping[str, MetricValue],
     snapshot_fingerprint: str,
+    query_fingerprint: str,
 ) -> None:
     failures = ingestion_prerequisite_failures(
         receipts,
@@ -656,6 +722,7 @@ def require_ingestion_prerequisites(
         dbt_project_sha256=dbt_project_sha256,
         artifact_metrics=artifact_metrics,
         snapshot_fingerprint=snapshot_fingerprint,
+        query_fingerprint=query_fingerprint,
     )
     if failures:
         raise ValueError(";".join(failures))

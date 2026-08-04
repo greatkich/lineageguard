@@ -180,7 +180,7 @@ def _reconcile_live(
     )
 
 
-def test_live_query_plan_is_system_provenance_and_namespaced_fallback_is_not_used(
+def test_live_query_plan_uses_system_provenance_and_official_finance_ownership(
     expected_graph: ExpectedGraph, repository_root: Path
 ) -> None:
     receipt = _query_receipt(expected_graph, repository_root)
@@ -189,7 +189,15 @@ def test_live_query_plan_is_system_provenance_and_namespaced_fallback_is_not_use
     assert isinstance(properties, QueryPropertiesClass)
     assert properties.source == QuerySourceClass.SYSTEM
     assert plan[0].proposal.entityUrn == expected_graph.query_evidence[0].query_urn
-    assert not any(isinstance(item.proposal.aspect, OwnershipClass) for item in plan)
+    ownership = next(
+        item.proposal.aspect for item in plan if isinstance(item.proposal.aspect, OwnershipClass)
+    )
+    assert [(owner.owner, str(owner.type)) for owner in ownership.owners] == [
+        (
+            "urn:li:corpGroup:lineageguard-canonical.finance-analytics",
+            "BUSINESS_OWNER",
+        )
+    ]
 
 
 def test_live_query_partial_failure_reconciles_successful_aspects(
@@ -204,11 +212,11 @@ def test_live_query_partial_failure_reconciles_successful_aspects(
     before = len(catalog.emitted)
     with pytest.raises(ValueError, match="SCENARIO_RECONCILIATION_REQUIRED"):
         emit_live_query_evidence(catalog, catalog, store, expected_graph, repository_root)
-    assert _reconcile_live(catalog, store, expected_graph, repository_root) == 3
+    assert _reconcile_live(catalog, store, expected_graph, repository_root) == 4
     emitted = emit_live_query_evidence(catalog, catalog, store, expected_graph, repository_root)
     assert before == 2
-    assert emitted == 3
-    assert len(catalog.emitted) == 5
+    assert emitted == 4
+    assert len(catalog.emitted) == 6
     assert sum(receipt.status is ReceiptStatus.FAILURE for receipt in store.read_all()) == 1
 
 
@@ -321,9 +329,99 @@ def test_ambiguous_usage_apply_is_reconciled_from_live_state(
     catalog.fail_after_at = None
     with pytest.raises(ValueError, match="SCENARIO_RECONCILIATION_REQUIRED"):
         emit_live_query_evidence(catalog, catalog, store, expected_graph, repository_root)
-    assert _reconcile_live(catalog, store, expected_graph, repository_root) == 1
-    assert emit_live_query_evidence(catalog, catalog, store, expected_graph, repository_root) == 0
+    assert _reconcile_live(catalog, store, expected_graph, repository_root) == 2
+    assert emit_live_query_evidence(catalog, catalog, store, expected_graph, repository_root) == 1
     assert any(
         item.aspect_name == "queryUsageStatistics" and item.status is ReceiptStatus.SKIPPED
         for item in store.read_all()
     )
+
+
+def test_latest_exact_query_receipt_controls_emit_and_postgres_must_follow_it(
+    expected_graph: ExpectedGraph, repository_root: Path, tmp_path: Path
+) -> None:
+    store = ReceiptStore(tmp_path / "operations.jsonl")
+    _prepare_store(store, expected_graph, repository_root)
+    current = _query_receipt(
+        expected_graph,
+        repository_root,
+        recorded_at=None,
+        ownership_nonce=store.ownership_nonce,
+    )
+    store.append(
+        OperationReceipt.create(
+            scenario_id=current.scenario_id,
+            operation_kind=current.operation_kind,
+            entity_urn=current.entity_urn,
+            aspect_name=current.aspect_name,
+            idempotency_key=current.idempotency_key,
+            proposal_hash=current.proposal_hash,
+            status=ReceiptStatus.FAILURE,
+            detail_code="QUERY_FAILED",
+            ownership_nonce=store.ownership_nonce,
+            metrics=current.metrics,
+        )
+    )
+    with pytest.raises(ValueError, match="PG_STAT_RECEIPT_NOT_CURRENT"):
+        emit_live_query_evidence(
+            FakeCatalog(), FakeCatalog(), store, expected_graph, repository_root
+        )
+
+    recovered = _query_receipt(
+        expected_graph,
+        repository_root,
+        recorded_at=None,
+        ownership_nonce=store.ownership_nonce,
+    )
+    store.append(recovered)
+    with pytest.raises(ValueError, match="POSTGRES_INGEST_PRECEDES_QUERY"):
+        emit_live_query_evidence(
+            FakeCatalog(), FakeCatalog(), store, expected_graph, repository_root
+        )
+    digest = RECIPE_DIGESTS["walkthrough/metadata/postgres-ingestion.yml"]
+    store.append(
+        OperationReceipt.create(
+            scenario_id=expected_graph.scenario_id,
+            operation_kind="ingest",
+            entity_urn=None,
+            aspect_name="walkthrough/metadata/postgres-ingestion.yml",
+            idempotency_key=digest,
+            proposal_hash=digest,
+            status=ReceiptStatus.SUCCESS,
+            detail_code="INGESTED",
+            ownership_nonce=store.ownership_nonce,
+            metrics=full_target_metrics(repository_root, store.ownership_nonce),
+        )
+    )
+    catalog = FakeCatalog()
+    assert emit_live_query_evidence(catalog, catalog, store, expected_graph, repository_root) == 6
+
+
+def test_query_receipt_before_current_dbt_artifacts_is_rejected(
+    expected_graph: ExpectedGraph, repository_root: Path, tmp_path: Path
+) -> None:
+    store = ReceiptStore(tmp_path / "operations.jsonl")
+    _prepare_store(store, expected_graph, repository_root)
+    artifact = next(
+        item
+        for item in store.read_all()
+        if item.operation_kind == "dbt-build" and item.aspect_name == "artifact-set"
+    )
+    store.append(
+        OperationReceipt.create(
+            scenario_id=artifact.scenario_id,
+            operation_kind=artifact.operation_kind,
+            entity_urn=artifact.entity_urn,
+            aspect_name=artifact.aspect_name,
+            idempotency_key=artifact.idempotency_key,
+            proposal_hash=artifact.proposal_hash,
+            status=ReceiptStatus.SUCCESS,
+            detail_code="DBT_ARTIFACTS_VERIFIED",
+            ownership_nonce=store.ownership_nonce,
+            metrics=artifact.metrics,
+        )
+    )
+    with pytest.raises(ValueError, match="PG_STAT_RECEIPT_PRECEDES_CURRENT_DBT_ARTIFACTS"):
+        emit_live_query_evidence(
+            FakeCatalog(), FakeCatalog(), store, expected_graph, repository_root
+        )

@@ -4,6 +4,10 @@
 
 LineageGuard brings organizational metadata into schema-change review so repository-local automation can reason about downstream impact before code is merged.
 
+The canonical local DataHub graph uses a separate one-time target bootstrap before any ingestion or
+metadata mutation. See [`walkthrough/README.md`](walkthrough/README.md) for the exact attested CLI
+sequence and least-privilege credential split.
+
 A repository-level coding agent can see the code in front of it. It usually cannot see the hidden consumers that live elsewhere in the organization: downstream dbt models, dashboards, ML features, production models, ad-hoc queries, owners, glossary rules, and data-quality expectations. LineageGuard closes that gap.
 
 It reads a proposed schema change, gathers organizational context from DataHub, makes a deterministic safety decision, generates a backward-compatible migration, validates the generated artifacts, creates a reviewable pull request, and writes the verified decision back to DataHub for the next person or agent.

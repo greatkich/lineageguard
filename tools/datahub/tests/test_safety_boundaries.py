@@ -14,7 +14,13 @@ from lineageguard_datahub.ingestion import (
     ingestion_environment,
     verify_ingestion_role,
 )
-from lineageguard_datahub.receipts import OperationReceipt, ReceiptStatus, ReceiptStore
+from lineageguard_datahub.receipts import (
+    ExactOperationIdentity,
+    OperationReceipt,
+    ReceiptStatus,
+    ReceiptStore,
+    resolve_latest_exact_operation,
+)
 from lineageguard_datahub.warehouse import (
     apply_warehouse_rows,
     apply_warehouse_seed,
@@ -98,6 +104,47 @@ def test_receipt_store_rejects_symlink_and_permissive_mode(tmp_path: Path) -> No
         ReceiptStore(link).read_all()
 
 
+def test_exact_operation_resolver_uses_append_order_not_any_historical_success() -> None:
+    identity = ExactOperationIdentity(
+        scenario_id="canonical-customer-id-rename",
+        operation_kind="query",
+        entity_urn=None,
+        aspect_name="pg_stat_statements",
+        idempotency_key="a" * 64,
+        proposal_hash="a" * 64,
+    )
+
+    def receipt(status: ReceiptStatus) -> OperationReceipt:
+        return OperationReceipt.create(
+            scenario_id=identity.scenario_id,
+            operation_kind=identity.operation_kind,
+            entity_urn=identity.entity_urn,
+            aspect_name=identity.aspect_name,
+            idempotency_key=identity.idempotency_key,
+            proposal_hash=identity.proposal_hash,
+            status=status,
+            detail_code=("PG_STAT_OBSERVED" if status is ReceiptStatus.SUCCESS else "QUERY_FAILED"),
+        )
+
+    success = receipt(ReceiptStatus.SUCCESS)
+    failure = receipt(ReceiptStatus.FAILURE)
+    expected = frozenset({(ReceiptStatus.SUCCESS, "PG_STAT_OBSERVED")})
+    with pytest.raises(ValueError, match="QUERY_RECEIPT_NOT_CURRENT"):
+        resolve_latest_exact_operation(
+            (success, failure),
+            identity,
+            expected_outcomes=expected,
+            error_prefix="QUERY_RECEIPT",
+        )
+    resolved = resolve_latest_exact_operation(
+        (success, failure, success),
+        identity,
+        expected_outcomes=expected,
+        error_prefix="QUERY_RECEIPT",
+    )
+    assert resolved.index == 2
+
+
 def test_only_ambiguous_read_modify_write_failures_require_live_reconciliation(
     tmp_path: Path,
 ) -> None:
@@ -124,9 +171,9 @@ def test_ingestion_environment_is_purpose_bound_and_minimal(repository_root: Pat
         "PATH": "/bin",
         "DATAHUB_GMS_URL": "http://127.0.0.1:8080",
         "DATAHUB_INGEST_TOKEN": "ingest-secret",
-        "LINEAGEGUARD_DATAHUB_TARGET_ATTESTATION": "canonical-local-lineageguard-v1",
         "DATAHUB_READ_TOKEN": "read-secret",
-        "DATAHUB_WRITE_TOKEN": "write-secret",
+        "DATAHUB_BOOTSTRAP_TOKEN": "bootstrap-secret",
+        "DATAHUB_MUTATION_TOKEN": "mutation-secret",
         "LINEAGEGUARD_POSTGRES_MODE": "local",
         "WALKTHROUGH_POSTGRES_HOST": "127.0.0.1",
         "WALKTHROUGH_POSTGRES_PORT": "5432",
@@ -144,7 +191,8 @@ def test_ingestion_environment_is_purpose_bound_and_minimal(repository_root: Pat
     assert child["DATAHUB_INGEST_TOKEN"] == "ingest-secret"
     assert child["WALKTHROUGH_INGEST_POSTGRES_USER"] == "lineageguard_ingest"
     assert "DATAHUB_READ_TOKEN" not in child
-    assert "DATAHUB_WRITE_TOKEN" not in child
+    assert "DATAHUB_BOOTSTRAP_TOKEN" not in child
+    assert "DATAHUB_MUTATION_TOKEN" not in child
     assert "WALKTHROUGH_QUERY_POSTGRES_PASSWORD" not in child
     assert "WALKTHROUGH_ADMIN_POSTGRES_PASSWORD" not in child
     cursor = RoleCursor()

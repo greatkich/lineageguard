@@ -76,6 +76,8 @@ class QueryEvidence:
     dataset_urn: str
     field_path: str
     sha256: str
+    owner_urns: tuple[str, ...]
+    ownership_type: OwnershipType
 
 
 @dataclass(frozen=True, slots=True)

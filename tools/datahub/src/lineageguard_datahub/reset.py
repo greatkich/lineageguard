@@ -123,6 +123,7 @@ def build_reset_plan(
                             "queryProperties",
                             "querySubjects",
                             "dataPlatformInstance",
+                            "ownership",
                             "status",
                         }
                     ):

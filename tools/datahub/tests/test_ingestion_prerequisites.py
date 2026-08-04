@@ -16,6 +16,7 @@ from support import (
     WAREHOUSE_TARGET,
     append_build_provenance,
     append_ingestion_receipts,
+    canonical_query_fingerprint,
     provenance_values,
 )
 
@@ -54,6 +55,7 @@ def test_ingestion_prerequisites_require_both_current_exact_ordered_receipts(
         "dbt_project_sha256": project,
         "artifact_metrics": artifacts,
         "snapshot_fingerprint": snapshot,
+        "query_fingerprint": canonical_query_fingerprint(repository_root),
     }
     postgres, dbt = RECIPE_DIGESTS
     assert not ingestion_prerequisite_failures(valid, **kwargs)
@@ -156,6 +158,7 @@ def test_later_failed_warehouse_or_dbt_attempt_invalidates_old_provenance(
         "dbt_project_sha256": project,
         "artifact_metrics": artifacts,
         "snapshot_fingerprint": snapshot,
+        "query_fingerprint": canonical_query_fingerprint(repository_root),
     }
     warehouse = next(item for item in valid if item.operation_kind == "warehouse")
     warehouse_failure = OperationReceipt.create(

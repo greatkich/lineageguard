@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from pathlib import Path
 
+from lineageguard_datahub.expected_graph import load_expected_graph
 from lineageguard_datahub.ingestion import (
     DBT_ARTIFACT_VERIFICATION_FINGERPRINT,
     DBT_BUILD_COMMAND_FINGERPRINT,
@@ -15,6 +16,7 @@ from lineageguard_datahub.ingestion import (
     verify_dbt_ingestion_artifacts,
 )
 from lineageguard_datahub.provenance import datahub_target_metrics, registry_binding_metrics
+from lineageguard_datahub.query_history import plan_query_execution
 from lineageguard_datahub.receipts import MetricValue, OperationReceipt, ReceiptStatus, ReceiptStore
 
 SCENARIO = "canonical-customer-id-rename"
@@ -46,6 +48,13 @@ def provenance_values(
         dbt_artifact_metrics(artifacts),
         ingestion_snapshot_fingerprint(build_ingestion_plan(root), artifacts),
     )
+
+
+def canonical_query_fingerprint(root: Path) -> str:
+    graph = load_expected_graph(
+        root / "walkthrough/scenarios/canonical/expected-datahub-graph.json"
+    )
+    return plan_query_execution(root, graph.query_evidence[0]).normalized_fingerprint
 
 
 def full_target_metrics(
@@ -147,6 +156,16 @@ def append_ingestion_receipts(
     hour_prefix: str = "2020-01-01T10",
 ) -> None:
     metrics = full_target_metrics(root, store.ownership_nonce)
+    query_fingerprint = canonical_query_fingerprint(root)
+    _append(
+        store,
+        operation_kind="query",
+        aspect_name="pg_stat_statements",
+        idempotency_key=query_fingerprint,
+        detail_code="PG_STAT_OBSERVED",
+        recorded_at=f"{hour_prefix}:{start_minute - 1:02d}:00+00:00",
+        metrics=registry_binding_metrics(store.ownership_nonce, WAREHOUSE_TARGET),
+    )
     for index, (relative, digest) in enumerate(RECIPE_DIGESTS.items()):
         _append(
             store,

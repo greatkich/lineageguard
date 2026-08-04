@@ -6,7 +6,7 @@ import json
 import os
 import subprocess
 import sys
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 import psycopg
@@ -14,8 +14,9 @@ from datahub.emitter.rest_emitter import DatahubRestEmitter
 from datahub.ingestion.graph.client import DatahubClientConfig, DataHubGraph
 
 from lineageguard_datahub.config import (
-    CANONICAL_TARGET_ATTESTATION,
+    CANONICAL_GMS_URL,
     ConfigurationError,
+    DataHubConfig,
     load_datahub_config,
     load_postgres_config,
     redact,
@@ -41,6 +42,7 @@ from lineageguard_datahub.ingestion import (
 )
 from lineageguard_datahub.live_query import (
     emit_live_query_evidence,
+    latest_pg_stat_receipt,
     reconcile_live_query_evidence,
 )
 from lineageguard_datahub.paths import canonical_manifest_path, repository_root
@@ -57,6 +59,14 @@ from lineageguard_datahub.receipts import (
 )
 from lineageguard_datahub.reset import build_reset_plan, execute_reset, reconcile_reset
 from lineageguard_datahub.seed import build_seed_plan, reconcile_seed_metadata, seed_metadata
+from lineageguard_datahub.target_attestation import (
+    TARGET_MARKER_URN,
+    TargetInstanceBinding,
+    TargetInstanceStateStore,
+    attest_target_instance,
+    complete_target_bootstrap,
+    prepare_target_bootstrap,
+)
 from lineageguard_datahub.verify import compare_observed_graph, observe_live, verify_query_files
 from lineageguard_datahub.warehouse import (
     apply_warehouse_rows,
@@ -68,6 +78,14 @@ from lineageguard_datahub.warehouse import (
 )
 
 DATAHUB_VERSION = "v1.6.0"
+
+
+@dataclass(frozen=True, slots=True)
+class AttestedDataHubTransport:
+    config: DataHubConfig
+    binding: TargetInstanceBinding
+    emitter: DatahubRestEmitter
+    client: DataHubGraph
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -99,6 +117,13 @@ def _parser() -> argparse.ArgumentParser:
     reconcile_live_query.add_argument("--confirm", help="must equal the exact scenario id")
     reconcile_reset_parser = subparsers.choices["reconcile-reset"]
     reconcile_reset_parser.add_argument("--confirm", help="must equal the exact scenario id")
+    bootstrap = subparsers.add_parser("bootstrap-target")
+    bootstrap.add_argument(
+        "--execute",
+        action="store_true",
+        help="create the one-time server-side target marker",
+    )
+    bootstrap.add_argument("--confirm", help="must equal the exact scenario id")
     subparsers.add_parser("verify")
     subparsers.add_parser("manifest")
     return parser
@@ -111,6 +136,70 @@ def _require_environment_gate() -> None:
 
 def _receipt_store(root: Path) -> ReceiptStore:
     return ReceiptStore(root / "walkthrough/.state/operations.jsonl")
+
+
+def _target_state_store(root: Path) -> TargetInstanceStateStore:
+    return TargetInstanceStateStore(root / "walkthrough/.state/datahub-target.json")
+
+
+def _read_attested_target(root: Path) -> TargetInstanceBinding:
+    config = load_datahub_config()
+    reader = DataHubGraph(DatahubClientConfig(server=config.server, token=config.token))
+    return attest_target_instance(
+        reader,
+        _target_state_store(root),
+        canonical_url=config.server,
+    )
+
+
+def _attested_transport(root: Path, *, ingest: bool = False) -> AttestedDataHubTransport:
+    binding = _read_attested_target(root)
+    config = load_datahub_config(ingest=ingest, write=not ingest)
+    if config.server != binding.canonical_url:
+        raise ConfigurationError("DATAHUB_ATTESTED_URL_MISMATCH")
+    emitter = DatahubRestEmitter(gms_server=config.server, token=config.token)
+    client = DataHubGraph(DatahubClientConfig(server=config.server, token=config.token))
+    return AttestedDataHubTransport(config, binding, emitter, client)
+
+
+def _bootstrap_target(execute: bool, confirmation: str | None, root: Path) -> dict[str, object]:
+    graph = load_expected_graph(canonical_manifest_path(root))
+    result: dict[str, object] = {
+        "executed": False,
+        "scenarioId": graph.scenario_id,
+        "canonicalGmsUrl": CANONICAL_GMS_URL,
+        "markerUrn": TARGET_MARKER_URN,
+    }
+    if not execute:
+        return result
+    _require_environment_gate()
+    if confirmation != graph.scenario_id:
+        raise RuntimeError("SCENARIO_CONFIRMATION_REQUIRED")
+    read_config = load_datahub_config()
+    reader = DataHubGraph(DatahubClientConfig(server=read_config.server, token=read_config.token))
+    state_store = _target_state_store(root)
+    plan = prepare_target_bootstrap(
+        reader,
+        state_store,
+        graph,
+        canonical_url=read_config.server,
+    )
+    if plan.already_bootstrapped:
+        result["alreadyBootstrapped"] = True
+        result["targetFingerprint"] = plan.binding.target_fingerprint
+        return result
+    bootstrap_config = load_datahub_config(bootstrap=True)
+    if bootstrap_config.server != plan.binding.canonical_url:
+        raise ConfigurationError("DATAHUB_BOOTSTRAP_URL_MISMATCH")
+    emitter = DatahubRestEmitter(
+        gms_server=bootstrap_config.server,
+        token=bootstrap_config.token,
+    )
+    binding = complete_target_bootstrap(emitter, reader, state_store, plan)
+    result["executed"] = True
+    result["alreadyBootstrapped"] = False
+    result["targetFingerprint"] = binding.target_fingerprint
+    return result
 
 
 def _run(command: list[str], *, cwd: Path, env: dict[str, str] | None = None) -> None:
@@ -445,6 +534,15 @@ def _query(execute: bool, root: Path) -> dict[str, object]:
                 ownership_nonce=nonce,
                 warehouse_target_fingerprint=config.target_fingerprint,
             )
+            artifacts = verify_dbt_ingestion_artifacts(root)
+            require_dbt_build_provenance(
+                store.read_all(),
+                scenario_id=graph.scenario_id,
+                ownership_nonce=nonce,
+                warehouse_target_fingerprint=config.target_fingerprint,
+                dbt_project_sha256=dbt_project_fingerprint(root),
+                artifact_metrics=dbt_artifact_metrics(artifacts),
+            )
             store.append(
                 OperationReceipt.create(
                     scenario_id=graph.scenario_id,
@@ -513,20 +611,20 @@ def _ingest(execute: bool, root: Path) -> dict[str, object]:
     if execute:
         _require_environment_gate()
         store = _receipt_store(root)
-        datahub_config = load_datahub_config(ingest=True)
+        transport = _attested_transport(root, ingest=True)
         artifacts = verify_dbt_ingestion_artifacts(root)
         artifact_metrics = dbt_artifact_metrics(artifacts)
         project_fingerprint = dbt_project_fingerprint(root)
         snapshot_fingerprint = ingestion_snapshot_fingerprint(recipes, artifacts)
         postgres_config = load_postgres_config(ingest_role=True)
-        child_env = ingestion_environment(datahub_config, postgres_config)
         nonce = store.ownership_nonce
+        graph = load_expected_graph(canonical_manifest_path(root))
         target_metrics: dict[str, int | float | str] = (
             datahub_target_metrics(
                 nonce,
                 postgres_config.target_fingerprint,
-                datahub_config.target_attestation or CANONICAL_TARGET_ATTESTATION,
-                datahub_config.target_fingerprint,
+                transport.binding.live_instance_id,
+                transport.binding.target_fingerprint,
             )
             | artifact_metrics
             | {
@@ -540,6 +638,10 @@ def _ingest(execute: bool, root: Path) -> dict[str, object]:
             if snapshot.fingerprint != snapshot_fingerprint:
                 raise ValueError("INGESTION_SNAPSHOT_FINGERPRINT_MISMATCH")
             for recipe in recipes:
+                current_binding = _read_attested_target(root)
+                if current_binding != transport.binding:
+                    raise ValueError("TARGET_INSTANCE_BINDING_CHANGED")
+                child_env = ingestion_environment(transport.config, postgres_config)
                 command = ["datahub", "ingest", "run", "-c", recipe.relative_path]
                 with store.scenario_operation("canonical-customer-id-rename", "ingest"):
                     with (
@@ -552,14 +654,24 @@ def _ingest(execute: bool, root: Path) -> dict[str, object]:
                             ownership_nonce=nonce,
                             warehouse_target_fingerprint=postgres_config.target_fingerprint,
                         )
-                    require_dbt_build_provenance(
-                        store.read_all(),
+                    current_receipts = store.read_all()
+                    current_dbt_artifacts = require_dbt_build_provenance(
+                        current_receipts,
                         scenario_id="canonical-customer-id-rename",
                         ownership_nonce=nonce,
                         warehouse_target_fingerprint=postgres_config.target_fingerprint,
                         dbt_project_sha256=project_fingerprint,
                         artifact_metrics=artifact_metrics,
                     )
+                    if recipe.path.name == "postgres-ingestion.yml":
+                        latest_pg_stat_receipt(
+                            graph,
+                            current_receipts,
+                            root,
+                            ownership_nonce=nonce,
+                            warehouse_target_fingerprint=postgres_config.target_fingerprint,
+                            after_index=current_dbt_artifacts.index,
+                        )
                     store.append(
                         OperationReceipt.create(
                             scenario_id="canonical-customer-id-rename",
@@ -607,31 +719,23 @@ def _ingest(execute: bool, root: Path) -> dict[str, object]:
                         )
                     )
                 if recipe.path.name == "postgres-ingestion.yml":
-                    graph = load_expected_graph(canonical_manifest_path(root))
-                    emitter = DatahubRestEmitter(
-                        gms_server=datahub_config.server, token=datahub_config.token
-                    )
-                    client = DataHubGraph(
-                        DatahubClientConfig(
-                            server=datahub_config.server, token=datahub_config.token
-                        )
-                    )
+                    current_binding = _read_attested_target(root)
+                    if current_binding != transport.binding:
+                        raise ValueError("TARGET_INSTANCE_BINDING_CHANGED")
                     with (
                         psycopg.connect(postgres_config.dsn) as connection,
                         connection.cursor() as cursor,
                     ):
                         live_query_upserts = emit_live_query_evidence(
-                            emitter,
-                            client,
+                            transport.emitter,
+                            transport.client,
                             store,
                             graph,
                             root,
                             cursor,
                             warehouse_target_fingerprint=postgres_config.target_fingerprint,
-                            target_attestation=(
-                                datahub_config.target_attestation or CANONICAL_TARGET_ATTESTATION
-                            ),
-                            target_fingerprint=datahub_config.target_fingerprint,
+                            target_attestation=transport.binding.live_instance_id,
+                            target_fingerprint=transport.binding.target_fingerprint,
                         )
     return {
         "executed": execute,
@@ -646,14 +750,17 @@ def _metadata_seed(execute: bool, root: Path) -> dict[str, object]:
     plan = build_seed_plan(graph, root)
     store = _receipt_store(root)
     nonce = store.ownership_nonce
-    target_attestation = os.environ.get("LINEAGEGUARD_DATAHUB_TARGET_ATTESTATION", "")
+    target_attestation = ""
     target_fingerprint = ""
     warehouse_target_fingerprint = ""
     prerequisite_errors: list[str] = []
     try:
-        read_config = load_datahub_config(write=False)
-        if target_attestation:
-            target_fingerprint = read_config.target_fingerprint
+        read_config = load_datahub_config()
+        binding = _target_state_store(root).load_required()
+        if binding.canonical_url != read_config.server:
+            raise ValueError("TARGET_STATE_URL_MISMATCH")
+        target_attestation = binding.live_instance_id
+        target_fingerprint = binding.target_fingerprint
         postgres_config = load_postgres_config()
         warehouse_target_fingerprint = postgres_config.target_fingerprint
         artifacts = verify_dbt_ingestion_artifacts(root)
@@ -675,6 +782,9 @@ def _metadata_seed(execute: bool, root: Path) -> dict[str, object]:
             dbt_project_sha256=project_fingerprint,
             artifact_metrics=artifact_metrics,
             snapshot_fingerprint=snapshot_fingerprint,
+            query_fingerprint=plan_query_execution(
+                root, graph.query_evidence[0]
+            ).normalized_fingerprint,
         )
     result: dict[str, object] = {
         "executed": execute,
@@ -686,25 +796,22 @@ def _metadata_seed(execute: bool, root: Path) -> dict[str, object]:
     }
     if execute:
         _require_environment_gate()
-        config = load_datahub_config(write=True)
+        transport = _attested_transport(root)
         postgres_config = load_postgres_config()
-        target_attestation = config.target_attestation or CANONICAL_TARGET_ATTESTATION
-        emitter = DatahubRestEmitter(gms_server=config.server, token=config.token)
-        client = DataHubGraph(DatahubClientConfig(server=config.server, token=config.token))
         with (
             psycopg.connect(postgres_config.dsn) as connection,
             connection.cursor() as cursor,
         ):
             receipt = seed_metadata(
-                emitter,
-                client,
+                transport.emitter,
+                transport.client,
                 store,
                 graph,
                 root,
                 cursor,
                 warehouse_target_fingerprint=postgres_config.target_fingerprint,
-                target_attestation=target_attestation,
-                target_fingerprint=config.target_fingerprint,
+                target_attestation=transport.binding.live_instance_id,
+                target_fingerprint=transport.binding.target_fingerprint,
             )
         result["emitted"] = receipt.emitted
         result["skipped"] = receipt.skipped
@@ -714,9 +821,13 @@ def _metadata_seed(execute: bool, root: Path) -> dict[str, object]:
 def _reset(execute: bool, confirmation: str | None, root: Path) -> dict[str, object]:
     graph = load_expected_graph(canonical_manifest_path(root))
     store = _receipt_store(root)
-    datahub_config = load_datahub_config(write=execute)
+    if execute and confirmation != graph.scenario_id:
+        raise RuntimeError("SCENARIO_CONFIRMATION_REQUIRED")
+    transport = _attested_transport(root) if execute else None
+    binding = (
+        transport.binding if transport is not None else _target_state_store(root).load_required()
+    )
     postgres_config = load_postgres_config()
-    target_attestation = datahub_config.target_attestation or CANONICAL_TARGET_ATTESTATION
     plan = build_reset_plan(
         graph,
         environment_gate=os.environ.get("LINEAGEGUARD_WALKTHROUGH_ENV"),
@@ -725,20 +836,15 @@ def _reset(execute: bool, confirmation: str | None, root: Path) -> dict[str, obj
         root=root,
         ownership_nonce=store.ownership_nonce,
         warehouse_target_fingerprint=postgres_config.target_fingerprint,
-        target_attestation=target_attestation,
-        target_fingerprint=datahub_config.target_fingerprint,
+        target_attestation=binding.live_instance_id,
+        target_fingerprint=binding.target_fingerprint,
     )
-    if execute and confirmation != graph.scenario_id:
-        raise RuntimeError("SCENARIO_CONFIRMATION_REQUIRED")
-    if execute:
-        client = DataHubGraph(
-            DatahubClientConfig(server=datahub_config.server, token=datahub_config.token)
-        )
+    if transport is not None:
         with (
             psycopg.connect(postgres_config.dsn) as connection,
             connection.cursor() as cursor,
         ):
-            execute_reset(client, client, store, plan, cursor)
+            execute_reset(transport.client, transport.client, store, plan, cursor)
     return {"executed": execute, "scenarioId": graph.scenario_id, "urns": list(plan.urns)}
 
 
@@ -750,20 +856,19 @@ def _reconcile_seed(execute: bool, confirmation: str | None, root: Path) -> dict
     _require_environment_gate()
     if confirmation != graph.scenario_id:
         raise RuntimeError("SCENARIO_CONFIRMATION_REQUIRED")
-    config = load_datahub_config(write=True)
+    transport = _attested_transport(root)
     postgres_config = load_postgres_config()
     store = _receipt_store(root)
-    client = DataHubGraph(DatahubClientConfig(server=config.server, token=config.token))
     with psycopg.connect(postgres_config.dsn) as connection, connection.cursor() as cursor:
         result["reconciled"] = reconcile_seed_metadata(
-            client,
+            transport.client,
             store,
             graph,
             root,
             cursor,
             warehouse_target_fingerprint=postgres_config.target_fingerprint,
-            target_attestation=config.target_attestation or CANONICAL_TARGET_ATTESTATION,
-            target_fingerprint=config.target_fingerprint,
+            target_attestation=transport.binding.live_instance_id,
+            target_fingerprint=transport.binding.target_fingerprint,
         )
     return result
 
@@ -776,20 +881,19 @@ def _reconcile_live_query(execute: bool, confirmation: str | None, root: Path) -
     _require_environment_gate()
     if confirmation != graph.scenario_id:
         raise RuntimeError("SCENARIO_CONFIRMATION_REQUIRED")
-    config = load_datahub_config(ingest=True)
+    transport = _attested_transport(root, ingest=True)
     postgres_config = load_postgres_config(ingest_role=True)
     store = _receipt_store(root)
-    client = DataHubGraph(DatahubClientConfig(server=config.server, token=config.token))
     with psycopg.connect(postgres_config.dsn) as connection, connection.cursor() as cursor:
         result["reconciled"] = reconcile_live_query_evidence(
-            client,
+            transport.client,
             store,
             graph,
             root,
             cursor,
             warehouse_target_fingerprint=postgres_config.target_fingerprint,
-            target_attestation=config.target_attestation or CANONICAL_TARGET_ATTESTATION,
-            target_fingerprint=config.target_fingerprint,
+            target_attestation=transport.binding.live_instance_id,
+            target_fingerprint=transport.binding.target_fingerprint,
         )
     return result
 
@@ -802,10 +906,9 @@ def _reconcile_reset(execute: bool, confirmation: str | None, root: Path) -> dic
     _require_environment_gate()
     if confirmation != graph.scenario_id:
         raise RuntimeError("SCENARIO_CONFIRMATION_REQUIRED")
-    datahub_config = load_datahub_config(write=True)
+    transport = _attested_transport(root)
     postgres_config = load_postgres_config()
     store = _receipt_store(root)
-    target_attestation = datahub_config.target_attestation or CANONICAL_TARGET_ATTESTATION
     plan = build_reset_plan(
         graph,
         environment_gate=os.environ.get("LINEAGEGUARD_WALKTHROUGH_ENV"),
@@ -814,23 +917,24 @@ def _reconcile_reset(execute: bool, confirmation: str | None, root: Path) -> dic
         root=root,
         ownership_nonce=store.ownership_nonce,
         warehouse_target_fingerprint=postgres_config.target_fingerprint,
-        target_attestation=target_attestation,
-        target_fingerprint=datahub_config.target_fingerprint,
-    )
-    client = DataHubGraph(
-        DatahubClientConfig(server=datahub_config.server, token=datahub_config.token)
+        target_attestation=transport.binding.live_instance_id,
+        target_fingerprint=transport.binding.target_fingerprint,
     )
     with psycopg.connect(postgres_config.dsn) as connection, connection.cursor() as cursor:
-        result["reconciled"] = reconcile_reset(client, store, plan, cursor)
+        result["reconciled"] = reconcile_reset(transport.client, store, plan, cursor)
     return result
 
 
 def _verify(root: Path) -> tuple[dict[str, object], bool]:
     graph = load_expected_graph(canonical_manifest_path(root))
     verify_query_files(graph, root)
-    config = load_datahub_config(write=False)
-    if config.target_attestation != CANONICAL_TARGET_ATTESTATION:
-        raise ConfigurationError("DATAHUB_TARGET_ATTESTATION_REQUIRED")
+    config = load_datahub_config()
+    client = DataHubGraph(DatahubClientConfig(server=config.server, token=config.token))
+    binding = attest_target_instance(
+        client,
+        _target_state_store(root),
+        canonical_url=config.server,
+    )
     postgres_config = load_postgres_config(ingest_role=True)
     store = _receipt_store(root)
     nonce = store.ownership_nonce
@@ -844,15 +948,14 @@ def _verify(root: Path) -> tuple[dict[str, object], bool]:
     artifact_metrics = dbt_artifact_metrics(artifacts)
     project_fingerprint = dbt_project_fingerprint(root)
     snapshot_fingerprint = ingestion_snapshot_fingerprint(build_ingestion_plan(root), artifacts)
-    client = DataHubGraph(DatahubClientConfig(server=config.server, token=config.token))
     report = compare_observed_graph(
         graph,
         observe_live(client, graph),
         store.read_all(),
         ownership_nonce=nonce,
         warehouse_target_fingerprint=postgres_config.target_fingerprint,
-        target_attestation=config.target_attestation,
-        target_fingerprint=config.target_fingerprint,
+        target_attestation=binding.live_instance_id,
+        target_fingerprint=binding.target_fingerprint,
         dbt_project_sha256=project_fingerprint,
         artifact_metrics=artifact_metrics,
         snapshot_fingerprint=snapshot_fingerprint,
@@ -899,6 +1002,8 @@ def main(argv: list[str] | None = None) -> int:
             output = _reconcile_live_query(arguments.execute, arguments.confirm, root)
         elif arguments.command == "reconcile-reset":
             output = _reconcile_reset(arguments.execute, arguments.confirm, root)
+        elif arguments.command == "bootstrap-target":
+            output = _bootstrap_target(arguments.execute, arguments.confirm, root)
         elif arguments.command == "verify":
             output, ok = _verify(root)
         else:
@@ -917,6 +1022,7 @@ def main(argv: list[str] | None = None) -> int:
             os.environ.get("DATAHUB_READ_TOKEN"),
             os.environ.get("DATAHUB_MUTATION_TOKEN"),
             os.environ.get("DATAHUB_INGEST_TOKEN"),
+            os.environ.get("DATAHUB_BOOTSTRAP_TOKEN"),
             os.environ.get("WALKTHROUGH_POSTGRES_PASSWORD"),
             os.environ.get("WALKTHROUGH_QUERY_POSTGRES_PASSWORD"),
             os.environ.get("WALKTHROUGH_INGEST_POSTGRES_PASSWORD"),

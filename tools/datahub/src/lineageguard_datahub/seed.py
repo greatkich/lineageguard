@@ -48,6 +48,7 @@ from lineageguard_datahub.ingestion import (
 from lineageguard_datahub.lineage import edges_by_downstream
 from lineageguard_datahub.models import EntityType, ExpectedGraph, Granularity, GraphNode
 from lineageguard_datahub.provenance import datahub_target_metrics
+from lineageguard_datahub.query_history import plan_query_execution
 from lineageguard_datahub.receipts import (
     OperationReceipt,
     ReceiptStatus,
@@ -420,6 +421,9 @@ def _seed_metadata_under_lock(
         dbt_project_sha256=project_fingerprint,
         artifact_metrics=artifact_metrics,
         snapshot_fingerprint=snapshot_fingerprint,
+        query_fingerprint=plan_query_execution(
+            root, graph.query_evidence[0]
+        ).normalized_fingerprint,
     )
     plan = build_seed_plan(graph, root, nonce)
     target_metrics: dict[str, int | float | str] = (

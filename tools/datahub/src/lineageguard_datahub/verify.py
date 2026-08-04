@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from contextlib import suppress
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
@@ -28,12 +29,23 @@ from datahub.metadata.schema_classes import (
     UpstreamLineageClass,
 )
 
-from lineageguard_datahub.ingestion import RECIPE_DIGESTS, ingestion_prerequisite_failures
+from lineageguard_datahub.ingestion import (
+    RECIPE_DIGESTS,
+    ingestion_prerequisite_failures,
+    require_dbt_build_provenance,
+)
 from lineageguard_datahub.models import ExpectedGraph, Granularity
 from lineageguard_datahub.paths import resolve_checked_file
 from lineageguard_datahub.provenance import receipt_has_registry_binding
 from lineageguard_datahub.query_history import normalized_sql_fingerprint
-from lineageguard_datahub.receipts import MetricValue, OperationReceipt, ReceiptStatus
+from lineageguard_datahub.receipts import (
+    ExactOperationIdentity,
+    MetricValue,
+    OperationReceipt,
+    ReceiptStatus,
+    ResolvedOperationReceipt,
+    resolve_latest_exact_operation,
+)
 
 Aspect = TypeVar("Aspect", bound=_Aspect)
 
@@ -128,10 +140,19 @@ def expected_observation(graph: ExpectedGraph) -> ObservedGraph:
             if edge.granularity is Granularity.FIELD
         ),
         ownership=frozenset(
-            (node.urn, owner_urn, node.ownership_type.value)
-            for node in graph.nodes
-            if node.ownership_type is not None
-            for owner_urn in node.owner_urns
+            {
+                *(
+                    (node.urn, owner_urn, node.ownership_type.value)
+                    for node in graph.nodes
+                    if node.ownership_type is not None
+                    for owner_urn in node.owner_urns
+                ),
+                *(
+                    (query.query_urn, owner_urn, query.ownership_type.value)
+                    for query in graph.query_evidence
+                    for owner_urn in query.owner_urns
+                ),
+            }
         ),
         tags=frozenset((node.urn, tag_urn) for node in graph.nodes for tag_urn in node.tag_urns),
         glossary_terms=frozenset(
@@ -195,50 +216,6 @@ def _receipt_failures(
     artifact_metrics: dict[str, MetricValue],
     snapshot_fingerprint: str,
 ) -> tuple[VerificationFailure, ...]:
-    query_receipts = [
-        receipt
-        for receipt in receipts
-        if receipt.scenario_id == graph.scenario_id
-        and receipt.operation_kind == "query"
-        and receipt.status is ReceiptStatus.SUCCESS
-        and receipt.detail_code == "PG_STAT_OBSERVED"
-    ]
-    postgres_ingest_receipts = [
-        receipt
-        for receipt in receipts
-        if receipt.scenario_id == graph.scenario_id
-        and receipt.operation_kind == "ingest"
-        and receipt.status is ReceiptStatus.SUCCESS
-        and receipt.aspect_name == "walkthrough/metadata/postgres-ingestion.yml"
-        and receipt.idempotency_key == RECIPE_DIGESTS["walkthrough/metadata/postgres-ingestion.yml"]
-        and receipt.proposal_hash == RECIPE_DIGESTS["walkthrough/metadata/postgres-ingestion.yml"]
-        and receipt.metrics.get("targetAttestation") == target_attestation
-        and receipt.metrics.get("targetFingerprint") == target_fingerprint
-    ]
-    live_query_candidates = [
-        receipt
-        for receipt in receipts
-        if receipt.scenario_id == graph.scenario_id
-        and receipt.operation_kind == "ingest-query"
-        and (
-            (
-                receipt.status is ReceiptStatus.SUCCESS
-                and receipt.detail_code == "LIVE_QUERY_EMITTED"
-            )
-            or (
-                receipt.status is ReceiptStatus.SKIPPED
-                and receipt.detail_code == "ASPECT_SKIPPED_EXACT"
-            )
-        )
-    ]
-    latest_live_by_aspect: dict[str, OperationReceipt] = {}
-    for receipt in live_query_candidates:
-        if receipt.aspect_name is None:
-            continue
-        current = latest_live_by_aspect.get(receipt.aspect_name)
-        if current is None or receipt.recorded_at > current.recorded_at:
-            latest_live_by_aspect[receipt.aspect_name] = receipt
-    live_query_receipts = list(latest_live_by_aspect.values())
     failures = [
         VerificationFailure(item.split(":", 1)[0], item)
         for item in ingestion_prerequisite_failures(
@@ -251,49 +228,156 @@ def _receipt_failures(
             dbt_project_sha256=dbt_project_sha256,
             artifact_metrics=artifact_metrics,
             snapshot_fingerprint=snapshot_fingerprint,
+            query_fingerprint=normalized_sql_fingerprint_from_file(graph, graph.query_evidence[0]),
             require_seed_after=True,
         )
     ]
-    if not query_receipts:
-        failures.append(VerificationFailure("PG_STAT_RECEIPT_MISSING", "query"))
-    else:
-        latest = max(query_receipts, key=lambda item: item.recorded_at)
-        query = graph.query_evidence[0]
+    dbt_operation: ResolvedOperationReceipt | None = None
+    with suppress(ValueError):
+        dbt_operation = require_dbt_build_provenance(
+            receipts,
+            scenario_id=graph.scenario_id,
+            ownership_nonce=ownership_nonce,
+            warehouse_target_fingerprint=warehouse_target_fingerprint,
+            dbt_project_sha256=dbt_project_sha256,
+            artifact_metrics=artifact_metrics,
+        )
+    query = graph.query_evidence[0]
+    query_fingerprint = normalized_sql_fingerprint_from_file(graph, query)
+    query_operation: ResolvedOperationReceipt | None = None
+    try:
+        query_operation = resolve_latest_exact_operation(
+            receipts,
+            ExactOperationIdentity(
+                scenario_id=graph.scenario_id,
+                operation_kind="query",
+                entity_urn=None,
+                aspect_name="pg_stat_statements",
+                idempotency_key=query_fingerprint,
+                proposal_hash=query_fingerprint,
+            ),
+            expected_outcomes=frozenset({(ReceiptStatus.SUCCESS, "PG_STAT_OBSERVED")}),
+            error_prefix="PG_STAT_RECEIPT",
+        )
+    except ValueError as error:
+        code = (
+            "PG_STAT_RECEIPT_MISSING"
+            if str(error).endswith("_MISSING")
+            else "PG_STAT_RECEIPT_NOT_CURRENT"
+        )
+        failures.append(VerificationFailure(code, "query"))
+    if query_operation is not None:
+        latest_query = query_operation.receipt
+        if dbt_operation is not None and query_operation.index <= dbt_operation.index:
+            failures.append(
+                VerificationFailure("PG_STAT_RECEIPT_PRECEDES_CURRENT_DBT_ARTIFACTS", "order")
+            )
         if (
-            latest.idempotency_key != normalized_sql_fingerprint_from_file(graph, query)
-            or latest.proposal_hash != latest.idempotency_key
-            or latest.metrics.get("normalizedFingerprint") != latest.idempotency_key
-            or latest.metrics.get("statementSha256") != query.sha256
-            or not latest.metrics.get("queryId")
-            or not latest.metrics.get("databaseId")
-            or not latest.metrics.get("userId")
+            latest_query.metrics.get("normalizedFingerprint") != latest_query.idempotency_key
+            or latest_query.metrics.get("statementSha256") != query.sha256
+            or not latest_query.metrics.get("queryId")
+            or not latest_query.metrics.get("databaseId")
+            or not latest_query.metrics.get("userId")
             or not receipt_has_registry_binding(
-                latest,
+                latest_query,
                 ownership_nonce=ownership_nonce,
                 warehouse_target_fingerprint=warehouse_target_fingerprint,
             )
         ):
             failures.append(VerificationFailure("PG_STAT_RECEIPT_BINDING_INVALID", "query"))
-        if int(latest.metrics.get("executionCount", 0)) < 1:
+        if int(latest_query.metrics.get("executionCount", 0)) < 1:
             failures.append(VerificationFailure("PG_STAT_COUNT_INVALID", "executionCount"))
-        if float(latest.metrics.get("totalExecTimeMs", -1)) < 0:
+        if float(latest_query.metrics.get("totalExecTimeMs", -1)) < 0:
             failures.append(VerificationFailure("PG_STAT_TIME_INVALID", "totalExecTimeMs"))
-    if not postgres_ingest_receipts:
-        failures.append(VerificationFailure("POSTGRES_INGEST_RECEIPT_MISSING", "ingest"))
-    elif query_receipts:
-        latest_query = max(query_receipts, key=lambda item: item.recorded_at)
-        latest_ingest = max(postgres_ingest_receipts, key=lambda item: item.recorded_at)
-        if datetime.fromisoformat(latest_ingest.recorded_at) < datetime.fromisoformat(
-            latest_query.recorded_at
+    recipe_path = "walkthrough/metadata/postgres-ingestion.yml"
+    recipe_digest = RECIPE_DIGESTS[recipe_path]
+    postgres_operation: ResolvedOperationReceipt | None = None
+    try:
+        postgres_operation = resolve_latest_exact_operation(
+            receipts,
+            ExactOperationIdentity(
+                scenario_id=graph.scenario_id,
+                operation_kind="ingest",
+                entity_urn=None,
+                aspect_name=recipe_path,
+                idempotency_key=recipe_digest,
+                proposal_hash=recipe_digest,
+            ),
+            expected_outcomes=frozenset({(ReceiptStatus.SUCCESS, "INGESTED")}),
+            error_prefix="POSTGRES_INGEST_RECEIPT",
+        )
+    except ValueError as error:
+        code = (
+            "POSTGRES_INGEST_RECEIPT_MISSING"
+            if str(error).endswith("_MISSING")
+            else "POSTGRES_INGEST_RECEIPT_NOT_CURRENT"
+        )
+        failures.append(VerificationFailure(code, "ingest"))
+    if postgres_operation is not None:
+        postgres_receipt = postgres_operation.receipt
+        if (
+            postgres_receipt.metrics.get("targetAttestation") != target_attestation
+            or postgres_receipt.metrics.get("targetFingerprint") != target_fingerprint
         ):
+            failures.append(VerificationFailure("POSTGRES_INGEST_TARGET_MISMATCH", "ingest"))
+        if query_operation is not None and postgres_operation.index <= query_operation.index:
             failures.append(VerificationFailure("POSTGRES_INGEST_PRECEDES_QUERY", "order"))
     required_query_aspects = {
         "queryProperties",
         "querySubjects",
         "dataPlatformInstance",
+        "ownership",
         "queryUsageStatistics",
     }
     signal = signals[0] if len(signals) == 1 else None
+    live_query_operations: list[ResolvedOperationReceipt] = []
+    if signal is not None:
+        for aspect_name, idempotency_key in signal.aspect_keys:
+            try:
+                live_query_operations.append(
+                    resolve_latest_exact_operation(
+                        receipts,
+                        ExactOperationIdentity(
+                            scenario_id=graph.scenario_id,
+                            operation_kind="ingest-query",
+                            entity_urn=signal.urn,
+                            aspect_name=aspect_name,
+                            idempotency_key=idempotency_key,
+                            proposal_hash=idempotency_key,
+                        ),
+                        expected_outcomes=frozenset(
+                            {
+                                (ReceiptStatus.SUCCESS, "LIVE_QUERY_EMITTED"),
+                                (ReceiptStatus.SKIPPED, "ASPECT_SKIPPED_EXACT"),
+                            }
+                        ),
+                        error_prefix="LIVE_QUERY_RECEIPT",
+                    )
+                )
+            except ValueError:
+                latest_for_aspect = next(
+                    (
+                        receipt
+                        for receipt in reversed(receipts)
+                        if receipt.scenario_id == graph.scenario_id
+                        and receipt.operation_kind == "ingest-query"
+                        and receipt.aspect_name == aspect_name
+                    ),
+                    None,
+                )
+                if latest_for_aspect is None:
+                    code = "LIVE_QUERY_INGEST_RECEIPTS_MISSING"
+                elif latest_for_aspect.entity_urn != signal.urn:
+                    code = "LIVE_QUERY_RECEIPT_URN_MISMATCH"
+                elif (
+                    latest_for_aspect.idempotency_key != idempotency_key
+                    or latest_for_aspect.proposal_hash != idempotency_key
+                ):
+                    code = "LIVE_QUERY_RECEIPT_KEY_MISMATCH"
+                else:
+                    code = "LIVE_QUERY_RECEIPT_NOT_CURRENT"
+                failures.append(VerificationFailure(code, aspect_name))
+    live_query_receipts = [operation.receipt for operation in live_query_operations]
     receipt_aspects = {item.aspect_name for item in live_query_receipts}
     if not required_query_aspects <= receipt_aspects:
         failures.append(
@@ -302,8 +386,8 @@ def _receipt_failures(
                 ", ".join(sorted(required_query_aspects - receipt_aspects)),
             )
         )
-    if signal is not None and query_receipts:
-        latest_query = max(query_receipts, key=lambda item: item.recorded_at)
+    if signal is not None and query_operation is not None:
+        latest_query = query_operation.receipt
         expected_keys = dict(signal.aspect_keys)
         for item in live_query_receipts:
             if item.entity_urn != signal.urn:
@@ -354,12 +438,13 @@ def _receipt_failures(
             failures.append(VerificationFailure("LIVE_QUERY_COUNT_MISMATCH", signal.urn))
         if signal.observation_timestamp_ms != expected_ms:
             failures.append(VerificationFailure("LIVE_QUERY_TIMESTAMP_MISMATCH", signal.urn))
-        for item in live_query_receipts:
-            if datetime.fromisoformat(item.recorded_at) < datetime.fromisoformat(
-                latest_query.recorded_at
-            ):
+        for operation in live_query_operations:
+            if postgres_operation is not None and operation.index <= postgres_operation.index:
                 failures.append(
-                    VerificationFailure("LIVE_QUERY_RECEIPT_STALE", str(item.aspect_name))
+                    VerificationFailure(
+                        "LIVE_QUERY_RECEIPT_STALE",
+                        str(operation.receipt.aspect_name),
+                    )
                 )
     return tuple(failures)
 
@@ -563,16 +648,26 @@ def observe_live(reader: GraphReader, graph: ExpectedGraph) -> ObservedGraph:
         properties = reader.get_aspect(urn, QueryPropertiesClass)
         subjects = reader.get_aspect(urn, QuerySubjectsClass)
         instance = reader.get_aspect(urn, DataPlatformInstanceClass)
+        query_ownership = reader.get_aspect(urn, OwnershipClass)
+        if query_ownership is not None:
+            ownership.update(
+                (urn, owner.owner, str(owner.type)) for owner in query_ownership.owners
+            )
         usage = reader.get_timeseries_values(urn, QueryUsageStatisticsClass, {}, limit=10)
         if properties is not None and subjects is not None and instance is not None and usage:
             latest_usage = max(usage, key=lambda item: item.timestampMillis)
             from datahub.emitter.mcp import MetadataChangeProposalWrapper
 
             status = reader.get_aspect(urn, StatusClass)
+            static_aspects = (
+                (properties, subjects, instance)
+                if query_ownership is None
+                else (properties, subjects, instance, query_ownership)
+            )
             aspects = (
-                (properties, subjects, instance, latest_usage)
+                (*static_aspects, latest_usage)
                 if status is None
-                else (properties, subjects, instance, status, latest_usage)
+                else (*static_aspects, status, latest_usage)
             )
             aspect_keys = tuple(
                 (
