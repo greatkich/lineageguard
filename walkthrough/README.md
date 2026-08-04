@@ -29,6 +29,7 @@ Inspect every planned external action without executing it:
 ```bash
 uv run --project tools/datahub lineageguard-datahub quickstart
 uv run --project tools/datahub lineageguard-datahub warehouse-seed
+uv run --project tools/datahub lineageguard-datahub dbt-build
 uv run --project tools/datahub lineageguard-datahub query
 uv run --project tools/datahub lineageguard-datahub ingest
 uv run --project tools/datahub lineageguard-datahub metadata-seed
@@ -43,15 +44,16 @@ ownership nonce read back from the server. A manifest or public marker never aut
 overwrite. An exact pre-existing entity is skipped without becoming a reset target; any differing
 pre-existing entity is refused unless its creation provenance is already protected by this tool.
 
-Metadata mutation targets must use loopback addresses and the exact canonical target attestation;
-the tool denies metadata seed/reset against remote DataHub. Remote connector ingestion remains a
-separate operation requiring HTTPS and an explicit ingestion opt-in. Remote PostgreSQL requires
-`sslmode=verify-full` and its own opt-in. DataHub read, mutation, and ingestion tokens are separate
-variables. PostgreSQL bootstrap admin, fixed `lineageguard_seed`, fixed `lineageguard_query`, fixed
-`lineageguard_ingest`, and fixed `lineageguard_dbt` credentials are separate; the query and ingestion
-LOGIN roles only inherit the NOLOGIN `lineageguard_reader` group. The seed LOGIN receives only
-SELECT/INSERT on `commerce.orders`. The dbt LOGIN receives SELECT on that source plus CREATE only in
-the `analytics` and `fraud` schemas. Secret fields are never included in configuration
+Metadata mutation and connector-ingestion targets must use a numeric loopback address and the exact
+canonical target attestation; the tool denies both operations against remote DataHub. Remote
+PostgreSQL requires `sslmode=verify-full` and its own opt-in. DataHub read, mutation, and ingestion
+tokens are separate variables and must contain distinct non-empty values. PostgreSQL bootstrap
+admin, fixed `lineageguard_seed`, fixed `lineageguard_query`, fixed `lineageguard_ingest`, and fixed
+`lineageguard_dbt` credentials are separate; the query and ingestion LOGIN roles inherit separate
+NOLOGIN groups. The query role can select only `analytics.customer_revenue`; the ingestion role can
+select all four canonical relations. Neither inherits `pg_read_all_stats`. The seed LOGIN receives
+only SELECT/INSERT on `commerce.orders`. The dbt LOGIN receives SELECT on that source plus CREATE
+only in the `analytics` and `fraud` schemas. Secret fields are never included in configuration
 representations, receipts, or ingestion subprocess environments.
 
 The PostgreSQL service must preload `pg_stat_statements`; the first seed file creates the extension
@@ -75,26 +77,27 @@ After PostgreSQL is available, the canonical live sequence is:
 
 ```bash
 uv run --project tools/datahub lineageguard-datahub warehouse-seed --execute
-uv run --project tools/datahub dbt build --project-dir walkthrough/dbt --profiles-dir walkthrough/dbt
-uv run --project tools/datahub dbt docs generate --project-dir walkthrough/dbt --profiles-dir walkthrough/dbt
+uv run --project tools/datahub lineageguard-datahub dbt-build --execute
 uv run --project tools/datahub lineageguard-datahub query --execute
 uv run --project tools/datahub lineageguard-datahub ingest --execute
 uv run --project tools/datahub lineageguard-datahub metadata-seed --execute
 uv run --project tools/datahub lineageguard-datahub verify
 ```
 
-The build followed by `dbt docs generate` is the exact supported artifact sequence. Ingestion fails
-closed unless the clean target contains a successful `manifest.json`, `run_results.json`, and
-`catalog.json` covering all three canonical dbt models.
+`dbt-build` invokes build followed by docs generation against a fresh private copy of the exact
+digest-pinned project, verifies all three canonical relations, and publishes the three captured
+artifacts atomically. Ingestion runs the external CLI only against a separate owner-only snapshot of
+both recipes and those exact `manifest.json`, `run_results.json`, and `catalog.json` bytes.
 
 The PostgreSQL and dbt connectors own the four Dataset entities and their base schema metadata.
 `metadata-seed` runs only after those connectors and adds controlled ownership, tag, glossary, and
 exact canonical lineage overlays; it never replaces connector-owned DatasetProperties or
 SchemaMetadata. PostgreSQL query/view lineage and dbt column lineage are disabled in the pinned
 recipes so they cannot compete with those overlays. If a connector still returns an allowlisted
-UpstreamLineage aspect, the seed reconciles that aspect to the exact canonical edge set without
-byte-comparing connector audit fields. Repeating connector ingestion and metadata seeding preserves
-both connector schema and controlled overlays. Reset therefore deletes only immutable, namespaced
+UpstreamLineage aspect that differs from the exact canonical edge set, the seed stops with a
+reconciliation conflict and never overwrites the connector's unrelated edges. Repeating connector
+ingestion and metadata seeding preserves both connector schema and controlled overlays. Reset
+therefore deletes only immutable, namespaced
 entities created by this tool and never deletes connector-owned Dataset URNs.
 
 `metadata-seed` does not emit a MANUAL Query. The pinned PostgreSQL recipe is restricted to exactly
@@ -110,7 +113,9 @@ id/count/time, recipe digest, proposal keys, and ordered receipts all agree.
 MANUAL Query examples may remain in committed replay fixtures, but are never emitted or accepted by
 the LIVE path. DataHub 1.6 does not support the `Ownership` aspect on Query entities, so the tool
 does not claim query ownership or encode a custom owner substitute. Official Ownership is verified
-on the Finance revenue/dashboard and Risk ML assets.
+on the Finance revenue/dashboard and Risk ML assets. The canonical manifest fixes the Finance
+dashboard edge as `BUSINESS_OWNER` and the fraud model edge as `TECHNICAL_OWNER`; changing either
+type is contract drift.
 
 Reset only LineageGuard-owned DataHub entities:
 
@@ -131,8 +136,20 @@ validated, chained with HMAC, and bound to a separate `0600` local ownership sta
 manifest or unit test is not a live DataHub receipt; live verification must be observed separately
 against the pinned server.
 
-`metadata-seed --execute` requires current successful receipts for both exact pinned connector
-recipes, in PostgreSQL-then-dbt order and bound to the same canonical target attestation. `verify`
-also requires those receipts and a later successful metadata overlay. Reset uses DataHub's soft
+One owner lock covers preflight, external mutation, and the terminal receipt. An interrupted seed,
+live-query upsert, or reset blocks further scenario operations until an explicit live-state
+reconciliation succeeds:
+
+```bash
+uv run --project tools/datahub lineageguard-datahub reconcile-seed --execute --confirm canonical-customer-id-rename
+uv run --project tools/datahub lineageguard-datahub reconcile-live-query --execute --confirm canonical-customer-id-rename
+uv run --project tools/datahub lineageguard-datahub reconcile-reset --execute --confirm canonical-customer-id-rename
+```
+
+`metadata-seed --execute` requires a registry-bound warehouse receipt, the exact ordered dbt command
+and three-artifact receipts, and current successful receipts for both captured connector recipes in
+PostgreSQL-then-dbt order. Every receipt is bound to the private scenario nonce and non-secret
+PostgreSQL/DataHub target fingerprints. `verify` also requires those receipts and a later successful
+metadata overlay. Reset uses DataHub's soft
 delete; verification rejects `Status.removed=true`, while a later seed may emit `removed=false` only
 for an entity whose private creation receipt and retained server-side ownership marker both match.
