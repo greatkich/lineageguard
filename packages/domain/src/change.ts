@@ -65,6 +65,7 @@ export const proposedChangeSchema = z
   .object({
     id: z.string().regex(/^chg_[a-f0-9]{24}$/),
     fingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+    sourcePatchFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
     source: z.enum(["GITHUB", "FIXTURE"]),
     repository: repositorySchema,
     baseSha: shaSchema,
@@ -76,7 +77,32 @@ export const proposedChangeSchema = z
     after: z.object({ field: z.literal("buyer_id") }).strict(),
     files: z.array(safeRepositoryPathSchema).min(1).max(20),
   })
-  .strict();
+  .strict()
+  .superRefine((change, refinement) => {
+    const identity = {
+      source: change.source,
+      repository: change.repository,
+      baseSha: change.baseSha.toLowerCase(),
+      headSha: change.headSha.toLowerCase(),
+      datasetRef: change.datasetRef,
+      operation: change.operation,
+      field: change.field,
+      before: change.before,
+      after: change.after,
+      files: [...change.files].sort(),
+      sourcePatchFingerprint: change.sourcePatchFingerprint,
+    };
+    if (change.fingerprint !== sha256(identity)) {
+      refinement.addIssue({
+        code: "custom",
+        message: "Change fingerprint is invalid",
+        path: ["fingerprint"],
+      });
+    }
+    if (change.id !== stableId("chg", identity)) {
+      refinement.addIssue({ code: "custom", message: "Change ID is invalid", path: ["id"] });
+    }
+  });
 
 export type ProposedChange = z.infer<typeof proposedChangeSchema>;
 
@@ -109,23 +135,33 @@ const canonicalSqlPattern =
 const canonicalSqlStatementPattern =
   /\bALTER\s+TABLE\s+commerce\.orders\s+RENAME\s+COLUMN\s+customer_id\s+TO\s+buyer_id\s*;/gi;
 const anyRenamePattern = /\bALTER\s+TABLE\b[\s\S]*?\bRENAME\s+COLUMN\b/gi;
-const diffHeaderPattern =
-  /^diff --git a\/(.+) b\/(.+)\n--- a\/(.+)\n\+\+\+ b\/(.+)\n@@[^\n]*@@\n([\s\S]+)$/;
+const canonicalMigrationPathPattern = /^walkthrough\/migrations\/[A-Za-z0-9._-]+\.sql$/;
+const canonicalModelPathPattern = /^walkthrough\/models\/[A-Za-z0-9_./-]+\.sql$/;
+const fullDiffPattern =
+  /^diff --git a\/(.+) b\/(.+)\n(?:index [a-f0-9]+\.\.[a-f0-9]+(?: [0-7]{6})?\n)?--- a\/(.+)\n\+\+\+ b\/(.+)\n(@@[^\n]*@@\n[\s\S]+)$/;
+const hunkPattern = /^@@[^\n]*@@\n[\s\S]+$/;
 
-function isCanonicalSqlPatch(patch: string): boolean {
-  return canonicalSqlPattern.test(patch);
+function isCanonicalSqlPatch(path: string, patch: string): boolean {
+  return canonicalMigrationPathPattern.test(path) && canonicalSqlPattern.test(patch);
 }
 
 function isCanonicalUnifiedDiff(path: string, patch: string): boolean {
-  const match = diffHeaderPattern.exec(patch);
-  if (!match || match[1] !== path || match[2] !== path || match[3] !== path || match[4] !== path) {
+  if (!canonicalModelPathPattern.test(path)) {
     return false;
   }
-
-  const body = match[5];
-  if (!body) {
+  const fullMatch = fullDiffPattern.exec(patch);
+  if (
+    fullMatch &&
+    (fullMatch[1] !== path ||
+      fullMatch[2] !== path ||
+      fullMatch[3] !== path ||
+      fullMatch[4] !== path)
+  ) {
     return false;
   }
+  const hunk = fullMatch?.[5] ?? (hunkPattern.test(patch) ? patch : undefined);
+  if (!hunk) return false;
+  const body = hunk.slice(hunk.indexOf("\n") + 1);
 
   const changedLines = body
     .split("\n")
@@ -140,6 +176,10 @@ function isCanonicalUnifiedDiff(path: string, patch: string): boolean {
 
   const before = changedLines[0].slice(1);
   const after = changedLines[1].slice(1);
+  const unsafeText = /--|\/\*|\*\/|['"`]/;
+  if (unsafeText.test(before) || unsafeText.test(after)) {
+    return false;
+  }
   if (!/\bcustomer_id\b/.test(before) || /\bcustomer_id\b/.test(after)) {
     return false;
   }
@@ -147,15 +187,21 @@ function isCanonicalUnifiedDiff(path: string, patch: string): boolean {
     return false;
   }
 
-  return before.replace(/\bcustomer_id\b/g, "buyer_id") === after;
+  const canonicalSqlLine =
+    /^\s*(?:customer_id(?:\s*::\s*[a-z][a-z0-9_]*(?:\s+as\s+customer_id)?|\s+[a-z][a-z0-9_]*(?:\([^)]*\))?(?:\s+not\s+null)?)?)[,;]?\s*$/i;
+  return canonicalSqlLine.test(before) && before.replace(/\bcustomer_id\b/g, "buyer_id") === after;
 }
 
 function containsUnsupportedRename(patch: string): boolean {
   const renameCount = patch.match(anyRenamePattern)?.length ?? 0;
-  return renameCount > 0 && !isCanonicalSqlPatch(patch);
+  return renameCount > 0;
 }
 
-function buildProposedChange(input: RepositoryChangeInput, files: string[]): ProposedChange {
+function buildProposedChange(input: RepositoryChangeInput): ProposedChange {
+  const canonicalSources = input.files
+    .map((file) => ({ path: file.path, patchFingerprint: sha256(file.patch) }))
+    .sort((left, right) => left.path.localeCompare(right.path));
+  const sourcePatchFingerprint = sha256(canonicalSources);
   const identity = {
     source: input.source,
     repository: input.repository,
@@ -166,7 +212,8 @@ function buildProposedChange(input: RepositoryChangeInput, files: string[]): Pro
     field: "customer_id" as const,
     before: { field: "customer_id" as const },
     after: { field: "buyer_id" as const },
-    files: [...files].sort(),
+    files: input.files.map((file) => file.path).sort(),
+    sourcePatchFingerprint,
   };
   const fingerprint = sha256(identity);
   return proposedChangeSchema.parse({
@@ -197,7 +244,10 @@ export function parseProposedChange(untrustedInput: unknown): ParseProposedChang
     const canonicalSqlCount = file.patch.match(canonicalSqlStatementPattern)?.length ?? 0;
     if (canonicalSqlCount > 1) {
       multipleFiles.push(file.path);
-    } else if (isCanonicalSqlPatch(file.patch) || isCanonicalUnifiedDiff(file.path, file.patch)) {
+    } else if (
+      isCanonicalSqlPatch(file.path, file.patch) ||
+      isCanonicalUnifiedDiff(file.path, file.patch)
+    ) {
       supportedFiles.push(file.path);
     } else if (
       containsUnsupportedRename(file.patch) ||
@@ -250,5 +300,5 @@ export function parseProposedChange(untrustedInput: unknown): ParseProposedChang
     };
   }
 
-  return { ok: true, value: buildProposedChange(input, supportedFiles) };
+  return { ok: true, value: buildProposedChange(input) };
 }

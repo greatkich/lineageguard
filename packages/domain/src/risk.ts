@@ -1,13 +1,20 @@
 import { z } from "zod";
-import type { ProposedChange } from "./change.js";
-import type { EvidenceItem, ImpactContext } from "./evidence.js";
+import { type ProposedChange, proposedChangeSchema } from "./change.js";
+import {
+  canonicalFieldPath,
+  type EvidenceItem,
+  type ImpactContext,
+  impactContextSchema,
+} from "./evidence.js";
 
 const isoDateTimeSchema = z.iso.datetime({ offset: true });
 const evidenceIdSchema = z.string().regex(/^ev_[a-f0-9]{24}$/);
+const ruleOrder = ["LG001", "LG002", "LG003", "LG004", "LG005"] as const;
+const blockingRules = new Set<string>(["LG001", "LG002", "LG003", "LG004"]);
 
 export const decisionSchema = z.enum(["ALLOW", "REVIEW", "BLOCK"]);
 export const riskLevelSchema = z.enum(["LOW", "MEDIUM", "HIGH", "CRITICAL"]);
-export const riskRuleIdSchema = z.enum(["LG001", "LG002", "LG003", "LG004", "LG005"]);
+export const riskRuleIdSchema = z.enum(ruleOrder);
 
 export const riskReasonSchema = z
   .object({
@@ -16,9 +23,55 @@ export const riskReasonSchema = z
     evidenceIds: z.array(evidenceIdSchema).min(1).max(200),
     severity: riskLevelSchema,
   })
-  .strict();
+  .strict()
+  .superRefine((reason, refinement) => {
+    const expectedSeverity = {
+      LG001: "CRITICAL",
+      LG002: "CRITICAL",
+      LG003: "HIGH",
+      LG004: "CRITICAL",
+      LG005: "HIGH",
+    } as const;
+    if (reason.severity !== expectedSeverity[reason.ruleId]) {
+      refinement.addIssue({
+        code: "custom",
+        message: "Rule severity contradicts the deterministic policy",
+        path: ["severity"],
+      });
+    }
+    const sorted = [...reason.evidenceIds].sort();
+    if (new Set(reason.evidenceIds).size !== reason.evidenceIds.length) {
+      refinement.addIssue({
+        code: "custom",
+        message: "Reason evidence IDs must be unique",
+        path: ["evidenceIds"],
+      });
+    }
+    if (reason.evidenceIds.some((id, index) => id !== sorted[index])) {
+      refinement.addIssue({
+        code: "custom",
+        message: "Reason evidence IDs must be sorted",
+        path: ["evidenceIds"],
+      });
+    }
+  });
 
 export type RiskReason = z.infer<typeof riskReasonSchema>;
+
+function deriveOutcome(reasons: RiskReason[]): {
+  decision: "ALLOW" | "REVIEW" | "BLOCK";
+  risk: "LOW" | "HIGH" | "CRITICAL";
+} {
+  if (reasons.some((reason) => blockingRules.has(reason.ruleId))) {
+    return {
+      decision: "BLOCK",
+      risk: reasons.some((reason) => reason.severity === "CRITICAL") ? "CRITICAL" : "HIGH",
+    };
+  }
+  return reasons.length === 0
+    ? { decision: "ALLOW", risk: "LOW" }
+    : { decision: "REVIEW", risk: "HIGH" };
+}
 
 export const riskAssessmentSchema = z
   .object({
@@ -32,6 +85,25 @@ export const riskAssessmentSchema = z
   })
   .strict()
   .superRefine((assessment, refinement) => {
+    const ruleIds = assessment.reasons.map((reason) => reason.ruleId);
+    if (new Set(ruleIds).size !== ruleIds.length) {
+      refinement.addIssue({
+        code: "custom",
+        message: "Risk rules must be unique",
+        path: ["reasons"],
+      });
+    }
+    const expectedOrder = [...ruleIds].sort(
+      (left, right) => ruleOrder.indexOf(left) - ruleOrder.indexOf(right),
+    );
+    if (ruleIds.some((ruleId, index) => ruleId !== expectedOrder[index])) {
+      refinement.addIssue({
+        code: "custom",
+        message: "Risk rules must use canonical order",
+        path: ["reasons"],
+      });
+    }
+
     if (assessment.contextMode === "REPOSITORY_ONLY") {
       if (
         assessment.decision !== "ALLOW" ||
@@ -40,15 +112,17 @@ export const riskAssessmentSchema = z
       ) {
         refinement.addIssue({
           code: "custom",
-          message: "Repository-only assessment must be ALLOW/LOW with no external evidence reasons",
+          message: "Repository-only assessment must be ALLOW/LOW with no evidence reasons",
         });
       }
+      return;
     }
-    if (assessment.decision === "ALLOW" && assessment.reasons.length > 0) {
+
+    const derived = deriveOutcome(assessment.reasons);
+    if (assessment.decision !== derived.decision || assessment.risk !== derived.risk) {
       refinement.addIssue({
         code: "custom",
-        message: "ALLOW cannot include triggered risk rules",
-        path: ["reasons"],
+        message: "Grounded decision and risk must be derived from triggered policy rules",
       });
     }
   });
@@ -65,7 +139,57 @@ export const riskComparisonSchema = z
     triggeredRuleIds: z.array(riskRuleIdSchema).max(5),
     changedBecauseEvidenceIds: z.array(evidenceIdSchema).max(200),
   })
-  .strict();
+  .strict()
+  .superRefine((comparison, refinement) => {
+    const expectedRules = comparison.grounded.reasons.map((reason) => reason.ruleId);
+    const expectedEvidence = [
+      ...new Set(comparison.grounded.reasons.flatMap((reason) => reason.evidenceIds)),
+    ].sort();
+    if (
+      comparison.baseline.changeId !== comparison.changeId ||
+      comparison.grounded.changeId !== comparison.changeId ||
+      comparison.baseline.contextMode !== "REPOSITORY_ONLY" ||
+      comparison.grounded.contextMode !== "DATAHUB_GROUNDED"
+    ) {
+      refinement.addIssue({
+        code: "custom",
+        message: "Comparison assessments are not bound to the same change",
+      });
+    }
+    if (
+      comparison.decisionChanged !==
+      (comparison.baseline.decision !== comparison.grounded.decision)
+    ) {
+      refinement.addIssue({
+        code: "custom",
+        message: "decisionChanged is contradictory",
+        path: ["decisionChanged"],
+      });
+    }
+    if (
+      comparison.transition !== `${comparison.baseline.decision}→${comparison.grounded.decision}`
+    ) {
+      refinement.addIssue({
+        code: "custom",
+        message: "Transition is contradictory",
+        path: ["transition"],
+      });
+    }
+    if (JSON.stringify(comparison.triggeredRuleIds) !== JSON.stringify(expectedRules)) {
+      refinement.addIssue({
+        code: "custom",
+        message: "Triggered rule delta is contradictory",
+        path: ["triggeredRuleIds"],
+      });
+    }
+    if (JSON.stringify(comparison.changedBecauseEvidenceIds) !== JSON.stringify(expectedEvidence)) {
+      refinement.addIssue({
+        code: "custom",
+        message: "Evidence delta is contradictory",
+        path: ["changedBecauseEvidenceIds"],
+      });
+    }
+  });
 
 export type RiskComparison = z.infer<typeof riskComparisonSchema>;
 
@@ -79,21 +203,20 @@ function reason(
   severity: RiskReason["severity"],
   evidence: EvidenceItem[],
 ): RiskReason | undefined {
-  if (evidence.length === 0) {
-    return undefined;
-  }
-  return {
+  if (evidence.length === 0) return undefined;
+  return riskReasonSchema.parse({
     ruleId,
     message,
     severity,
     evidenceIds: sortEvidence(evidence).map((item) => item.id),
-  };
+  });
 }
 
 export function evaluateRepositoryBaseline(
-  change: ProposedChange,
+  untrustedChange: ProposedChange,
   evaluatedAt: string,
 ): RiskAssessment {
+  const change = proposedChangeSchema.parse(untrustedChange);
   return riskAssessmentSchema.parse({
     changeId: change.id,
     contextMode: "REPOSITORY_ONLY",
@@ -106,18 +229,37 @@ export function evaluateRepositoryBaseline(
 }
 
 export function evaluateGroundedRisk(
-  change: ProposedChange,
-  context: ImpactContext,
+  untrustedChange: ProposedChange,
+  untrustedContext: ImpactContext,
   evaluatedAt: string,
 ): RiskAssessment {
-  if (context.changeId !== change.id) {
-    throw new Error("Impact context belongs to a different proposed change");
+  const change = proposedChangeSchema.parse(untrustedChange);
+  const context = impactContextSchema.parse(untrustedContext);
+  if (
+    context.changeId !== change.id ||
+    change.field !== "customer_id" ||
+    context.fieldPath !== canonicalFieldPath
+  ) {
+    throw new Error("Impact context is not bound to the proposed field change");
   }
   if (context.collectionStatus !== "COMPLETE") {
     throw new Error("Grounded risk evaluation requires a complete impact context");
   }
 
-  const evidence = sortEvidence(context.evidence);
+  const assessedTime = new Date(evaluatedAt).getTime();
+  if (!Number.isFinite(assessedTime)) throw new Error("Risk assessment time is invalid");
+  const connectedIds = new Set(
+    context.evidence
+      .filter((item) => item.kind !== "OWNER" && item.fieldPath === canonicalFieldPath)
+      .map((item) => item.id),
+  );
+  const evidence = sortEvidence(
+    context.evidence.filter(
+      (item) =>
+        connectedIds.has(item.id) ||
+        item.relatedEvidenceIds.some((relatedId) => connectedIds.has(relatedId)),
+    ),
+  );
   const downstreamPaths = evidence.filter((item) => item.kind === "LINEAGE_PATH");
   const productionModels = evidence.filter(
     (item) => item.kind === "ML_MODEL" && item.payload.lifecycle === "PRODUCTION",
@@ -125,14 +267,11 @@ export function evaluateGroundedRisk(
   const criticalDashboards = evidence.filter(
     (item) => item.kind === "DASHBOARD" && item.criticality === "CRITICAL",
   );
-  const assessedTime = new Date(evaluatedAt).getTime();
   const recentUnmanagedQueries = evidence.filter((item) => {
-    if (item.kind !== "QUERY_USAGE" || item.payload.managed) {
-      return false;
-    }
+    if (item.kind !== "QUERY_USAGE" || item.payload.managed) return false;
     const lastSeen = new Date(item.payload.lastSeenAt).getTime();
-    const age = assessedTime - lastSeen;
-    return age >= 0 && age <= 30 * 24 * 60 * 60 * 1_000;
+    if (lastSeen > assessedTime) throw new Error("Query evidence cannot be observed in the future");
+    return assessedTime - lastSeen <= 30 * 24 * 60 * 60 * 1_000;
   });
   const ownerAssetUrns = new Set(
     evidence.filter((item) => item.kind === "OWNER").map((item) => item.payload.assetUrn),
@@ -141,12 +280,12 @@ export function evaluateGroundedRisk(
     if (item.kind === "DASHBOARD") {
       return item.criticality === "CRITICAL" && !ownerAssetUrns.has(item.payload.dashboardUrn);
     }
-    if (item.kind === "ML_MODEL") {
-      return item.criticality === "CRITICAL" && !ownerAssetUrns.has(item.payload.modelUrn);
-    }
-    return false;
+    return (
+      item.kind === "ML_MODEL" &&
+      item.criticality === "CRITICAL" &&
+      !ownerAssetUrns.has(item.payload.modelUrn)
+    );
   });
-
   const reasons = [
     reason(
       "LG001",
@@ -179,24 +318,11 @@ export function evaluateGroundedRisk(
       missingOwnerAssets,
     ),
   ].filter((item): item is RiskReason => item !== undefined);
-
-  const blocking = reasons.some((item) =>
-    ["LG001", "LG002", "LG003", "LG004"].includes(item.ruleId),
-  );
-  const decision = blocking ? "BLOCK" : reasons.length > 0 ? "REVIEW" : "ALLOW";
-  const risk = blocking
-    ? reasons.some((item) => item.severity === "CRITICAL")
-      ? "CRITICAL"
-      : "HIGH"
-    : reasons.length > 0
-      ? "HIGH"
-      : "LOW";
-
+  const derived = deriveOutcome(reasons);
   const assessment = riskAssessmentSchema.parse({
     changeId: change.id,
     contextMode: "DATAHUB_GROUNDED",
-    decision,
-    risk,
+    ...derived,
     reasons,
     evaluatedAt,
     policyVersion: "lineageguard-p0.1",
@@ -209,12 +335,13 @@ export function assertRiskEvidenceReferences(
   assessment: RiskAssessment,
   context: ImpactContext,
 ): void {
-  const ids = new Set(context.evidence.map((item) => item.id));
-  for (const item of assessment.reasons) {
+  const parsedAssessment = riskAssessmentSchema.parse(assessment);
+  const parsedContext = impactContextSchema.parse(context);
+  const ids = new Set(parsedContext.evidence.map((item) => item.id));
+  for (const item of parsedAssessment.reasons) {
     for (const evidenceId of item.evidenceIds) {
-      if (!ids.has(evidenceId)) {
+      if (!ids.has(evidenceId))
         throw new Error(`Risk reason ${item.ruleId} cites unknown evidence ${evidenceId}`);
-      }
     }
   }
 }
@@ -223,24 +350,21 @@ export function compareRiskAssessments(
   baseline: RiskAssessment,
   grounded: RiskAssessment,
 ): RiskComparison {
-  if (baseline.changeId !== grounded.changeId) {
+  const parsedBaseline = riskAssessmentSchema.parse(baseline);
+  const parsedGrounded = riskAssessmentSchema.parse(grounded);
+  if (parsedBaseline.changeId !== parsedGrounded.changeId) {
     throw new Error("Cannot compare assessments for different changes");
   }
-  if (baseline.contextMode !== "REPOSITORY_ONLY" || grounded.contextMode !== "DATAHUB_GROUNDED") {
-    throw new Error(
-      "Risk comparison requires repository-only baseline and DataHub-grounded result",
-    );
-  }
   const changedBecauseEvidenceIds = [
-    ...new Set(grounded.reasons.flatMap((item) => item.evidenceIds)),
+    ...new Set(parsedGrounded.reasons.flatMap((item) => item.evidenceIds)),
   ].sort();
   return riskComparisonSchema.parse({
-    changeId: baseline.changeId,
-    baseline,
-    grounded,
-    decisionChanged: baseline.decision !== grounded.decision,
-    transition: `${baseline.decision}→${grounded.decision}`,
-    triggeredRuleIds: grounded.reasons.map((item) => item.ruleId),
+    changeId: parsedBaseline.changeId,
+    baseline: parsedBaseline,
+    grounded: parsedGrounded,
+    decisionChanged: parsedBaseline.decision !== parsedGrounded.decision,
+    transition: `${parsedBaseline.decision}→${parsedGrounded.decision}`,
+    triggeredRuleIds: parsedGrounded.reasons.map((item) => item.ruleId),
     changedBecauseEvidenceIds,
   });
 }

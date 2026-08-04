@@ -3,6 +3,7 @@ import {
   canonicalDatasetRef,
   datasetRefSchema,
   parseProposedChange,
+  proposedChangeSchema,
   repositoryChangeInputSchema,
 } from "./change.js";
 
@@ -53,6 +54,70 @@ describe("proposed change parser", () => {
 
     const result = parseProposedChange(input(patch, path));
     expect(result.ok).toBe(true);
+  });
+
+  it("accepts an actual GitHub hunk fragment without optional file headers", () => {
+    const path = "walkthrough/models/orders.sql";
+    const patch = [
+      "@@ -1,3 +1,3 @@",
+      " select",
+      "-  customer_id::bigint as customer_id,",
+      "+  buyer_id::bigint as buyer_id,",
+      "   order_total",
+    ].join("\n");
+    expect(parseProposedChange(input(patch, path)).ok).toBe(true);
+  });
+
+  it("binds identity to the exact sorted source path and patch bytes", () => {
+    const compact = parseProposedChange(input(canonicalSql));
+    const spaced = parseProposedChange(
+      input("ALTER  TABLE commerce.orders RENAME COLUMN customer_id TO buyer_id;"),
+    );
+    expect(compact.ok && spaced.ok).toBe(true);
+    if (compact.ok && spaced.ok) {
+      expect(compact.value.sourcePatchFingerprint).not.toBe(spaced.value.sourcePatchFingerprint);
+      expect(compact.value.fingerprint).not.toBe(spaced.value.fingerprint);
+      expect(compact.value.id).not.toBe(spaced.value.id);
+      expect(
+        proposedChangeSchema.safeParse({ ...compact.value, sourcePatchFingerprint: "a".repeat(64) })
+          .success,
+      ).toBe(false);
+    }
+  });
+
+  it("binds unrelated repository file bytes into the same source input fingerprint", () => {
+    const firstInput = input(canonicalSql);
+    firstInput.files.push({
+      path: "walkthrough/models/unrelated.sql",
+      datasetRef: canonicalDatasetRef,
+      patch: "select order_id from commerce.orders;",
+    });
+    const secondInput = structuredClone(firstInput);
+    const unrelatedFile = secondInput.files[1];
+    if (!unrelatedFile) throw new Error("fixture must have unrelated file");
+    unrelatedFile.patch = "select order_id, order_total from commerce.orders;";
+    const first = parseProposedChange(firstInput);
+    const second = parseProposedChange(secondInput);
+    expect(first.ok && second.ok).toBe(true);
+    if (first.ok && second.ok) {
+      expect(first.value.sourcePatchFingerprint).not.toBe(second.value.sourcePatchFingerprint);
+      expect(first.value.files).toEqual(
+        ["walkthrough/migrations/rename.sql", "walkthrough/models/unrelated.sql"].sort(),
+      );
+    }
+  });
+
+  it.each([
+    ["docs/migrations/example.sql", canonicalSql],
+    [
+      "walkthrough/models/orders.sql",
+      "@@ -1 +1 @@\n--- customer_id::bigint as customer_id,\n+++ buyer_id::bigint as buyer_id,",
+    ],
+    ["walkthrough/models/orders.sql", "@@ -1 +1 @@\n-  -- customer_id\n+  -- buyer_id"],
+    ["walkthrough/models/orders.sql", "@@ -1 +1 @@\n-  'customer_id'\n+  'buyer_id'"],
+    ["walkthrough/models/orders.sql", "@@ -1 +1 @@\n-  customer_id_suffix\n+  buyer_id_suffix"],
+  ])("rejects non-executable or non-allowlisted rename in %s", (path, patch) => {
+    expect(parseProposedChange(input(patch, path)).ok).toBe(false);
   });
 
   it.each([
