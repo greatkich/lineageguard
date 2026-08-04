@@ -1,0 +1,10 @@
+version: 2
+
+models:
+  - name: customer_revenue
+    description: Customer lifetime revenue used by Finance reporting.
+    columns:
+      - name: customer_id
+        data_tests: [not_null, unique]
+      - name: lifetime_revenue
+        data_tests: [not_null]

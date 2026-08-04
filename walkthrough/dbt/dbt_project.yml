@@ -1,0 +1,21 @@
+name: lineageguard_walkthrough
+version: 1.0.0
+config-version: 2
+
+profile: lineageguard_walkthrough
+
+model-paths: ["models"]
+target-path: "target"
+clean-targets: ["target", "dbt_packages"]
+
+models:
+  lineageguard_walkthrough:
+    staging:
+      +schema: analytics
+      +materialized: view
+    analytics:
+      +schema: analytics
+      +materialized: table
+    fraud:
+      +schema: fraud
+      +materialized: table

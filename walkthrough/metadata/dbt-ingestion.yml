@@ -1,0 +1,18 @@
+source:
+  type: dbt
+  config:
+    manifest_path: walkthrough/dbt/target/manifest.json
+    catalog_path: walkthrough/dbt/target/catalog.json
+    run_results_paths:
+      - walkthrough/dbt/target/run_results.json
+    target_platform: postgres
+    platform_instance: lineageguard-canonical
+    target_platform_instance: lineageguard-canonical
+    env: PROD
+    include_column_lineage: true
+    infer_dbt_schemas: true
+sink:
+  type: datahub-rest
+  config:
+    server: "${DATAHUB_GMS_URL}"
+    token: "${DATAHUB_TOKEN}"

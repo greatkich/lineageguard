@@ -1,0 +1,32 @@
+source:
+  type: postgres
+  config:
+    host_port: "${WALKTHROUGH_POSTGRES_HOST}:${WALKTHROUGH_POSTGRES_PORT}"
+    database: "${WALKTHROUGH_POSTGRES_DATABASE}"
+    username: "${WALKTHROUGH_POSTGRES_USER}"
+    password: "${WALKTHROUGH_POSTGRES_PASSWORD}"
+    platform_instance: lineageguard-canonical
+    env: PROD
+    include_usage_statistics: true
+    include_query_lineage: true
+    min_query_calls: 1
+    top_n_queries: 20
+    max_queries_to_extract: 20
+    query_exclude_patterns:
+      - "%pg_catalog%"
+      - "%information_schema%"
+      - "%pg_temp%"
+    schema_pattern:
+      allow:
+        - commerce
+        - analytics
+        - fraud
+    table_pattern:
+      deny:
+        - "^pg_.*"
+        - "^information_schema\\..*"
+sink:
+  type: datahub-rest
+  config:
+    server: "${DATAHUB_GMS_URL}"
+    token: "${DATAHUB_TOKEN}"

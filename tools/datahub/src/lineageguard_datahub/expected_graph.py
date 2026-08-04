@@ -1,0 +1,282 @@
+from __future__ import annotations
+
+import hashlib
+import json
+from collections.abc import Callable
+from pathlib import Path
+from typing import Any, cast
+
+from lineageguard_datahub.models import (
+    EntityType,
+    ExpectedGraph,
+    Granularity,
+    GraphNode,
+    LineageEdge,
+    Owner,
+    QueryEvidence,
+    SourceField,
+    Tag,
+)
+
+
+class GraphContractError(ValueError):
+    """The checked graph manifest violates the canonical contract."""
+
+
+ROOT_KEYS = {
+    "schemaVersion",
+    "scenarioId",
+    "environment",
+    "platformInstance",
+    "sourceField",
+    "owners",
+    "tags",
+    "nodes",
+    "edges",
+    "queryEvidence",
+    "impactCards",
+    "lineageIntermediates",
+}
+
+
+def _object(value: object, context: str) -> dict[str, Any]:
+    if not isinstance(value, dict) or not all(isinstance(key, str) for key in value):
+        raise GraphContractError(f"{context} must be an object")
+    return cast(dict[str, Any], value)
+
+
+def _exact_keys(value: dict[str, Any], expected: set[str], context: str) -> None:
+    actual = set(value)
+    if actual != expected:
+        missing = sorted(expected - actual)
+        extra = sorted(actual - expected)
+        raise GraphContractError(f"{context} keys mismatch: missing={missing}, extra={extra}")
+
+
+def _string(value: object, context: str) -> str:
+    if not isinstance(value, str) or not value:
+        raise GraphContractError(f"{context} must be a non-empty string")
+    return value
+
+
+def _strings(value: object, context: str) -> tuple[str, ...]:
+    if not isinstance(value, list):
+        raise GraphContractError(f"{context} must be an array")
+    return tuple(_string(item, f"{context}[]") for item in value)
+
+
+def _objects(value: object, context: str) -> tuple[dict[str, Any], ...]:
+    if not isinstance(value, list):
+        raise GraphContractError(f"{context} must be an array")
+    return tuple(_object(item, f"{context}[]") for item in value)
+
+
+def _optional_string(value: object, context: str) -> str | None:
+    return None if value is None else _string(value, context)
+
+
+def _unique[T](values: tuple[T, ...], key: Callable[[T], object], context: str) -> None:
+    identifiers = [key(item) for item in values]
+    if len(identifiers) != len(set(identifiers)):
+        raise GraphContractError(f"{context} contains duplicate identifiers")
+
+
+def _source_field(raw: object) -> SourceField:
+    value = _object(raw, "sourceField")
+    _exact_keys(
+        value,
+        {"logicalKey", "datasetUrn", "fieldPath", "schemaFieldUrn", "glossaryTermUrn"},
+        "sourceField",
+    )
+    return SourceField(
+        logical_key=_string(value["logicalKey"], "sourceField.logicalKey"),
+        dataset_urn=_string(value["datasetUrn"], "sourceField.datasetUrn"),
+        field_path=_string(value["fieldPath"], "sourceField.fieldPath"),
+        schema_field_urn=_string(value["schemaFieldUrn"], "sourceField.schemaFieldUrn"),
+        glossary_term_urn=_string(value["glossaryTermUrn"], "sourceField.glossaryTermUrn"),
+    )
+
+
+def _owner(raw: dict[str, Any]) -> Owner:
+    _exact_keys(raw, {"logicalKey", "urn", "displayName"}, "owner")
+    return Owner(
+        logical_key=_string(raw["logicalKey"], "owner.logicalKey"),
+        urn=_string(raw["urn"], "owner.urn"),
+        display_name=_string(raw["displayName"], "owner.displayName"),
+    )
+
+
+def _tag(raw: dict[str, Any]) -> Tag:
+    _exact_keys(raw, {"logicalKey", "urn", "displayName"}, "tag")
+    return Tag(
+        logical_key=_string(raw["logicalKey"], "tag.logicalKey"),
+        urn=_string(raw["urn"], "tag.urn"),
+        display_name=_string(raw["displayName"], "tag.displayName"),
+    )
+
+
+def _node(raw: dict[str, Any]) -> GraphNode:
+    _exact_keys(raw, {"logicalKey", "urn", "entityType", "name", "ownerUrns", "tagUrns"}, "node")
+    try:
+        entity_type = EntityType(_string(raw["entityType"], "node.entityType"))
+    except ValueError as error:
+        raise GraphContractError(f"unsupported node entityType: {raw['entityType']}") from error
+    return GraphNode(
+        logical_key=_string(raw["logicalKey"], "node.logicalKey"),
+        urn=_string(raw["urn"], "node.urn"),
+        entity_type=entity_type,
+        name=_string(raw["name"], "node.name"),
+        owner_urns=_strings(raw["ownerUrns"], "node.ownerUrns"),
+        tag_urns=_strings(raw["tagUrns"], "node.tagUrns"),
+    )
+
+
+def _edge(raw: dict[str, Any]) -> LineageEdge:
+    _exact_keys(
+        raw,
+        {
+            "logicalKey",
+            "upstreamUrn",
+            "downstreamUrn",
+            "upstreamType",
+            "downstreamType",
+            "granularity",
+            "upstreamFieldPath",
+            "downstreamFieldPath",
+        },
+        "edge",
+    )
+    try:
+        upstream_type = EntityType(_string(raw["upstreamType"], "edge.upstreamType"))
+        downstream_type = EntityType(_string(raw["downstreamType"], "edge.downstreamType"))
+        granularity = Granularity(_string(raw["granularity"], "edge.granularity"))
+    except ValueError as error:
+        raise GraphContractError(f"unsupported edge enum value in {raw['logicalKey']}") from error
+    edge = LineageEdge(
+        logical_key=_string(raw["logicalKey"], "edge.logicalKey"),
+        upstream_urn=_string(raw["upstreamUrn"], "edge.upstreamUrn"),
+        downstream_urn=_string(raw["downstreamUrn"], "edge.downstreamUrn"),
+        upstream_type=upstream_type,
+        downstream_type=downstream_type,
+        granularity=granularity,
+        upstream_field_path=_optional_string(raw["upstreamFieldPath"], "edge.upstreamFieldPath"),
+        downstream_field_path=_optional_string(
+            raw["downstreamFieldPath"], "edge.downstreamFieldPath"
+        ),
+    )
+    if edge.granularity is Granularity.FIELD:
+        if (
+            edge.upstream_type is not EntityType.DATASET
+            or edge.downstream_type is not EntityType.DATASET
+        ):
+            raise GraphContractError(f"field edge {edge.logical_key} must connect two datasets")
+        if edge.upstream_field_path is None or edge.downstream_field_path is None:
+            raise GraphContractError(f"field edge {edge.logical_key} requires both field paths")
+    elif edge.upstream_field_path is not None or edge.downstream_field_path is not None:
+        raise GraphContractError(f"entity edge {edge.logical_key} cannot carry field paths")
+    return edge
+
+
+def _query(raw: dict[str, Any]) -> QueryEvidence:
+    _exact_keys(
+        raw,
+        {
+            "logicalKey",
+            "queryUrn",
+            "marker",
+            "sqlPath",
+            "datasetUrn",
+            "fieldPath",
+            "sha256",
+            "ownerUrn",
+        },
+        "queryEvidence",
+    )
+    digest = _string(raw["sha256"], "queryEvidence.sha256")
+    if len(digest) != 64 or any(character not in "0123456789abcdef" for character in digest):
+        raise GraphContractError("queryEvidence.sha256 must be a lowercase SHA-256 digest")
+    return QueryEvidence(
+        logical_key=_string(raw["logicalKey"], "queryEvidence.logicalKey"),
+        query_urn=_string(raw["queryUrn"], "queryEvidence.queryUrn"),
+        marker=_string(raw["marker"], "queryEvidence.marker"),
+        sql_path=_string(raw["sqlPath"], "queryEvidence.sqlPath"),
+        dataset_urn=_string(raw["datasetUrn"], "queryEvidence.datasetUrn"),
+        field_path=_string(raw["fieldPath"], "queryEvidence.fieldPath"),
+        sha256=digest,
+        owner_urn=_string(raw["ownerUrn"], "queryEvidence.ownerUrn"),
+    )
+
+
+def _validate_references(graph: ExpectedGraph) -> None:
+    node_by_urn = {node.urn: node for node in graph.nodes}
+    owner_urns = {owner.urn for owner in graph.owners}
+    tag_urns = {tag.urn for tag in graph.tags}
+    logical_keys = {node.logical_key for node in graph.nodes} | {
+        query.logical_key for query in graph.query_evidence
+    }
+    for node in graph.nodes:
+        if not set(node.owner_urns) <= owner_urns:
+            raise GraphContractError(f"node {node.logical_key} references an unknown owner")
+        if not set(node.tag_urns) <= tag_urns:
+            raise GraphContractError(f"node {node.logical_key} references an unknown tag")
+    for edge in graph.edges:
+        upstream = node_by_urn.get(edge.upstream_urn)
+        downstream = node_by_urn.get(edge.downstream_urn)
+        if upstream is None or downstream is None:
+            raise GraphContractError(f"edge {edge.logical_key} references an unknown node")
+        if (
+            upstream.entity_type is not edge.upstream_type
+            or downstream.entity_type is not edge.downstream_type
+        ):
+            raise GraphContractError(f"edge {edge.logical_key} entity type does not match its node")
+    if graph.source_field.dataset_urn not in node_by_urn:
+        raise GraphContractError("sourceField datasetUrn is not present in nodes")
+    if set(graph.impact_cards) - logical_keys:
+        raise GraphContractError("impactCards references an unknown logical key")
+    if set(graph.lineage_intermediates) - logical_keys:
+        raise GraphContractError("lineageIntermediates references an unknown logical key")
+
+
+def load_expected_graph(path: Path) -> ExpectedGraph:
+    raw = _object(json.loads(path.read_text(encoding="utf-8")), "root")
+    _exact_keys(raw, ROOT_KEYS, "root")
+    schema_version = raw["schemaVersion"]
+    if type(schema_version) is not int or schema_version != 1:
+        raise GraphContractError("schemaVersion must equal 1")
+    graph = ExpectedGraph(
+        schema_version=schema_version,
+        scenario_id=_string(raw["scenarioId"], "scenarioId"),
+        environment=_string(raw["environment"], "environment"),
+        platform_instance=_string(raw["platformInstance"], "platformInstance"),
+        source_field=_source_field(raw["sourceField"]),
+        owners=tuple(_owner(item) for item in _objects(raw["owners"], "owners")),
+        tags=tuple(_tag(item) for item in _objects(raw["tags"], "tags")),
+        nodes=tuple(_node(item) for item in _objects(raw["nodes"], "nodes")),
+        edges=tuple(_edge(item) for item in _objects(raw["edges"], "edges")),
+        query_evidence=tuple(
+            _query(item) for item in _objects(raw["queryEvidence"], "queryEvidence")
+        ),
+        impact_cards=_strings(raw["impactCards"], "impactCards"),
+        lineage_intermediates=_strings(raw["lineageIntermediates"], "lineageIntermediates"),
+    )
+    for values, key, context in (
+        (graph.owners, lambda item: item.urn, "owners"),
+        (graph.tags, lambda item: item.urn, "tags"),
+        (graph.nodes, lambda item: item.urn, "nodes"),
+        (graph.edges, lambda item: item.logical_key, "edges"),
+        (graph.query_evidence, lambda item: item.logical_key, "queryEvidence"),
+    ):
+        _unique(values, key, context)
+    _validate_references(graph)
+    return graph
+
+
+def graph_fingerprint(graph: ExpectedGraph) -> str:
+    payload = {
+        "scenario": graph.scenario_id,
+        "urns": graph.managed_urns,
+        "edges": tuple(edge.logical_key for edge in graph.edges),
+        "queries": tuple((query.logical_key, query.sha256) for query in graph.query_evidence),
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(encoded).hexdigest()
