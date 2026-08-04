@@ -23,6 +23,31 @@ domain evidence with stable provenance and fingerprints.
 - Replay loads a committed normalized fixture produced by a verified live collection and makes zero
   DataHub or MCP calls. Live and replay provenance are impossible to confuse.
 
+## Domain collection contract
+
+- The canonical identity is the exact DataHub platform-instance identity, not a logical alias:
+  `urn:li:dataset:(urn:li:dataPlatform:postgres,lineageguard-canonical.lineageguard.commerce.orders,PROD)`.
+  All downstream datasets, owners, tags, glossary terms, dashboards, models, and queries retain the
+  corresponding `lineageguard-canonical` namespace from the verified graph.
+- Resolution is explicit typed evidence. It binds the requested platform, platform instance,
+  environment, database, schema, dataset, and field to the resolved dataset and schema-field URNs,
+  with independent search provenance.
+- A failure before unique resolution is a typed collection-failure result, not an `ImpactContext`
+  carrying a fabricated resolved URN. `COMPLETE` and `PARTIAL` contexts exist only after successful
+  resolution.
+- Lineage paths retain ordered typed segments. Each segment records entity endpoints, field or
+  entity granularity, and exact field paths where applicable; the canonical paths end at the real
+  dashboard and model rather than at an intermediate dataset.
+- Query evidence retains the DataHub query URN, `SYSTEM` source, exact dataset/schema-field subject,
+  normalized statement fingerprint, observed usage count, and last-observed timestamp. Raw SQL is
+  not part of the domain evidence contract.
+- Schema, glossary, criticality, lifecycle, classification, and ownership fields remain
+  machine-readable. Titles and summaries are presentation data and cannot substitute for them.
+- `impactContextFingerprint` is the stable semantic fingerprint used by policy, generation, and
+  validation. A separate collection fingerprint binds retrieval timestamps, invocation IDs, raw
+  response fingerprints, and other audit provenance. Repeating the same semantic collection may
+  change the collection fingerprint without changing the semantic fingerprint or evidence IDs.
+
 ## Canonical collection sequence
 
 1. Search for the exact platform/environment/dataset and require one source dataset URN.
