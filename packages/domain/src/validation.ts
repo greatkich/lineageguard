@@ -1,18 +1,12 @@
 import { z } from "zod";
-import { sha256, stableId } from "./hash.js";
-import {
-  assertStructuralValidationReceiptBinding,
-  type MigrationCandidate,
-  migrationCandidateSchema,
-  structuralValidationReceiptSchema,
-  validationCheckNameSchema,
-} from "./migration.js";
+import { sha256 } from "./hash.js";
+import { migrationArtifactPathSchema, validationCheckNameSchema } from "./migration.js";
 
 const fingerprintSchema = z.string().regex(/^[a-f0-9]{64}$/);
 const isoDateTimeSchema = z.iso.datetime({ offset: true });
 const runIdSchema = z.string().regex(/^run_[a-f0-9]{24}$/);
 const leaseIdSchema = z.string().regex(/^lease_[a-f0-9]{24}$/);
-const validationCheckNames = validationCheckNameSchema.options;
+const checkNames = validationCheckNameSchema.options;
 export type ValidationCheckName = z.infer<typeof validationCheckNameSchema>;
 
 export const validatorCommandIdSchema = z.enum([
@@ -38,267 +32,388 @@ const commandForCheck: Record<ValidationCheckName, ValidatorCommandId> = {
   ROLLBACK: "VALIDATE_ROLLBACK_V1",
 };
 
-const artifactObservationSchema = z
+export const executedArtifactObservationSchema = z
   .object({
-    path: z.string().min(1).max(240),
+    path: migrationArtifactPathSchema,
     candidateArtifactFingerprint: fingerprintSchema,
     materializedSha256: fingerprintSchema,
   })
   .strict();
+export type ExecutedArtifactObservation = z.infer<typeof executedArtifactObservationSchema>;
 
-const executionProvenanceSchema = z
+const canonicalObservations = (observations: readonly ExecutedArtifactObservation[]) =>
+  [...observations].sort((left, right) => left.path.localeCompare(right.path));
+
+export function validationArtifactSetFingerprint(
+  observationsInput: readonly ExecutedArtifactObservation[],
+): string {
+  const observations = z
+    .array(executedArtifactObservationSchema)
+    .min(1)
+    .max(20)
+    .parse(observationsInput);
+  return sha256({
+    domain: "lineageguard.validation.artifact-set.v1",
+    observations: canonicalObservations(observations),
+  });
+}
+
+export const validationOutputEnvelopeSchema = z
   .object({
-    validatorImplementationId: z.string().min(1).max(160),
-    validatorVersion: z.string().min(1).max(80),
-    validatorDigest: fingerprintSchema,
-    commandId: validatorCommandIdSchema,
+    schemaVersion: z.literal(1),
+    purpose: z.literal("LINEAGEGUARD_VALIDATOR_OUTPUT"),
+    check: validationCheckNameSchema,
     exitCode: z.number().int().min(0).max(255),
-    startedAt: isoDateTimeSchema,
-    finishedAt: isoDateTimeSchema,
-    runId: runIdSchema,
-    sandboxId: z.string().min(1).max(160),
-    worktreeId: z.string().min(1).max(240),
-    leaseId: leaseIdSchema,
-    workerId: z.string().min(1).max(160),
-    generation: z.number().int().positive().max(1_000_000),
     stdoutFingerprint: fingerprintSchema,
     stderrFingerprint: fingerprintSchema,
-    outputFingerprint: fingerprintSchema,
-    artifactSetFingerprint: fingerprintSchema,
+    artifactObservations: z.array(executedArtifactObservationSchema).min(1).max(20),
   })
   .strict();
+export type ValidationOutputEnvelope = z.infer<typeof validationOutputEnvelopeSchema>;
+
+/** Canonical data preparation only; this hash does not attest that a validator ran. */
+export function validationOutputFingerprint(input: ValidationOutputEnvelope): string {
+  return sha256(validationOutputEnvelopeSchema.parse(input));
+}
+
+const executionFenceShape = {
+  runId: runIdSchema,
+  sandboxId: z.string().min(1).max(160),
+  worktreeId: z.string().min(1).max(240),
+  leaseId: leaseIdSchema,
+  workerId: z.string().min(1).max(160),
+  generation: z.number().int().positive().max(1_000_000),
+};
 
 const executedValidationCheckSchema = z
   .object({
     check: validationCheckNameSchema,
-    status: z.enum(["PASS", "FAIL"]),
+    status: z.literal("PASS"),
+    artifactPaths: z.array(migrationArtifactPathSchema).min(1).max(20),
+    artifactObservations: z.array(executedArtifactObservationSchema).min(1).max(20),
+    artifactSetFingerprint: fingerprintSchema,
+    validatorImplementationId: z.string().min(1).max(160),
+    validatorVersion: z.string().min(1).max(80),
+    validatorDigest: fingerprintSchema,
+    commandId: validatorCommandIdSchema,
+    exitCode: z.literal(0),
     startedAt: isoDateTimeSchema,
-    completedAt: isoDateTimeSchema,
-    summary: z.string().min(1).max(1_000),
-    artifactPaths: z.array(z.string().min(1).max(240)).min(1).max(20),
-    execution: executionProvenanceSchema,
+    finishedAt: isoDateTimeSchema,
+    stdoutFingerprint: fingerprintSchema,
+    stderrFingerprint: fingerprintSchema,
+    outputFingerprint: fingerprintSchema,
+    ...executionFenceShape,
   })
   .strict()
   .superRefine((check, refinement) => {
-    if (new Date(check.completedAt).getTime() < new Date(check.startedAt).getTime()) {
-      refinement.addIssue({
-        code: "custom",
-        message: "Validation check cannot complete before it starts",
-        path: ["completedAt"],
-      });
-    }
-    if (check.execution.commandId !== commandForCheck[check.check]) {
+    if (check.commandId !== commandForCheck[check.check]) {
       refinement.addIssue({
         code: "custom",
         message: "Validation check must use its allowlisted command ID",
-        path: ["execution", "commandId"],
+        path: ["commandId"],
       });
     }
+    if (new Date(check.finishedAt).getTime() < new Date(check.startedAt).getTime()) {
+      refinement.addIssue({
+        code: "custom",
+        message: "Validation check cannot finish before it starts",
+        path: ["finishedAt"],
+      });
+    }
+    const paths = check.artifactObservations.map((observation) => observation.path);
     if (
-      check.execution.startedAt !== check.startedAt ||
-      check.execution.finishedAt !== check.completedAt
+      new Set(paths).size !== paths.length ||
+      JSON.stringify(paths) !== JSON.stringify([...paths].sort()) ||
+      JSON.stringify(paths) !== JSON.stringify(check.artifactPaths)
     ) {
       refinement.addIssue({
         code: "custom",
-        message: "Execution provenance timestamps must match the check envelope",
-        path: ["execution"],
+        message: "Check observations must exactly cover canonical artifact paths",
+        path: ["artifactObservations"],
+      });
+    }
+    if (
+      check.artifactSetFingerprint !== validationArtifactSetFingerprint(check.artifactObservations)
+    ) {
+      refinement.addIssue({
+        code: "custom",
+        message: "Check artifact-set fingerprint is not canonical",
+        path: ["artifactSetFingerprint"],
+      });
+    }
+    const output = {
+      schemaVersion: 1,
+      purpose: "LINEAGEGUARD_VALIDATOR_OUTPUT",
+      check: check.check,
+      exitCode: check.exitCode,
+      stdoutFingerprint: check.stdoutFingerprint,
+      stderrFingerprint: check.stderrFingerprint,
+      artifactObservations: check.artifactObservations,
+    } as const;
+    if (check.outputFingerprint !== validationOutputFingerprint(output)) {
+      refinement.addIssue({
+        code: "custom",
+        message: "Validator output fingerprint is not canonical",
+        path: ["outputFingerprint"],
       });
     }
   });
 
-const attestationBase = {
-  keyId: z.string().min(1).max(160),
-  issuer: z.string().min(1).max(240),
-  payloadFingerprint: fingerprintSchema,
-};
-export const validationAttestationSchema = z.discriminatedUnion("algorithm", [
-  z
-    .object({
-      ...attestationBase,
-      algorithm: z.literal("HMAC-SHA256"),
-      signature: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
-    })
-    .strict(),
-  z
-    .object({
-      ...attestationBase,
-      algorithm: z.literal("ED25519"),
-      signature: z.string().regex(/^[A-Za-z0-9_-]{86}$/),
-    })
-    .strict(),
-]);
-
-/** Authenticated transport shape; still not authoritative until accepted by the gate below. */
-export const executedValidationReceiptSchema = z
+const expectedValidatorSchema = z
   .object({
-    candidateFingerprint: fingerprintSchema,
-    status: z.enum(["PASS", "FAIL"]),
-    artifactPaths: z.array(z.string().min(1).max(240)).min(1).max(20),
-    artifactObservations: z.array(artifactObservationSchema).min(1).max(20),
-    checks: z.array(executedValidationCheckSchema).min(1).max(20),
-    completedAt: isoDateTimeSchema,
-    executionMode: z.enum(["LIVE", "REPLAY"]),
-    authenticatedOriginalLiveReceiptFingerprint: fingerprintSchema.optional(),
-    attestation: validationAttestationSchema,
+    check: validationCheckNameSchema,
+    commandId: validatorCommandIdSchema,
+    implementationId: z.string().min(1).max(160),
+    version: z.string().min(1).max(80),
+    digest: fingerprintSchema,
+  })
+  .strict();
+
+/** Strict runtime configuration data. Authentication remains a server-layer responsibility. */
+export const expectedValidationExecutionSchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    purpose: z.literal("LINEAGEGUARD_EXPECTED_VALIDATION_EXECUTION"),
+    ...executionFenceShape,
+    validators: z.array(expectedValidatorSchema).length(checkNames.length),
   })
   .strict()
-  .superRefine((receipt, refinement) => {
-    const names = receipt.checks.map((check) => check.check);
-    if (new Set(names).size !== names.length) {
+  .superRefine((expected, refinement) => {
+    const actual = expected.validators.map((validator) => validator.check);
+    if (actual.some((check, index) => check !== checkNames[index])) {
       refinement.addIssue({
         code: "custom",
-        message: "Validation checks must be unique",
-        path: ["checks"],
+        message: "Expected validators must exactly cover checks in canonical order",
+        path: ["validators"],
       });
     }
-    if (receipt.status === "PASS") {
-      if (
-        names.length !== validationCheckNames.length ||
-        names.some((name, index) => name !== validationCheckNames[index]) ||
-        receipt.checks.some((check) => check.status !== "PASS" || check.execution.exitCode !== 0)
-      ) {
+    for (const [index, validator] of expected.validators.entries()) {
+      if (validator.commandId !== commandForCheck[validator.check]) {
         refinement.addIssue({
           code: "custom",
-          message: "PASS requires the exact canonical successful executed check set",
-          path: ["checks"],
+          message: "Expected validator command is not allowlisted for its check",
+          path: ["validators", index, "commandId"],
         });
       }
     }
+  });
+export type ExpectedValidationExecution = z.infer<typeof expectedValidationExecutionSchema>;
+
+export const liveValidationProtectedHeadersSchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    purpose: z.literal("LINEAGEGUARD_VALIDATION_LIVE"),
+    algorithm: z.enum(["ED25519", "HMAC-SHA256"]),
+    issuer: z.string().min(1).max(240),
+    keyId: z.string().min(1).max(160),
+    candidateFingerprint: fingerprintSchema,
+    changeFingerprint: fingerprintSchema,
+    impactContextFingerprint: fingerprintSchema,
+    authoritativeGroundedAssessmentFingerprint: fingerprintSchema,
+    authoritativeGroundedDecision: z.literal("BLOCK"),
+    authorizedRunEventStreamFingerprint: fingerprintSchema,
+    leaseAcquiredAt: isoDateTimeSchema,
+    leaseExpiresAt: isoDateTimeSchema,
+    ...executionFenceShape,
+  })
+  .strict();
+
+export const liveValidationPayloadSchema = z
+  .object({
+    status: z.literal("PASS"),
+    artifactPaths: z.array(migrationArtifactPathSchema).min(1).max(20),
+    artifactObservations: z.array(executedArtifactObservationSchema).min(1).max(20),
+    artifactSetFingerprint: fingerprintSchema,
+    checks: z.array(executedValidationCheckSchema).length(checkNames.length),
+    completedAt: isoDateTimeSchema,
+  })
+  .strict();
+
+export const liveValidationUnsignedEnvelopeSchema = z
+  .object({
+    protectedHeaders: liveValidationProtectedHeadersSchema,
+    payload: liveValidationPayloadSchema,
+  })
+  .strict();
+export type LiveValidationUnsignedEnvelope = z.infer<typeof liveValidationUnsignedEnvelopeSchema>;
+
+/** Domain-separated canonical bytes/fingerprint preparation; it performs no signing or trust check. */
+export function liveValidationSignedPayloadFingerprint(
+  input: LiveValidationUnsignedEnvelope,
+): string {
+  return hashLiveValidationUnsignedEnvelope(liveValidationUnsignedEnvelopeSchema.parse(input));
+}
+
+function hashLiveValidationUnsignedEnvelope(input: LiveValidationUnsignedEnvelope): string {
+  return sha256({
+    domain: "lineageguard.validation.signed-live-envelope.v1",
+    envelope: input,
+  });
+}
+
+/**
+ * Signed LIVE receipt data contract only. Parsing proves canonical structure, never signature trust.
+ */
+export const signedLiveValidationReceiptSchema = z
+  .object({
+    protectedHeaders: liveValidationProtectedHeadersSchema,
+    payload: liveValidationPayloadSchema,
+    signedPayloadFingerprint: fingerprintSchema,
+    signature: z.string().regex(/^[A-Za-z0-9_-]{43,86}$/),
+  })
+  .strict()
+  .superRefine((receipt, refinement) => {
+    const protectedHeaders = receipt.protectedHeaders;
+    const payload = receipt.payload;
+    const globalPaths = payload.artifactObservations.map((observation) => observation.path);
     if (
-      (receipt.executionMode === "LIVE" &&
-        receipt.authenticatedOriginalLiveReceiptFingerprint !== undefined) ||
-      (receipt.executionMode === "REPLAY" &&
-        receipt.authenticatedOriginalLiveReceiptFingerprint === undefined)
+      new Set(globalPaths).size !== globalPaths.length ||
+      JSON.stringify(globalPaths) !== JSON.stringify([...globalPaths].sort()) ||
+      JSON.stringify(globalPaths) !== JSON.stringify(payload.artifactPaths)
     ) {
       refinement.addIssue({
         code: "custom",
-        message: "Replay must reference an authenticated original live receipt",
-        path: ["authenticatedOriginalLiveReceiptFingerprint"],
+        message: "Receipt observations must exactly cover canonical artifact paths",
+        path: ["payload", "artifactObservations"],
+      });
+    }
+    if (
+      payload.artifactSetFingerprint !==
+      validationArtifactSetFingerprint(payload.artifactObservations)
+    ) {
+      refinement.addIssue({
+        code: "custom",
+        message: "Receipt artifact-set fingerprint is not canonical",
+        path: ["payload", "artifactSetFingerprint"],
+      });
+    }
+    const actualChecks = payload.checks.map((check) => check.check);
+    if (actualChecks.some((check, index) => check !== checkNames[index])) {
+      refinement.addIssue({
+        code: "custom",
+        message: "Live receipt requires the exact canonical check order",
+        path: ["payload", "checks"],
+      });
+    }
+    for (const [index, check] of payload.checks.entries()) {
+      for (const field of [
+        "runId",
+        "sandboxId",
+        "worktreeId",
+        "leaseId",
+        "workerId",
+        "generation",
+      ] as const) {
+        if (check[field] !== protectedHeaders[field]) {
+          refinement.addIssue({
+            code: "custom",
+            message: "Per-check execution fence must match protected headers",
+            path: ["payload", "checks", index, field],
+          });
+        }
+      }
+      const expectedObservations = payload.artifactObservations.filter((observation) =>
+        check.artifactPaths.includes(observation.path),
+      );
+      if (JSON.stringify(check.artifactObservations) !== JSON.stringify(expectedObservations)) {
+        refinement.addIssue({
+          code: "custom",
+          message: "Per-check artifact hashes must match the signed global artifact set",
+          path: ["payload", "checks", index, "artifactObservations"],
+        });
+      }
+    }
+    const acquiredAt = new Date(protectedHeaders.leaseAcquiredAt).getTime();
+    const expiresAt = new Date(protectedHeaders.leaseExpiresAt).getTime();
+    const completedAt = new Date(payload.completedAt).getTime();
+    if (acquiredAt >= expiresAt || completedAt < acquiredAt || completedAt >= expiresAt) {
+      refinement.addIssue({
+        code: "custom",
+        message: "Live validation completion must occur inside the protected lease interval",
+        path: ["payload", "completedAt"],
+      });
+    }
+    if (
+      payload.checks.some(
+        (check) =>
+          new Date(check.startedAt).getTime() < acquiredAt ||
+          new Date(check.finishedAt).getTime() > completedAt,
+      )
+    ) {
+      refinement.addIssue({
+        code: "custom",
+        message: "All check execution must remain inside the protected live interval",
+        path: ["payload", "checks"],
+      });
+    }
+    const expectedSignatureLength = protectedHeaders.algorithm === "ED25519" ? 86 : 43;
+    if (receipt.signature.length !== expectedSignatureLength) {
+      refinement.addIssue({
+        code: "custom",
+        message: "Signature byte length does not match the protected algorithm",
+        path: ["signature"],
+      });
+    }
+    if (
+      receipt.signedPayloadFingerprint !==
+      hashLiveValidationUnsignedEnvelope({ protectedHeaders, payload })
+    ) {
+      refinement.addIssue({
+        code: "custom",
+        message: "Signed payload fingerprint is not canonical",
+        path: ["signedPayloadFingerprint"],
       });
     }
   });
+export type SignedLiveValidationReceipt = z.infer<typeof signedLiveValidationReceiptSchema>;
 
-export type ExecutedValidationReceipt = z.infer<typeof executedValidationReceiptSchema>;
-
-export function validationAttestationPayloadFingerprint(
-  receiptInput: ExecutedValidationReceipt,
-): string {
-  const receipt = executedValidationReceiptSchema.parse(receiptInput);
-  const { attestation: _attestation, ...payload } = receipt;
-  return sha256(payload);
-}
-
-export interface ExpectedValidationExecution {
-  runId: string;
-  sandboxId: string;
-  worktreeId: string;
-  leaseId: string;
-  workerId: string;
-  generation: number;
-  validators: Record<
-    ValidationCheckName,
-    { implementationId: string; version: string; digest: string }
-  >;
-}
-
-export interface ValidationAttestationVerifier {
-  verify(
-    attestation: z.infer<typeof validationAttestationSchema>,
-    payloadFingerprint: string,
-  ): boolean;
-  isAuthenticatedOriginalLiveReceipt(receiptFingerprint: string): boolean;
-}
-
-declare const acceptedValidationReceiptBrand: unique symbol;
-export type AcceptedExecutedValidationReceipt = Readonly<
-  ExecutedValidationReceipt & { receiptId: string }
-> & { readonly [acceptedValidationReceiptBrand]: true };
-
-function deepFreeze<T extends object>(value: T): Readonly<T> {
-  for (const nested of Object.values(value)) {
-    if (typeof nested === "object" && nested !== null && !Object.isFrozen(nested)) {
-      deepFreeze(nested);
-    }
-  }
-  return Object.freeze(value);
-}
-
-export function acceptExecutedValidationReceipt(
-  receiptInput: ExecutedValidationReceipt,
-  candidateInput: MigrationCandidate,
-  expected: ExpectedValidationExecution,
-  verifier: ValidationAttestationVerifier,
-): AcceptedExecutedValidationReceipt {
-  const receipt = executedValidationReceiptSchema.parse(receiptInput);
-  const candidate = migrationCandidateSchema.parse(candidateInput);
-  if (receipt.status !== "PASS") throw new Error("Only a passing execution can be accepted");
-  const structuralReceipt = structuralValidationReceiptSchema.parse({
-    candidateFingerprint: receipt.candidateFingerprint,
-    status: receipt.status,
-    artifactPaths: receipt.artifactPaths,
-    artifactObservations: receipt.artifactObservations,
-    checks: receipt.checks.map(({ execution: _execution, ...check }) => check),
-    completedAt: receipt.completedAt,
+export function signedLiveValidationReceiptFingerprint(input: SignedLiveValidationReceipt): string {
+  return sha256({
+    domain: "lineageguard.validation.signed-live-receipt.v1",
+    receipt: signedLiveValidationReceiptSchema.parse(input),
   });
-  assertStructuralValidationReceiptBinding(structuralReceipt, candidate);
+}
 
-  const expectedScope = {
-    runId: expected.runId,
-    sandboxId: expected.sandboxId,
-    worktreeId: expected.worktreeId,
-    leaseId: expected.leaseId,
-    workerId: expected.workerId,
-    generation: expected.generation,
-  };
-  for (const check of receipt.checks) {
-    const execution = check.execution;
-    const actualScope = {
-      runId: execution.runId,
-      sandboxId: execution.sandboxId,
-      worktreeId: execution.worktreeId,
-      leaseId: execution.leaseId,
-      workerId: execution.workerId,
-      generation: execution.generation,
-    };
-    const validator = expected.validators[check.check];
-    if (JSON.stringify(actualScope) !== JSON.stringify(expectedScope)) {
-      throw new Error(`Validation check ${check.check} is outside the trusted execution fence`);
+/** Presentation data only. Servers must authenticate the embedded original LIVE signature. */
+export const validationReplayPresentationSchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    purpose: z.literal("LINEAGEGUARD_VALIDATION_REPLAY_PRESENTATION"),
+    originalLiveReceipt: signedLiveValidationReceiptSchema,
+    originalLiveReceiptFingerprint: fingerprintSchema,
+    candidateFingerprint: fingerprintSchema,
+    artifactSetFingerprint: fingerprintSchema,
+  })
+  .strict()
+  .superRefine((replay, refinement) => {
+    if (
+      replay.originalLiveReceiptFingerprint !==
+      signedLiveValidationReceiptFingerprint(replay.originalLiveReceipt)
+    ) {
+      refinement.addIssue({
+        code: "custom",
+        message: "Replay must retain the exact original signed LIVE receipt",
+        path: ["originalLiveReceiptFingerprint"],
+      });
     }
     if (
-      execution.validatorImplementationId !== validator.implementationId ||
-      execution.validatorVersion !== validator.version ||
-      execution.validatorDigest !== validator.digest
+      replay.candidateFingerprint !==
+      replay.originalLiveReceipt.protectedHeaders.candidateFingerprint
     ) {
-      throw new Error(
-        `Validation check ${check.check} used an unexpected validator implementation`,
-      );
+      refinement.addIssue({
+        code: "custom",
+        message: "Replay candidate cannot differ from the original LIVE candidate",
+        path: ["candidateFingerprint"],
+      });
     }
-    const observations = receipt.artifactObservations.filter((observation) =>
-      check.artifactPaths.includes(observation.path),
-    );
-    if (execution.artifactSetFingerprint !== sha256(observations)) {
-      throw new Error(`Validation check ${check.check} is not bound to its exact artifact hashes`);
+    if (
+      replay.artifactSetFingerprint !== replay.originalLiveReceipt.payload.artifactSetFingerprint
+    ) {
+      refinement.addIssue({
+        code: "custom",
+        message: "Replay artifacts cannot differ from the original LIVE artifact set",
+        path: ["artifactSetFingerprint"],
+      });
     }
-  }
-
-  const payloadFingerprint = validationAttestationPayloadFingerprint(receipt);
-  if (
-    receipt.attestation.payloadFingerprint !== payloadFingerprint ||
-    !verifier.verify(receipt.attestation, payloadFingerprint)
-  ) {
-    throw new Error("Validation execution attestation is not trusted");
-  }
-  if (
-    receipt.executionMode === "REPLAY" &&
-    (!receipt.authenticatedOriginalLiveReceiptFingerprint ||
-      !verifier.isAuthenticatedOriginalLiveReceipt(
-        receipt.authenticatedOriginalLiveReceiptFingerprint,
-      ))
-  ) {
-    throw new Error("Replay does not reference an authenticated original live receipt");
-  }
-  return deepFreeze({
-    ...receipt,
-    receiptId: stableId("val", receipt),
-  }) as AcceptedExecutedValidationReceipt;
-}
+  });
+export type ValidationReplayPresentation = z.infer<typeof validationReplayPresentationSchema>;

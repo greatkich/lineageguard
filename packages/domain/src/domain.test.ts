@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import * as domainPublic from "./index.js";
 import { canonicalDatasetRef, parseProposedChange } from "./change.js";
 import {
   computeImpactContextFingerprint,
@@ -27,10 +28,15 @@ import {
 } from "./risk.js";
 import { authorizeRunEvent, type RunEvent } from "./run.js";
 import {
-  acceptExecutedValidationReceipt,
-  executedValidationReceiptSchema,
-  validationAttestationPayloadFingerprint,
+  expectedValidationExecutionSchema,
+  liveValidationSignedPayloadFingerprint,
+  signedLiveValidationReceiptFingerprint,
+  signedLiveValidationReceiptSchema,
+  validationArtifactSetFingerprint,
+  validationOutputFingerprint,
+  validationReplayPresentationSchema,
   type ValidationCheckName,
+  type ValidatorCommandId,
 } from "./validation.js";
 
 const assessedAt = "2026-08-04T09:00:00.000Z";
@@ -733,7 +739,7 @@ function validationReceiptInput(
   };
 }
 
-const checkCommands: Record<ValidationCheckName, string> = {
+const checkCommands: Record<ValidationCheckName, ValidatorCommandId> = {
   SQL_MIGRATION: "VALIDATE_SQL_MIGRATION_V1",
   BACKFILL_EQUALITY: "VALIDATE_BACKFILL_EQUALITY_V1",
   DBT_PARSE: "VALIDATE_DBT_PARSE_V1",
@@ -745,85 +751,112 @@ const checkCommands: Record<ValidationCheckName, string> = {
 };
 
 function expectedValidationExecution() {
-  const validators = Object.fromEntries(
-    Object.keys(checkCommands).map((check) => [
-      check,
-      {
-        implementationId: `lineageguard-${check.toLowerCase()}`,
-        version: "1.0.0",
-        digest: sha256(`validator:${check}:1.0.0`),
-      },
-    ]),
-  ) as Record<ValidationCheckName, { implementationId: string; version: string; digest: string }>;
-  return {
+  return expectedValidationExecutionSchema.parse({
+    schemaVersion: 1,
+    purpose: "LINEAGEGUARD_EXPECTED_VALIDATION_EXECUTION",
     runId: "run_111111111111111111111111",
     sandboxId: "sandbox-p0-validation",
     worktreeId: "worktree-p0-domain-policy",
     leaseId: "lease_111111111111111111111111",
     workerId: "validation-worker-1",
     generation: 1,
-    validators,
-  };
+    validators: (Object.keys(checkCommands) as ValidationCheckName[]).map((check) => ({
+      check,
+      commandId: checkCommands[check],
+      implementationId: `lineageguard-${check.toLowerCase()}`,
+      version: "1.0.0",
+      digest: sha256(`validator:${check}:1.0.0`),
+    })),
+  });
 }
 
-function executedReceiptInput(candidate = migrationCandidateSchema.parse(candidateInput())) {
+function signedLiveReceiptInput(candidate = migrationCandidateSchema.parse(candidateInput())) {
+  const bundle = canonicalBundle();
   const structural = structuralValidationReceiptSchema.parse(
     validationReceiptInput("PASS", candidate),
   );
   const expected = expectedValidationExecution();
-  const unsigned = executedValidationReceiptSchema.parse({
-    ...structural,
+  const artifactSetFingerprint = validationArtifactSetFingerprint(structural.artifactObservations);
+  const protectedHeaders = {
+    schemaVersion: 1,
+    purpose: "LINEAGEGUARD_VALIDATION_LIVE",
+    algorithm: "ED25519",
+    issuer: "lineageguard-validation-service",
+    keyId: "validation-key-2026-08",
+    candidateFingerprint: migrationCandidateFingerprint(candidate),
+    changeFingerprint: bundle.change.fingerprint,
+    impactContextFingerprint: bundle.context.impactContextFingerprint,
+    authoritativeGroundedAssessmentFingerprint: sha256(bundle.grounded),
+    authoritativeGroundedDecision: "BLOCK",
+    authorizedRunEventStreamFingerprint: sha256("authorized-run-stream"),
+    leaseAcquiredAt: "2026-08-04T09:59:00.000Z",
+    leaseExpiresAt: "2026-08-04T10:11:00.000Z",
+    runId: expected.runId,
+    sandboxId: expected.sandboxId,
+    worktreeId: expected.worktreeId,
+    leaseId: expected.leaseId,
+    workerId: expected.workerId,
+    generation: expected.generation,
+  } as const;
+  const payload = {
+    status: "PASS" as const,
+    artifactPaths: structural.artifactPaths,
+    artifactObservations: structural.artifactObservations,
+    artifactSetFingerprint,
     checks: structural.checks.map((check) => {
-      const validator = expected.validators[check.check];
+      const validator = required(
+        expected.validators.find((item) => item.check === check.check),
+        "expected validator",
+      );
       const observations = structural.artifactObservations.filter((observation) =>
         check.artifactPaths.includes(observation.path),
       );
+      const stdoutFingerprint = sha256(`${check.check}:stdout`);
+      const stderrFingerprint = sha256(`${check.check}:stderr`);
       return {
-        ...check,
-        execution: {
-          validatorImplementationId: validator.implementationId,
-          validatorVersion: validator.version,
-          validatorDigest: validator.digest,
-          commandId: checkCommands[check.check],
+        check: check.check,
+        status: "PASS" as const,
+        artifactPaths: check.artifactPaths,
+        artifactObservations: observations,
+        artifactSetFingerprint: validationArtifactSetFingerprint(observations),
+        validatorImplementationId: validator.implementationId,
+        validatorVersion: validator.version,
+        validatorDigest: validator.digest,
+        commandId: validator.commandId,
+        exitCode: 0 as const,
+        startedAt: check.startedAt,
+        finishedAt: check.completedAt,
+        stdoutFingerprint,
+        stderrFingerprint,
+        outputFingerprint: validationOutputFingerprint({
+          schemaVersion: 1,
+          purpose: "LINEAGEGUARD_VALIDATOR_OUTPUT",
+          check: check.check,
           exitCode: 0,
-          startedAt: check.startedAt,
-          finishedAt: check.completedAt,
-          runId: expected.runId,
-          sandboxId: expected.sandboxId,
-          worktreeId: expected.worktreeId,
-          leaseId: expected.leaseId,
-          workerId: expected.workerId,
-          generation: expected.generation,
-          stdoutFingerprint: sha256(`${check.check}:stdout`),
-          stderrFingerprint: sha256(`${check.check}:stderr`),
-          outputFingerprint: sha256(`${check.check}:output`),
-          artifactSetFingerprint: sha256(observations),
-        },
+          stdoutFingerprint,
+          stderrFingerprint,
+          artifactObservations: observations,
+        }),
+        runId: expected.runId,
+        sandboxId: expected.sandboxId,
+        worktreeId: expected.worktreeId,
+        leaseId: expected.leaseId,
+        workerId: expected.workerId,
+        generation: expected.generation,
       };
     }),
-    executionMode: "LIVE",
-    attestation: {
-      keyId: "validation-key-2026-08",
-      issuer: "lineageguard-validation-worker",
-      algorithm: "HMAC-SHA256",
-      payloadFingerprint: "0".repeat(64),
-      signature: "a".repeat(43),
-    },
-  });
-  return executedValidationReceiptSchema.parse({
-    ...unsigned,
-    attestation: {
-      ...unsigned.attestation,
-      payloadFingerprint: validationAttestationPayloadFingerprint(unsigned),
-    },
+    completedAt: structural.completedAt,
+  };
+  return signedLiveValidationReceiptSchema.parse({
+    protectedHeaders,
+    payload,
+    signedPayloadFingerprint: liveValidationSignedPayloadFingerprint({
+      protectedHeaders,
+      payload,
+    }),
+    signature: "a".repeat(86),
   });
 }
-
-const trustedAttestationVerifier = {
-  verify: (attestation: { signature: string; payloadFingerprint: string }, payload: string) =>
-    attestation.signature === "a".repeat(43) && attestation.payloadFingerprint === payload,
-  isAuthenticatedOriginalLiveReceipt: (fingerprint: string) => fingerprint === "f".repeat(64),
-};
 
 describe("validation receipt contracts", () => {
   it("accepts only a complete passing canonical set for PASS and binds exact artifacts", () => {
@@ -916,27 +949,17 @@ describe("validation receipt contracts", () => {
     expect(() => assertStructuralValidationReceiptBinding(receipt, candidate)).not.toThrow();
   });
 
-  it("accepts only attested executed PASS receipts and derives the receipt ID", () => {
-    const candidate = migrationCandidateSchema.parse(candidateInput());
-    const receipt = executedReceiptInput(candidate);
-    const accepted = acceptExecutedValidationReceipt(
-      receipt,
-      candidate,
-      expectedValidationExecution(),
-      trustedAttestationVerifier,
-    );
-    expect(accepted.receiptId).toMatch(/^val_[a-f0-9]{24}$/);
-    expect(Object.isFrozen(accepted.checks)).toBe(true);
-    expect(Object.isFrozen(accepted.checks[0]?.execution)).toBe(true);
-    expect(accepted.receiptId).toBe(
-      acceptExecutedValidationReceipt(
-        receipt,
-        candidate,
-        expectedValidationExecution(),
-        trustedAttestationVerifier,
-      ).receiptId,
-    );
-    expect(executedValidationReceiptSchema.safeParse(validationReceiptInput()).success).toBe(false);
+  it("keeps structural PASS data and acceptance capabilities out of the root API", () => {
+    expect("acceptExecutedValidationReceipt" in domainPublic).toBe(false);
+    expect("AcceptedExecutedValidationReceipt" in domainPublic).toBe(false);
+    expect("ValidationAttestationVerifier" in domainPublic).toBe(false);
+    expect("structuralValidationReceiptSchema" in domainPublic).toBe(false);
+    expect("assertStructuralValidationReceiptBinding" in domainPublic).toBe(false);
+    const live = signedLiveReceiptInput();
+    expect(signedLiveValidationReceiptSchema.safeParse(live).success).toBe(true);
+    expect(
+      signedLiveValidationReceiptSchema.safeParse({ ...live, receiptId: "caller-id" }).success,
+    ).toBe(false);
     expect(
       structuralValidationReceiptSchema.safeParse({
         ...validationReceiptInput(),
@@ -945,77 +968,103 @@ describe("validation receipt contracts", () => {
     ).toBe(false);
   });
 
-  it("rejects forged execution provenance, artifact binding, and attestations", () => {
-    const candidate = migrationCandidateSchema.parse(candidateInput());
-    const accept = (receipt: ReturnType<typeof executedReceiptInput>) =>
-      acceptExecutedValidationReceipt(
-        receipt,
-        candidate,
-        expectedValidationExecution(),
-        trustedAttestationVerifier,
-      );
-    const wrongFence = structuredClone(executedReceiptInput(candidate));
-    required(wrongFence.checks[0], "check").execution.generation = 2;
-    expect(() => accept(wrongFence)).toThrow(/fence/);
-
-    const wrongValidator = structuredClone(executedReceiptInput(candidate));
-    required(wrongValidator.checks[0], "check").execution.validatorDigest = sha256("forged");
-    expect(() => accept(wrongValidator)).toThrow(/validator implementation/);
-
-    const wrongArtifacts = structuredClone(executedReceiptInput(candidate));
-    required(wrongArtifacts.checks[0], "check").execution.artifactSetFingerprint = sha256("wrong");
-    expect(() => accept(wrongArtifacts)).toThrow(/exact artifact hashes/);
-
-    const wrongCommand = structuredClone(executedReceiptInput(candidate));
-    required(wrongCommand.checks[0], "check").execution.commandId = "VALIDATE_BACKFILL_EQUALITY_V1";
-    expect(() => accept(wrongCommand)).toThrow(/allowlisted command/);
-
-    const missingObservation = structuredClone(executedReceiptInput(candidate));
-    missingObservation.artifactObservations.pop();
-    expect(() => accept(missingObservation)).toThrow();
-
-    const nonzero = structuredClone(executedReceiptInput(candidate));
-    required(nonzero.checks[0], "check").execution.exitCode = 1;
-    expect(() => accept(nonzero)).toThrow(/canonical successful/);
-
-    const forgedAttestation = structuredClone(executedReceiptInput(candidate));
-    forgedAttestation.attestation.signature = "b".repeat(43);
-    expect(() => accept(forgedAttestation)).toThrow(/not trusted/);
+  it("domain-separates every signed identity and execution binding", () => {
+    const receipt = signedLiveReceiptInput();
+    const unsigned = {
+      protectedHeaders: receipt.protectedHeaders,
+      payload: receipt.payload,
+    };
+    const fingerprint = liveValidationSignedPayloadFingerprint(unsigned);
+    for (const protectedHeaders of [
+      { ...receipt.protectedHeaders, issuer: "different-issuer" },
+      { ...receipt.protectedHeaders, keyId: "different-key" },
+      { ...receipt.protectedHeaders, algorithm: "HMAC-SHA256" as const },
+      { ...receipt.protectedHeaders, changeFingerprint: "b".repeat(64) },
+      { ...receipt.protectedHeaders, impactContextFingerprint: "c".repeat(64) },
+      { ...receipt.protectedHeaders, generation: 2 },
+    ]) {
+      expect(
+        liveValidationSignedPayloadFingerprint({ protectedHeaders, payload: receipt.payload }),
+      ).not.toBe(fingerprint);
+    }
+    const changedOutput = structuredClone(unsigned);
+    required(changedOutput.payload.checks[0], "check").stdoutFingerprint = sha256("different");
+    expect(
+      sha256({
+        domain: "lineageguard.validation.signed-live-envelope.v1",
+        envelope: changedOutput,
+      }),
+    ).not.toBe(fingerprint);
+    expect(
+      signedLiveValidationReceiptSchema.safeParse({ ...receipt, payload: changedOutput.payload })
+        .success,
+    ).toBe(false);
+    for (const protectedHeaders of [
+      { ...receipt.protectedHeaders, purpose: "OTHER_PURPOSE" },
+      { ...receipt.protectedHeaders, authoritativeGroundedDecision: "ALLOW" },
+    ]) {
+      expect(
+        sha256({
+          domain: "lineageguard.validation.signed-live-envelope.v1",
+          envelope: { protectedHeaders, payload: receipt.payload },
+        }),
+      ).not.toBe(fingerprint);
+      expect(
+        signedLiveValidationReceiptSchema.safeParse({ ...receipt, protectedHeaders }).success,
+      ).toBe(false);
+    }
   });
 
-  it("accepts replay only when it references an authenticated original live receipt", () => {
-    const candidate = migrationCandidateSchema.parse(candidateInput());
-    const base = executedReceiptInput(candidate);
-    const makeReplay = (originalFingerprint: string) => {
-      const replay = executedValidationReceiptSchema.parse({
-        ...base,
-        executionMode: "REPLAY",
-        authenticatedOriginalLiveReceiptFingerprint: originalFingerprint,
-      });
-      return executedValidationReceiptSchema.parse({
-        ...replay,
-        attestation: {
-          ...replay.attestation,
-          payloadFingerprint: validationAttestationPayloadFingerprint(replay),
-        },
-      });
+  it("rejects malformed expected validator configuration at runtime", () => {
+    const expected = expectedValidationExecution();
+    expect(
+      expectedValidationExecutionSchema.safeParse({ ...expected, validators: [] }).success,
+    ).toBe(false);
+    expect(
+      expectedValidationExecutionSchema.safeParse({
+        ...expected,
+        validators: expected.validators.map((validator, index) =>
+          index === 0 ? { ...validator, digest: undefined } : validator,
+        ),
+      }).success,
+    ).toBe(false);
+    expect(
+      expectedValidationExecutionSchema.safeParse({
+        ...expected,
+        validators: expected.validators.map((validator, index) =>
+          index === 1 ? { ...validator, check: expected.validators[0]?.check } : validator,
+        ),
+      }).success,
+    ).toBe(false);
+  });
+
+  it("replays the exact original signed LIVE receipt and cannot substitute candidate B", () => {
+    const original = signedLiveReceiptInput();
+    const replay = {
+      schemaVersion: 1,
+      purpose: "LINEAGEGUARD_VALIDATION_REPLAY_PRESENTATION",
+      originalLiveReceipt: original,
+      originalLiveReceiptFingerprint: signedLiveValidationReceiptFingerprint(original),
+      candidateFingerprint: original.protectedHeaders.candidateFingerprint,
+      artifactSetFingerprint: original.payload.artifactSetFingerprint,
     };
-    expect(() =>
-      acceptExecutedValidationReceipt(
-        makeReplay("f".repeat(64)),
-        candidate,
-        expectedValidationExecution(),
-        trustedAttestationVerifier,
-      ),
-    ).not.toThrow();
-    expect(() =>
-      acceptExecutedValidationReceipt(
-        makeReplay("e".repeat(64)),
-        candidate,
-        expectedValidationExecution(),
-        trustedAttestationVerifier,
-      ),
-    ).toThrow(/authenticated original/);
+    expect(validationReplayPresentationSchema.safeParse(replay).success).toBe(true);
+    const candidateB = migrationCandidateSchema.parse({
+      ...candidateInput(),
+      summary: "Different candidate B.",
+    });
+    expect(
+      validationReplayPresentationSchema.safeParse({
+        ...replay,
+        candidateFingerprint: migrationCandidateFingerprint(candidateB),
+      }).success,
+    ).toBe(false);
+    expect(
+      validationReplayPresentationSchema.safeParse({
+        ...replay,
+        originalLiveReceiptFingerprint: "e".repeat(64),
+      }).success,
+    ).toBe(false);
   });
 });
 
