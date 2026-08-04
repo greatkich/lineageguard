@@ -1,47 +1,83 @@
 {
-  "version": 1,
-  "skills": {
-    "datahub-enrich": {
-      "source": "datahub-project/datahub-skills",
-      "sourceType": "github",
-      "skillPath": "skills/datahub-enrich/SKILL.md",
-      "computedHash": "bc172288af8ae330e3070f152f6781bd5d05fe6787f0fc729db0a58d71f6f49a"
-    },
-    "datahub-lineage": {
-      "source": "datahub-project/datahub-skills",
-      "sourceType": "github",
-      "skillPath": "skills/datahub-lineage/SKILL.md",
-      "computedHash": "63ebb7132a00ac21665a4cc17537ea6381aa87dffb31d1b3d9ef72b12578a21b"
-    },
-    "datahub-quality": {
-      "source": "datahub-project/datahub-skills",
-      "sourceType": "github",
-      "skillPath": "skills/datahub-quality/SKILL.md",
-      "computedHash": "62e8717dd429eef8195bd9bcdc37e3c5d54de25f31f5ab4c80d76622e502678e"
-    },
-    "datahub-search": {
-      "source": "datahub-project/datahub-skills",
-      "sourceType": "github",
-      "skillPath": "skills/datahub-search/SKILL.md",
-      "computedHash": "063d5edd907e0e2cd289b1d6895f5b4bad672f5d068cb94d45af22f235d241d4"
-    },
-    "datahub-setup": {
-      "source": "datahub-project/datahub-skills",
-      "sourceType": "github",
-      "skillPath": "skills/datahub-setup/SKILL.md",
-      "computedHash": "bf1cf65987147a6513ccf5b9294422b8a54136f99e4e52f05c06308a69bf2b36"
-    },
-    "load-standards": {
-      "source": "datahub-project/datahub-skills",
-      "sourceType": "github",
-      "skillPath": "skills/load-standards/SKILL.md",
-      "computedHash": "f66b910201affd0884e76cec5dfcd0285338b06517371b95bc39562f1a08f3c0"
-    },
-    "using-datahub": {
-      "source": "datahub-project/datahub-skills",
-      "sourceType": "github",
-      "skillPath": "skills/using-datahub/SKILL.md",
-      "computedHash": "a0dc41438caf5b1f88a12317f15f431c161f55bcabecf7f85e6a46db1594190d"
+  "version": 2,
+  "source": {
+    "repository": "datahub-project/datahub-skills",
+    "sourceType": "github",
+    "ref": "f22f93074cf265ba6f9401947404f090c2584d9d",
+    "license": "Apache-2.0"
+  },
+  "vendoredRoots": [
+    ".agents/skills/datahub-enrich",
+    ".agents/skills/datahub-lineage",
+    ".agents/skills/datahub-quality",
+    ".agents/skills/datahub-search",
+    ".agents/skills/datahub-setup",
+    ".agents/skills/load-standards",
+    ".agents/skills/shared-references",
+    ".agents/skills/using-datahub"
+  ],
+  "files": {
+    ".agents/skills/datahub-enrich/README.md": "003a7ac90787e4f4d8f7cd92b9dbecfa908539c1e6ff204811c1a49e466f0261",
+    ".agents/skills/datahub-enrich/SKILL.md": "a76bbd0982bccff4315c71d965896c7ebe4a9e7688db361b2bf841694229821a",
+    ".agents/skills/datahub-enrich/references/bulk-operations-reference.md": "9044fd8c3c165a0a5fb58a383a9b52ba22198bb8eff1a0c64c6e92e16e2009cf",
+    ".agents/skills/datahub-enrich/references/mutation-reference.md": "a380728c5e23bc5b0e22477b03e7617e3cc69afec32ba0dbe4ec66190dd741d1",
+    ".agents/skills/datahub-enrich/templates/enrichment-plan.template.md": "5d861bac93b72e829881a5b8e6a5815b7aa22cb6fd23c9f3fb1369df947dac29",
+    ".agents/skills/datahub-enrich/templates/enrichment-report.template.md": "efbbf19e81eb17022a1f1580397b49918179b2c93939b82ef64cce81afe08087",
+    ".agents/skills/datahub-lineage/README.md": "fd917051db0089e1bcc86cbe46d8cc5a09b937562ce5fa539641b9481170c3ab",
+    ".agents/skills/datahub-lineage/SKILL.md": "156110b1ccaa82619871756056b1a4326fcad35029588475601e47d590704742",
+    ".agents/skills/datahub-lineage/references/lineage-patterns-reference.md": "3ad02793b310791addb2feedca5818c626802880236c57e366fc4f28565eb353",
+    ".agents/skills/datahub-lineage/templates/impact-analysis.template.md": "4fbbc8dfced355aab0f580f1e6f41365c1e91313ec0822d505a168ec87c719c6",
+    ".agents/skills/datahub-lineage/templates/lineage-map.template.md": "c43b4d2b0e81cb23e33aaa24d7ac45063c03d3cc2a55d6cf3662cf13197207a8",
+    ".agents/skills/datahub-quality/README.md": "9fe80a17fca1680832de1a8738ada37c864d55c606723ccbdfcbe51f90e6eb21",
+    ".agents/skills/datahub-quality/SKILL.md": "c9c1db6c635a5b2bdcd7475e3efcc247a236977d9aa13254b8105d3c51806994",
+    ".agents/skills/datahub-quality/references/assertion-mutations-reference.md": "38dbad4c4753e1c87b88d4f3361059b101c5fc61806b56020682b244118edca6",
+    ".agents/skills/datahub-quality/references/incident-subscription-reference.md": "b8ae421318d8b5f4dff39274cc390ef2a19504f7cef2d5ce1c05c0b3055f071e",
+    ".agents/skills/datahub-quality/templates/quality-report.template.md": "0de24aaabd4999a9ffc6f7dad441060746322556687d8e89b3a2fce1264eaeb1",
+    ".agents/skills/datahub-search/README.md": "a844e2d78a332d70e249d4d7926f3d135a50bebb230feb9b391966a1515fdfa0",
+    ".agents/skills/datahub-search/SKILL.md": "32570cf5d3f1659cce2ae0f4cf1a1b59eef98f5ab0f81e9a20c5cf17c6d23d7b",
+    ".agents/skills/datahub-search/references/entity-type-reference.md": "ab06b32fd701778435111836784ebd6da53b7ae3d5f4df6e5fd98da2c3d663e5",
+    ".agents/skills/datahub-search/references/search-filter-reference.md": "2fc00b56aa10cbd73712c9d6b544d54544a0a2626bfd01c74691aaf5a24e7eb6",
+    ".agents/skills/datahub-setup/README.md": "689f5c87dc4b6f38679f8c05feaf95e267559bf4113ba120ec9c0a07e613d89e",
+    ".agents/skills/datahub-setup/SKILL.md": "ed4c2408e82ac09ff81ca6ce35bbd9e398555837a69d10251498a409a3e77ed5",
+    ".agents/skills/datahub-setup/references/configuration-schema.md": "f8b2e2d56d6bb7a7324c370b5737258e3f649aee3648398a5ce720d8c61b53af",
+    ".agents/skills/datahub-setup/templates/agent-config.template.md": "c4f8e8286ece31a107999d0f29d7cd8aa49724e86941ecd93f6416f0ae3bd4e5",
+    ".agents/skills/datahub-setup/templates/setup-checklist.template.md": "675863752d1a0a3f2be20dd7fb10d95418ab566401691f376c50e45de38c411b",
+    ".agents/skills/load-standards/README.md": "53b3cf0e09b85a2d582349241b966561f593f055d5054027ec6a764000201101",
+    ".agents/skills/load-standards/SKILL.md": "88491de9238e288d05cc24fa8ba021a1b87971377a6fee97d4ddee0836b6d51e",
+    ".agents/skills/load-standards/evaluations/load-all-standards.json": "1b608d1ef24eeb1412504ba1c38fdcc2dd8a57391bc7f68b024006e4006ace2f",
+    ".agents/skills/load-standards/evaluations/load-before-build.json": "540925f8f209383c80abcb14bfdab6dc8f938cb88f6c62e63b032bc8c1ab2fd4",
+    ".agents/skills/load-standards/evaluations/what-are-standards.json": "1629f21ee95d4e26c0da9fb4ca5100ed878846cd96c3a21653d5ea69786db333",
+    ".agents/skills/load-standards/standards/api.md": "cee8b9c3f58896b36ef0bab6b6d2ce46be0a77b34983f4c74048695baed0a875",
+    ".agents/skills/load-standards/standards/code_style.md": "55db76e2fac4fd2cbd1ac9b6e593f51acc5ce3fa1a41fd2129b62fb567deb1e9",
+    ".agents/skills/load-standards/standards/containers.md": "22cc91d91f18f0de9b5e47b2d44e807fea2d720b0dbce2c8ed592fd60f46d6d2",
+    ".agents/skills/load-standards/standards/lineage.md": "a28643eaad2f10d8bb343aa716a31411707b4025899312804db023f2f8d78a6d",
+    ".agents/skills/load-standards/standards/main.md": "edd5b2b48924ffb01709f58c3df4c61719ab2735786246bbebd72ab38c0504d5",
+    ".agents/skills/load-standards/standards/patterns.md": "2c0cc1dcf811f493ce61d09600fd14039b7ec6af259b1fc42c9053fc58241902",
+    ".agents/skills/load-standards/standards/performance.md": "e6085652cf95e52c419b92c6b3ff4523f5d3d06cfb98eb72b0cda60cc61726a3",
+    ".agents/skills/load-standards/standards/platform_registration.md": "1c62edc31560d1c1053632403a2a881e4fe7b6c68fbc732234a3a7aa25dd3a05",
+    ".agents/skills/load-standards/standards/registration.md": "411c69ef7f51bf2e1bc9593301119c3443c877b4a071eb74d9a1ea008a7752af",
+    ".agents/skills/load-standards/standards/source_types/bi_tools.md": "843d3ea7c54203026fe71c7a5fcda4b7fb0657363f1a1f23f17216ae784a348d",
+    ".agents/skills/load-standards/standards/source_types/data_lakes.md": "3074c0e8eb7f768399173e08113710f36b9ba896dad10d1d0ab7e6641e2ab8ec",
+    ".agents/skills/load-standards/standards/source_types/data_warehouses.md": "691b830e0646e56733fcd74ff32b8fa591540c225065848eb979dcd38084fd8c",
+    ".agents/skills/load-standards/standards/source_types/document_sources.md": "876d4ad05bc9d866bd0f7cbe7b28b3ee7adf6b09156198b97cddc50fe6575bd2",
+    ".agents/skills/load-standards/standards/source_types/identity_platforms.md": "04e4e460e006ca7259b94df17028b8992d81e4b42c4be57872748f9cad1cb750",
+    ".agents/skills/load-standards/standards/source_types/ml_platforms.md": "37a2c9c8c294dd1392f8e44ac1e3d29e2634db4d8ad5d14c864c6396d03aa1dd",
+    ".agents/skills/load-standards/standards/source_types/nosql_databases.md": "804ad3d5b0ee747d9745f6d9e2550c00b3579124f32e5658ed1d81c3dc5f19bf",
+    ".agents/skills/load-standards/standards/source_types/orchestration_tools.md": "e8216ffed9aef79b60108b77df505b87acff793b6890ee21fe52fdc9031238b4",
+    ".agents/skills/load-standards/standards/source_types/product_analytics.md": "eb150b960666495ccf6c02b3ebe61eec3073d1fc4bd75408eb80e5790d543d78",
+    ".agents/skills/load-standards/standards/source_types/query_engines.md": "09f13b9f8c826e71e35690470678aebe43f0b1fe0539f3f5f6c1fb307435fbe7",
+    ".agents/skills/load-standards/standards/source_types/sql_databases.md": "a5070f33e138b91012ca4a5dba0e22188dfa05009835cffc8d0252b0bf82dbeb",
+    ".agents/skills/load-standards/standards/source_types/streaming_platforms.md": "b78f5ae2cb819c6ff7070ffae55a51dd5dbd0f8bacf87eeaf3262d6016a138a5",
+    ".agents/skills/load-standards/standards/sql.md": "c515002c35d1e2d960fcd01f93598ff9f7c5d4f5775826f5fc79de39e48acb72",
+    ".agents/skills/load-standards/standards/testing.md": "ecd073ce365383e13e8b9ada1315467e2a9e39e657097e31521ba3e84f812182",
+    ".agents/skills/shared-references/datahub-cli-reference.md": "e46126e718a54333a9c19d450164dd4a44615768de6a6a11aedc6a49e24ef94a",
+    ".agents/skills/using-datahub/SKILL.md": "a10adcd2e63176e2dee1adbef0362bc17e6b09ede63761ddbdb7a727f9416890"
+  },
+  "localPatches": {
+    ".agents/skills/datahub-setup/SKILL.md": {
+      "description": "Remove credential-reading and chat-token guidance; require local secret entry, metadata-only checks, verified TLS, and exposed-token revocation.",
+      "upstreamSha256": "1b809071bd46a853c4e1fbe28b63b6cb3b2473a17eb09b72c059c6afa0c773f7",
+      "vendoredSha256": "ed4c2408e82ac09ff81ca6ce35bbd9e398555837a69d10251498a409a3e77ed5"
     }
   }
 }

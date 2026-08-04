@@ -86,7 +86,14 @@ compose.datahub.yaml
 scripts/check-environment.sh
 scripts/check-boundaries.mjs
 scripts/verify-foundation.sh
+scripts/verify-agent-skills.mjs
+scripts/verify-agent-skills.test.mjs
+skills-lock.json
+docs/THIRD_PARTY_SKILLS.md
 tests/foundation/package-boundaries.test.ts
+tests/foundation/tooling-contracts.test.ts
+tests/foundation/fixtures/implicit-any/tsconfig.json
+tests/foundation/fixtures/implicit-any/index.ts
 apps/web/package.json
 apps/worker/package.json
 packages/{domain,agent,datahub,github,validation,db,ui}/package.json
@@ -139,9 +146,11 @@ Every unlisted cross-owner edge is forbidden, including every package-to-app edg
 - Fresh install with the pinned runtimes and lockfiles exits zero.
 - A minimal `apps/web` route, worker process smoke, pure domain test, and Python test pass.
 - A clean local setup provisions the pinned Chromium binary before the Playwright smoke; clean Linux CI provisions Chromium plus required system dependencies before the verification script.
-- A TypeScript fixture containing implicit `any` fails `pnpm typecheck` in the test harness.
+- An executable TypeScript fixture extending the real shared configuration fails `tsc --noEmit` with a nonzero exit and diagnostic `TS7006` for an implicit parameter type.
 - A deliberately malformed environment fails `pnpm env:check` with all missing requirements listed and no secret values.
 - CI uses frozen/locked dependency installation and never generates a changed lockfile.
+- Structured contract tests parse the effective Codex TOML and CI YAML, execute Make targets through controlled command shims, and prove the pinned MCP command, read-only mutation flag, and install/provision/verify ordering from behavior rather than source substrings.
+- The agent-skill gate rejects missing, extra, tampered, symlinked, or non-regular vendored files, mutable or missing provenance, and inconsistent local-patch hashes; its bootstrap succeeds without any network-capable installer.
 - The boundary fixture suite rejects every forbidden matrix edge and a cycle, while the complete allowed-edge fixture remains acyclic and passes.
 
 ### Feature verification
@@ -150,6 +159,8 @@ Every unlisted cross-owner edge is forbidden, including every package-to-app edg
 corepack pnpm install --frozen-lockfile
 pnpm exec playwright install chromium
 uv sync --project tools/datahub --locked
+node --test scripts/verify-agent-skills.test.mjs
+bash scripts/bootstrap-agent-tooling.sh
 pnpm env:check
 pnpm format:check
 pnpm lint
