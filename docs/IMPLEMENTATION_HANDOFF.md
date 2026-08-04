@@ -82,7 +82,7 @@ Outcome:
 - dbt models;
 - dashboard and ML entities;
 - owners/glossary/criticality;
-- unmanaged query history signal;
+- observed `SYSTEM` query entity with exact subject and statement fingerprint;
 - table and field-level lineage;
 - repeatable reset/seed/verify commands.
 
@@ -334,7 +334,7 @@ Use official documentation as the source of truth. Record decisions in ADRs when
 | Risk | Early test | Cut/fallback |
 |---|---|---|
 | Field lineage ingestion takes too long | prove F1 first | seed via official SDK/API with controlled fixtures |
-| Query history unavailable in OSS seed | verify in F1 | model it as a documented query asset/evidence fixture while clearly labeling source |
+| Query usage statistics are not exposed by the pinned MCP projections | verify graph lifecycle separately | expose only the query entity, source, subject, and statement fingerprint as MCP evidence |
 | MCP mutation incompatibility | spike before F8 | use official DataHub SDK for write-back behind same port, document why |
 | GitHub API permissions fail | smoke before F7 | pre-create live PR and use replay adapter for mutation step |
 | Model-generated patch unstable | lock canonical repository and Zod schemas | use template-constrained generation with model-filled rationale/targets |

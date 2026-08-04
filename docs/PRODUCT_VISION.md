@@ -81,7 +81,7 @@ commerce.orders.customer_id
   │          └─ Finance Revenue Dashboard
   ├─ fraud.customer_features.customer_id
   │    └─ Fraud Model v3
-  └─ unmanaged query: finance-monthly-close.sql
+  └─ observed SYSTEM query: finance-monthly-close.sql
 ```
 
 It also contains owners and semantic context:

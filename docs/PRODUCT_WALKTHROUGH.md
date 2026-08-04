@@ -78,7 +78,7 @@ Show concise, real tool activity:
 Resolved field
 Collected downstream lineage
 Found exact paths
-Inspected query history
+Resolved cataloged query subjects
 Resolved owners and critical assets
 ```
 

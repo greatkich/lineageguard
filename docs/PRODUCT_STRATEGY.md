@@ -212,7 +212,7 @@ The seeded DataHub instance must show field-level paths from `commerce.orders.cu
 - an analytics model;
 - a dashboard;
 - a fraud model;
-- an unmanaged query signal.
+- an observed `SYSTEM` query with an exact DataHub subject and statement fingerprint.
 
 No graph, no agent implementation.
 
