@@ -6,12 +6,12 @@ describe("public DataHub adapter boundary", () => {
     expect(Object.keys(api).sort()).toEqual([
       "DataHubAdapterError",
       "createOfficialLiveDataHubContextPort",
-      "createVerifiedReplayBundle",
-      "createVerifiedReplayDataHubContextPort",
       "officialDataHubMcpServer",
     ]);
     expect(api).not.toHaveProperty("collectCanonicalObservations");
     expect(api).not.toHaveProperty("createReadOnlyToolClient");
+    expect(api).not.toHaveProperty("createVerifiedReplayBundle");
+    expect(api).not.toHaveProperty("createVerifiedReplayDataHubContextPort");
     expect(api).not.toHaveProperty("normalizeCanonicalLiveCollection");
   });
 });

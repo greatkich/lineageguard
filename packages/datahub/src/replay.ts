@@ -18,6 +18,9 @@ const isoDateTimeSchema = z.iso.datetime({ offset: true });
 export const verifiedReplayScenarioMarker = "lineageguard-canonical-customer-id-rename-v1" as const;
 export const verifiedReplayRedactionMethod = "normalized-domain-evidence-only-v1" as const;
 
+// Staged internal implementation only. Do not export replay constructors from the package root
+// until a real live bundle passes verification and an authenticated fixture trust policy exists.
+
 const manifestIdentitySchema = z
   .object({
     schemaVersion: z.literal(1),
