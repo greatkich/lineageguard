@@ -31,7 +31,7 @@ domain evidence with stable provenance and fingerprints.
   corresponding `lineageguard-canonical` namespace from the verified graph.
 - Resolution is explicit typed evidence. It binds the requested platform, platform instance,
   environment, database, schema, dataset, and field to the resolved dataset and schema-field URNs,
-  with independent search provenance.
+  with one ordered provenance entry for every bounded search page.
 - A failure before unique resolution is a typed collection-failure result, not an `ImpactContext`
   carrying a fabricated resolved URN. `COMPLETE` and `PARTIAL` contexts exist only after successful
   resolution.
@@ -87,6 +87,9 @@ domain evidence with stable provenance and fingerprints.
 Every normalized item preserves the MCP tool, invocation ID, retrieval timestamp, and SHA-256 of the
 canonical raw response bytes. Stable evidence IDs derive from full normalized semantics, including
 criticality, targets, payload, related evidence, and non-volatile provenance.
+For paged tools, every page remains a separate chronological provenance entry. Consecutive pages of
+the same semantic role collapse only when deriving the stable evidence ID, so page boundaries and
+invocation details change the collection fingerprint without changing equivalent semantic evidence.
 Compound provenance is chronological after resolution. Reusing one invocation across evidence is
 allowed only when its tool, retrieval time, and raw-response fingerprint are identical everywhere;
 an invocation cannot represent both a successful response and a failure.
