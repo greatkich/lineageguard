@@ -1,7 +1,9 @@
 export type DataHubAdapterErrorCode =
+  | "AMBIGUOUS"
   | "CONFIGURATION"
   | "CURSOR_CYCLE"
   | "MALFORMED_RESPONSE"
+  | "NOT_FOUND"
   | "PAGINATION_LIMIT"
   | "REPLAY_INVALID"
   | "RESPONSE_LIMIT"

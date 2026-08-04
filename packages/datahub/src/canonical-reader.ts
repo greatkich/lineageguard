@@ -109,6 +109,21 @@ function safeTargets(input: CanonicalCollectionTargets): CanonicalCollectionTarg
   return parsed.data;
 }
 
+function requireUniqueResolution(
+  count: number,
+  invocation: RawToolInvocation,
+  subject: string,
+): void {
+  if (count === 1) return;
+  throw new DataHubAdapterError(
+    count === 0 ? "NOT_FOUND" : "AMBIGUOUS",
+    count === 0
+      ? `Canonical DataHub ${subject} was not found.`
+      : `Canonical DataHub ${subject} resolution was ambiguous.`,
+    { invocationId: invocation.invocationId, tool: invocation.tool },
+  );
+}
+
 export async function collectCanonicalObservations(
   invoker: CanonicalToolInvoker,
   input: CanonicalCollectionTargets,
@@ -125,6 +140,12 @@ export async function collectCanonicalObservations(
     },
     parseSearchPage,
   );
+  requireUniqueResolution(
+    resolutionSearch.data.searchResults.filter((result) => result.entity.urn === targets.sourceUrn)
+      .length,
+    resolutionSearch.invocation,
+    "dataset",
+  );
   const schemaFields = await observe(
     invoker,
     "list_schema_fields",
@@ -135,6 +156,21 @@ export async function collectCanonicalObservations(
       urn: targets.sourceUrn,
     },
     parseSchemaFieldsPage,
+  );
+  if (schemaFields.data.urn !== targets.sourceUrn) {
+    throw new DataHubAdapterError(
+      "MALFORMED_RESPONSE",
+      "DataHub schema response did not match the resolved dataset.",
+      {
+        invocationId: schemaFields.invocation.invocationId,
+        tool: schemaFields.invocation.tool,
+      },
+    );
+  }
+  requireUniqueResolution(
+    schemaFields.data.fields.filter((field) => field.fieldPath === targets.field).length,
+    schemaFields.invocation,
+    "schema field",
   );
   const lineageDiscovery = await observe(
     invoker,

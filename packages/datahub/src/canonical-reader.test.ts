@@ -36,15 +36,17 @@ const targets: CanonicalCollectionTargets = {
 };
 
 function payloadFor(tool: ReadToolName, call: number): RawToolInvocation["payload"] {
-  if (tool === "search") return { count: 0, start: 0, total: 0 };
+  if (tool === "search") {
+    return { count: 1, searchResults: [{ entity: { urn: sourceUrn } }], start: 0, total: 1 };
+  }
   if (tool === "list_schema_fields") {
     return {
-      fields: [],
-      matchingCount: 0,
+      fields: [{ fieldPath: "customer_id", nativeDataType: "bigint", nullable: false }],
+      matchingCount: 1,
       offset: 0,
       remainingCount: 0,
-      returned: 0,
-      totalFields: 0,
+      returned: 1,
+      totalFields: 1,
       urn: sourceUrn,
     };
   }
@@ -161,6 +163,96 @@ describe("canonical official MCP reader", () => {
       code: "MALFORMED_RESPONSE",
     });
     expect(invoke).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    [[], "NOT_FOUND"],
+    [[{ entity: { urn: sourceUrn } }, { entity: { urn: sourceUrn } }], "AMBIGUOUS"],
+  ])("fails closed on non-unique source resolution", async (searchResults, code) => {
+    const invoke = vi.fn(
+      async (tool: ReadToolName): Promise<RawToolInvocation> => ({
+        invocationId: "inv_resolution",
+        payload: {
+          count: searchResults.length,
+          searchResults,
+          start: 0,
+          total: searchResults.length,
+        },
+        responseFingerprint: "a".repeat(64),
+        retrievedAt: "2026-08-04T08:00:00.000Z",
+        tool,
+      }),
+    );
+
+    await expect(collectCanonicalObservations({ invoke }, targets)).rejects.toMatchObject({ code });
+    expect(invoke).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    [[], "NOT_FOUND"],
+    [
+      [
+        { fieldPath: "customer_id", nativeDataType: "bigint", nullable: false },
+        { fieldPath: "customer_id", nativeDataType: "text", nullable: true },
+      ],
+      "AMBIGUOUS",
+    ],
+  ])("fails closed on non-unique field resolution", async (fields, code) => {
+    let call = 0;
+    const invoke = vi.fn(async (tool: ReadToolName): Promise<RawToolInvocation> => {
+      call += 1;
+      const payload =
+        tool === "search"
+          ? payloadFor(tool, call)
+          : {
+              fields,
+              matchingCount: fields.length,
+              offset: 0,
+              remainingCount: 0,
+              returned: fields.length,
+              totalFields: fields.length,
+              urn: sourceUrn,
+            };
+      return {
+        invocationId: `inv_resolution_${call}`,
+        payload,
+        responseFingerprint: String(call).padStart(64, "0"),
+        retrievedAt: `2026-08-04T08:00:0${call}.000Z`,
+        tool,
+      };
+    });
+
+    await expect(collectCanonicalObservations({ invoke }, targets)).rejects.toMatchObject({ code });
+    expect(invoke).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects a schema response for a different dataset", async () => {
+    let call = 0;
+    const invoke = vi.fn(async (tool: ReadToolName): Promise<RawToolInvocation> => {
+      call += 1;
+      const payload = payloadFor(tool, call);
+      if (tool === "list_schema_fields" && !Array.isArray(payload)) {
+        return {
+          invocationId: `inv_schema_${call}`,
+          payload: { ...payload, urn: revenueUrn },
+          responseFingerprint: String(call).padStart(64, "0"),
+          retrievedAt: `2026-08-04T08:00:0${call}.000Z`,
+          tool,
+        };
+      }
+      return {
+        invocationId: `inv_schema_${call}`,
+        payload,
+        responseFingerprint: String(call).padStart(64, "0"),
+        retrievedAt: `2026-08-04T08:00:0${call}.000Z`,
+        tool,
+      };
+    });
+
+    await expect(collectCanonicalObservations({ invoke }, targets)).rejects.toMatchObject({
+      code: "MALFORMED_RESPONSE",
+    });
+    expect(invoke).toHaveBeenCalledTimes(2);
   });
 
   it("rejects unbounded or query-shaping target identifiers before transport", async () => {
