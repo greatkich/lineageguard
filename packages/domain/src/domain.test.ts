@@ -146,21 +146,21 @@ describe("canonical impact evidence", () => {
     const second = createCanonicalImpactContext(change.id);
     expect(first).toEqual(second);
     expect(first.impactContextFingerprint).toBe(
-      "30e45ce427447fb4eae7ecc8dc8c4541d1011918917f05643bdd3541adc1988b",
+      "279bdd00ec97b74d63af2b9ac49732b17f5ee51f0ed1a35363898ab574076018",
     );
     expect(first.collectionFingerprint).toBe(
-      "582814b507f24c1d04d1b0c1d039b0ff269f060e83eb7b686c2e20d8ae8087a1",
+      "287299aa718eb1f377a84ba941470f26066822efbb33bf8d43c6cf59fe20eeb9",
     );
     expect(first.evidence.map((item) => `${item.kind}:${item.id}`)).toEqual([
-      "OWNER:ev_08aa48da75f2baf0dc211235",
-      "OWNER:ev_11f0757953e00a83255be79a",
-      "ML_MODEL:ev_14409b76116ab3001ee7be31",
-      "GLOSSARY_TERM:ev_1edae5fd4669d5e7dface1a1",
-      "LINEAGE_PATH:ev_468d07c74e695eee3736e0c3",
-      "SCHEMA:ev_627154c1f4fcaf7fe6396a4b",
-      "DASHBOARD:ev_8258054e653ca45a6096641d",
-      "QUERY_USAGE:ev_8648266e410b86e6f5b009c0",
-      "LINEAGE_PATH:ev_d30ca550c3fb2ba8acd10227",
+      "SCHEMA:ev_09d0ce72de399bd52bd82247",
+      "QUERY_USAGE:ev_171e9e739d3d518e46aad9ee",
+      "DASHBOARD:ev_59eb5c12bc8d30556ca933fe",
+      "OWNER:ev_6978b44631d58088fb428f8b",
+      "LINEAGE_PATH:ev_9e907158dba3dd3b5ea635af",
+      "ML_MODEL:ev_9fcccd9cd20afda2f0635602",
+      "LINEAGE_PATH:ev_a193c7a6f647028a5d17fbac",
+      "GLOSSARY_TERM:ev_ba2121f8360a611382d3a157",
+      "OWNER:ev_d4164db054a4481b94a20931",
     ]);
     expect(first.evidence.some((item) => item.kind === "SCHEMA")).toBe(true);
     expect(first.evidence.filter((item) => item.kind === "LINEAGE_PATH")).toHaveLength(2);
@@ -178,6 +178,17 @@ describe("canonical impact evidence", () => {
     expect(paths.every((item) => item.payload.segments.at(-1)?.granularity === "ENTITY")).toBe(
       true,
     );
+    expect(
+      paths.every(
+        (item) =>
+          item.provenance.map((entry) => `${entry.role}:${entry.tool}`).join(",") ===
+          [
+            "LINEAGE_DISCOVERY:get_lineage",
+            "FIELD_PATH:get_lineage_paths_between",
+            "ENTITY_PATH:get_lineage_paths_between",
+          ].join(","),
+      ),
+    ).toBe(true);
     const query = first.evidence.find((item) => item.kind === "QUERY_USAGE");
     expect(query?.payload).toMatchObject({
       queryUrn: canonicalQueryUrn,
@@ -185,11 +196,19 @@ describe("canonical impact evidence", () => {
       observationBasis: "DATAHUB_QUERY_ENTITY",
       subjectDatasetUrn: canonicalAnalyticsRevenueUrn,
     });
+    expect(query?.provenance.map((entry) => `${entry.role}:${entry.tool}`)).toEqual([
+      "QUERY_DISCOVERY:get_dataset_queries",
+      "QUERY_DETAILS:get_entities",
+    ]);
     const glossary = first.evidence.find((item) => item.kind === "GLOSSARY_TERM");
     expect(glossary?.payload).toMatchObject({
       termUrn: canonicalGlossaryTermUrn,
       schemaFieldUrn: canonicalSchemaFieldUrn,
     });
+    expect(glossary?.provenance.map((entry) => `${entry.role}:${entry.tool}`)).toEqual([
+      "GLOSSARY_BINDING:list_schema_fields",
+      "GLOSSARY_DETAILS:get_entities",
+    ]);
   });
 
   it("preserves the adapter-supplied raw response fingerprint separately", () => {
@@ -198,12 +217,38 @@ describe("canonical impact evidence", () => {
     if (!item) throw new Error("fixture must have schema evidence");
     const changedRaw = {
       ...item,
-      provenance: { ...item.provenance, responseFingerprint: "b".repeat(64) },
+      provenance: item.provenance.map((entry, index) =>
+        index === 0 ? { ...entry, responseFingerprint: "b".repeat(64) } : entry,
+      ),
     };
     const parsed = evidenceItemSchema.parse(changedRaw);
     expect(parsed.id).toBe(item.id);
     expect(parsed.fingerprint).toBe(item.fingerprint);
-    expect(parsed.provenance.responseFingerprint).toBe("b".repeat(64));
+    expect(parsed.provenance[0]?.responseFingerprint).toBe("b".repeat(64));
+  });
+
+  it("requires every ordered MCP proof used to construct compound evidence", () => {
+    const context = createCanonicalImpactContext(canonicalChange().id);
+    const query = context.evidence.find((item) => item.kind === "QUERY_USAGE");
+    if (!query) throw new Error("fixture must have query evidence");
+    const { id: _id, fingerprint: _fingerprint, ...queryDraft } = query;
+    const incompleteQuery = createEvidence({
+      ...queryDraft,
+      provenance: [required(queryDraft.provenance[0], "query discovery provenance is required")],
+    });
+    const incompleteContext = reboundContext(context, {
+      evidence: context.evidence.map((item) => (item.id === query.id ? incompleteQuery : item)),
+    });
+    expect(impactContextSchema.safeParse(incompleteContext).success).toBe(false);
+
+    const reversedQuery = createEvidence({
+      ...queryDraft,
+      provenance: [...queryDraft.provenance].reverse(),
+    });
+    const reversedContext = reboundContext(context, {
+      evidence: context.evidence.map((item) => (item.id === query.id ? reversedQuery : item)),
+    });
+    expect(impactContextSchema.safeParse(reversedContext).success).toBe(false);
   });
 
   it("binds evidence ID and fingerprint to policy-relevant normalized fields", () => {
@@ -435,7 +480,12 @@ describe("deterministic risk policy", () => {
       ...context,
       evidence: context.evidence.map((item) =>
         item.id === first.id
-          ? { ...item, provenance: { ...item.provenance, responseFingerprint: "c".repeat(64) } }
+          ? {
+              ...item,
+              provenance: item.provenance.map((entry, index) =>
+                index === 0 ? { ...entry, responseFingerprint: "c".repeat(64) } : entry,
+              ),
+            }
           : item,
       ),
     };

@@ -122,6 +122,19 @@ export type Criticality = z.infer<typeof criticalitySchema>;
 export const evidenceProvenanceSchema = z
   .object({
     source: z.literal("DATAHUB_MCP"),
+    role: z.enum([
+      "RESOLUTION",
+      "SCHEMA",
+      "LINEAGE_DISCOVERY",
+      "FIELD_PATH",
+      "ENTITY_PATH",
+      "ENTITY_DETAILS",
+      "QUERY_DISCOVERY",
+      "QUERY_DETAILS",
+      "OWNER",
+      "GLOSSARY_BINDING",
+      "GLOSSARY_DETAILS",
+    ]),
     tool: z.enum([
       "search",
       "get_entities",
@@ -142,7 +155,9 @@ export const impactResolutionSchema = z
     datasetUrn: z.literal(canonicalDatasetUrn),
     schemaFieldUrn: z.literal(canonicalSchemaFieldUrn),
     nativeFieldPath: z.literal(canonicalNativeFieldPath),
-    provenance: evidenceProvenanceSchema.extend({ tool: z.literal("search") }).strict(),
+    provenance: evidenceProvenanceSchema
+      .extend({ tool: z.literal("search"), role: z.literal("RESOLUTION") })
+      .strict(),
   })
   .strict();
 export type ImpactResolution = z.infer<typeof impactResolutionSchema>;
@@ -156,7 +171,7 @@ const baseEvidenceShape = {
   title: z.string().min(1).max(240),
   summary: z.string().min(1).max(1_000),
   criticality: criticalitySchema,
-  provenance: evidenceProvenanceSchema,
+  provenance: z.array(evidenceProvenanceSchema).min(1).max(8),
   relatedEvidenceIds: z.array(evidenceIdSchema).max(20),
 };
 
@@ -320,7 +335,11 @@ function normalizedEvidenceIdentity(item: Omit<EvidenceItem, "fingerprint" | "id
     criticality: item.criticality,
     payload: item.payload,
     relatedEvidenceIds: [...item.relatedEvidenceIds].sort(),
-    provenance: { source: item.provenance.source, tool: item.provenance.tool },
+    provenance: item.provenance.map((entry) => ({
+      source: entry.source,
+      tool: entry.tool,
+      role: entry.role,
+    })),
   };
 }
 
@@ -467,14 +486,49 @@ export const impactContextSchema = z
     }
 
     for (const [index, item] of context.evidence.entries()) {
-      if (
-        new Date(item.provenance.retrievedAt).getTime() > new Date(context.collectedAt).getTime()
-      ) {
-        issue(refinement, "Evidence cannot be retrieved after context collection", [
+      const provenanceKeys = item.provenance.map(
+        (entry) => `${entry.role}\u0000${entry.tool}\u0000${entry.invocationId}`,
+      );
+      if (new Set(provenanceKeys).size !== provenanceKeys.length) {
+        issue(refinement, "Evidence provenance entries must be unique", [
           "evidence",
           index,
           "provenance",
-          "retrievedAt",
+        ]);
+      }
+      for (const [provenanceIndex, entry] of item.provenance.entries()) {
+        if (new Date(entry.retrievedAt).getTime() > new Date(context.collectedAt).getTime()) {
+          issue(refinement, "Evidence cannot be retrieved after context collection", [
+            "evidence",
+            index,
+            "provenance",
+            provenanceIndex,
+            "retrievedAt",
+          ]);
+        }
+      }
+      const expectedProvenance =
+        item.kind === "SCHEMA"
+          ? ["SCHEMA:list_schema_fields"]
+          : item.kind === "LINEAGE_PATH"
+            ? [
+                "LINEAGE_DISCOVERY:get_lineage",
+                "FIELD_PATH:get_lineage_paths_between",
+                "ENTITY_PATH:get_lineage_paths_between",
+              ]
+            : item.kind === "DASHBOARD" || item.kind === "ML_MODEL"
+              ? ["ENTITY_DETAILS:get_entities"]
+              : item.kind === "QUERY_USAGE"
+                ? ["QUERY_DISCOVERY:get_dataset_queries", "QUERY_DETAILS:get_entities"]
+                : item.kind === "OWNER"
+                  ? ["OWNER:get_entities"]
+                  : ["GLOSSARY_BINDING:list_schema_fields", "GLOSSARY_DETAILS:get_entities"];
+      const actualProvenance = item.provenance.map((entry) => `${entry.role}:${entry.tool}`);
+      if (JSON.stringify(actualProvenance) !== JSON.stringify(expectedProvenance)) {
+        issue(refinement, "Evidence provenance does not match its semantic collection steps", [
+          "evidence",
+          index,
+          "provenance",
         ]);
       }
       const sortedRelated = [...item.relatedEvidenceIds].sort();
@@ -853,11 +907,13 @@ export function createEvidence(draft: EvidenceDraft): EvidenceItem {
 const retrievedAt = "2026-08-04T08:00:00.000Z";
 
 function provenance(
+  role: z.infer<typeof evidenceProvenanceSchema>["role"],
   tool: z.infer<typeof evidenceProvenanceSchema>["tool"],
   invocationId: string,
 ): z.infer<typeof evidenceProvenanceSchema> {
   return {
     source: "DATAHUB_MCP",
+    role,
     tool,
     invocationId,
     retrievedAt,
@@ -871,7 +927,7 @@ export function createCanonicalImpactContext(changeId: string): ImpactContext {
     datasetUrn: canonicalDatasetUrn,
     schemaFieldUrn: canonicalSchemaFieldUrn,
     nativeFieldPath: canonicalNativeFieldPath,
-    provenance: provenance("search", "canonical-resolution"),
+    provenance: provenance("RESOLUTION", "search", "canonical-resolution"),
   });
   const schema = createEvidence({
     kind: "SCHEMA",
@@ -881,7 +937,7 @@ export function createCanonicalImpactContext(changeId: string): ImpactContext {
     summary: "The source field is a non-null bigint in PostgreSQL.",
     criticality: "HIGH",
     relatedEvidenceIds: [],
-    provenance: provenance("list_schema_fields", "canonical-schema"),
+    provenance: [provenance("SCHEMA", "list_schema_fields", "canonical-schema")],
     payload: {
       schemaFieldUrn: canonicalSchemaFieldUrn,
       nativeFieldPath: canonicalNativeFieldPath,
@@ -898,7 +954,11 @@ export function createCanonicalImpactContext(changeId: string): ImpactContext {
     summary: "customer_id flows through the revenue datasets into the Finance dashboard.",
     criticality: "CRITICAL",
     relatedEvidenceIds: [],
-    provenance: provenance("get_lineage_paths_between", "canonical-lineage-revenue"),
+    provenance: [
+      provenance("LINEAGE_DISCOVERY", "get_lineage", "canonical-lineage-discovery"),
+      provenance("FIELD_PATH", "get_lineage_paths_between", "canonical-lineage-revenue-field"),
+      provenance("ENTITY_PATH", "get_lineage_paths_between", "canonical-lineage-revenue-entity"),
+    ],
     payload: {
       direction: "DOWNSTREAM",
       fieldLevel: true,
@@ -915,7 +975,7 @@ export function createCanonicalImpactContext(changeId: string): ImpactContext {
     summary: "A critical Finance dashboard consumes the revenue lineage path.",
     criticality: "CRITICAL",
     relatedEvidenceIds: [analyticsPath.id],
-    provenance: provenance("get_entities", "canonical-dashboard"),
+    provenance: [provenance("ENTITY_DETAILS", "get_entities", "canonical-dashboard")],
     payload: {
       dashboardUrn: canonicalDashboardUrn,
       platform: "looker",
@@ -936,7 +996,11 @@ export function createCanonicalImpactContext(changeId: string): ImpactContext {
     summary: "customer_id flows through the fraud feature set into the production model.",
     criticality: "CRITICAL",
     relatedEvidenceIds: [],
-    provenance: provenance("get_lineage_paths_between", "canonical-lineage-fraud"),
+    provenance: [
+      provenance("LINEAGE_DISCOVERY", "get_lineage", "canonical-lineage-discovery"),
+      provenance("FIELD_PATH", "get_lineage_paths_between", "canonical-lineage-fraud-field"),
+      provenance("ENTITY_PATH", "get_lineage_paths_between", "canonical-lineage-fraud-entity"),
+    ],
     payload: {
       direction: "DOWNSTREAM",
       fieldLevel: true,
@@ -953,7 +1017,7 @@ export function createCanonicalImpactContext(changeId: string): ImpactContext {
     summary: "The production fraud model consumes customer_features.customer_id.",
     criticality: "CRITICAL",
     relatedEvidenceIds: [fraudPath.id],
-    provenance: provenance("get_entities", "canonical-fraud-model"),
+    provenance: [provenance("ENTITY_DETAILS", "get_entities", "canonical-fraud-model")],
     payload: {
       modelUrn: canonicalFraudModelUrn,
       lifecycle: "PRODUCTION",
@@ -974,7 +1038,10 @@ export function createCanonicalImpactContext(changeId: string): ImpactContext {
       "A cataloged PostgreSQL query subject references analytics.customer_revenue.customer_id.",
     criticality: "HIGH",
     relatedEvidenceIds: [analyticsPath.id],
-    provenance: provenance("get_dataset_queries", "canonical-finance-query"),
+    provenance: [
+      provenance("QUERY_DISCOVERY", "get_dataset_queries", "canonical-finance-query-discovery"),
+      provenance("QUERY_DETAILS", "get_entities", "canonical-finance-query-details"),
+    ],
     payload: {
       queryUrn: canonicalQueryUrn,
       source: "SYSTEM",
@@ -993,7 +1060,7 @@ export function createCanonicalImpactContext(changeId: string): ImpactContext {
     summary: "Finance Analytics owns the revenue dashboard.",
     criticality: "HIGH",
     relatedEvidenceIds: [dashboard.id],
-    provenance: provenance("get_entities", "canonical-finance-owner"),
+    provenance: [provenance("OWNER", "get_entities", "canonical-finance-owner")],
     payload: {
       assetUrn: canonicalDashboardUrn,
       ownerUrn: canonicalFinanceOwnerUrn,
@@ -1009,7 +1076,7 @@ export function createCanonicalImpactContext(changeId: string): ImpactContext {
     summary: "Risk ML owns Fraud Model v3.",
     criticality: "HIGH",
     relatedEvidenceIds: [fraudModel.id],
-    provenance: provenance("get_entities", "canonical-risk-owner"),
+    provenance: [provenance("OWNER", "get_entities", "canonical-risk-owner")],
     payload: {
       assetUrn: canonicalFraudModelUrn,
       ownerUrn: canonicalRiskOwnerUrn,
@@ -1026,7 +1093,10 @@ export function createCanonicalImpactContext(changeId: string): ImpactContext {
     summary: "customer_id is governed by the Customer Identifier glossary term.",
     criticality: "HIGH",
     relatedEvidenceIds: [],
-    provenance: provenance("get_entities", "canonical-glossary"),
+    provenance: [
+      provenance("GLOSSARY_BINDING", "list_schema_fields", "canonical-glossary-binding"),
+      provenance("GLOSSARY_DETAILS", "get_entities", "canonical-glossary-details"),
+    ],
     payload: {
       termUrn: canonicalGlossaryTermUrn,
       name: "Customer Identifier",

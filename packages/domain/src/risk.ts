@@ -263,7 +263,9 @@ export function evaluateGroundedRisk(
     throw new Error("Risk assessment cannot precede context collection");
   }
   if (
-    context.evidence.some((item) => new Date(item.provenance.retrievedAt).getTime() > assessedTime)
+    context.evidence.some((item) =>
+      item.provenance.some((entry) => new Date(entry.retrievedAt).getTime() > assessedTime),
+    )
   ) {
     throw new Error("Risk assessment cannot precede evidence retrieval");
   }
