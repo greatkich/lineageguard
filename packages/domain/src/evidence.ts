@@ -168,9 +168,14 @@ export const impactResolutionSchema = z
     datasetUrn: z.literal(canonicalDatasetUrn),
     schemaFieldUrn: z.literal(canonicalSchemaFieldUrn),
     nativeFieldPath: z.literal(canonicalNativeFieldPath),
-    provenance: evidenceProvenanceSchema
-      .extend({ tool: z.literal("search"), role: z.literal("RESOLUTION") })
-      .strict(),
+    provenance: z
+      .array(
+        evidenceProvenanceSchema
+          .extend({ tool: z.literal("search"), role: z.literal("RESOLUTION") })
+          .strict(),
+      )
+      .min(1)
+      .max(8),
   })
   .strict();
 export type ImpactResolution = z.infer<typeof impactResolutionSchema>;
@@ -338,6 +343,20 @@ export type EvidenceItem = z.infer<typeof evidenceUnionSchema>;
 export type EvidenceKind = EvidenceItem["kind"];
 
 function normalizedEvidenceIdentity(item: Omit<EvidenceItem, "fingerprint" | "id">) {
+  const semanticProvenance = item.provenance.reduce<
+    Array<Pick<z.infer<typeof evidenceProvenanceSchema>, "source" | "tool" | "role">>
+  >((steps, entry) => {
+    const previous = steps.at(-1);
+    if (
+      !previous ||
+      previous.source !== entry.source ||
+      previous.tool !== entry.tool ||
+      previous.role !== entry.role
+    ) {
+      steps.push({ source: entry.source, tool: entry.tool, role: entry.role });
+    }
+    return steps;
+  }, []);
   return {
     kind: item.kind,
     sourceUrn: item.sourceUrn,
@@ -348,11 +367,7 @@ function normalizedEvidenceIdentity(item: Omit<EvidenceItem, "fingerprint" | "id
     criticality: item.criticality,
     payload: item.payload,
     relatedEvidenceIds: [...item.relatedEvidenceIds].sort(),
-    provenance: item.provenance.map((entry) => ({
-      source: entry.source,
-      tool: entry.tool,
-      role: entry.role,
-    })),
+    provenance: semanticProvenance,
   };
 }
 
@@ -478,14 +493,36 @@ export const impactContextSchema = z
         "resolution",
       ]);
     }
-    const resolutionTime = new Date(context.resolution.provenance.retrievedAt).getTime();
     const collectedTime = new Date(context.collectedAt).getTime();
-    if (resolutionTime > collectedTime) {
-      issue(refinement, "Resolution cannot be retrieved after context collection", [
+    let resolutionTime = Number.NEGATIVE_INFINITY;
+    const resolutionInvocationKeys = context.resolution.provenance.map(
+      (entry) => `${entry.tool}\u0000${entry.invocationId}`,
+    );
+    if (new Set(resolutionInvocationKeys).size !== resolutionInvocationKeys.length) {
+      issue(refinement, "Resolution provenance entries must be unique", [
         "resolution",
         "provenance",
-        "retrievedAt",
       ]);
+    }
+    for (const [provenanceIndex, entry] of context.resolution.provenance.entries()) {
+      const retrievalTime = new Date(entry.retrievedAt).getTime();
+      if (retrievalTime < resolutionTime) {
+        issue(refinement, "Resolution provenance must follow pagination chronology", [
+          "resolution",
+          "provenance",
+          provenanceIndex,
+          "retrievedAt",
+        ]);
+      }
+      if (retrievalTime > collectedTime) {
+        issue(refinement, "Resolution cannot be retrieved after context collection", [
+          "resolution",
+          "provenance",
+          provenanceIndex,
+          "retrievedAt",
+        ]);
+      }
+      resolutionTime = retrievalTime;
     }
     const sortedEvidenceIds = context.evidence.map((item) => item.id).sort();
     if (context.evidence.some((item, index) => item.id !== sortedEvidenceIds[index])) {
@@ -514,12 +551,14 @@ export const impactContextSchema = z
         "source" | "tool" | "retrievedAt" | "responseFingerprint"
       >
     >();
-    invocationIdentity.set(context.resolution.provenance.invocationId, {
-      source: context.resolution.provenance.source,
-      tool: context.resolution.provenance.tool,
-      retrievedAt: context.resolution.provenance.retrievedAt,
-      responseFingerprint: context.resolution.provenance.responseFingerprint,
-    });
+    for (const entry of context.resolution.provenance) {
+      invocationIdentity.set(entry.invocationId, {
+        source: entry.source,
+        tool: entry.tool,
+        retrievedAt: entry.retrievedAt,
+        responseFingerprint: entry.responseFingerprint,
+      });
+    }
 
     for (const [index, item] of context.evidence.entries()) {
       const provenanceKeys = item.provenance.map(
@@ -580,24 +619,38 @@ export const impactContextSchema = z
           invocationIdentity.set(entry.invocationId, identity);
         }
       }
-      const expectedProvenance =
+      const actualProvenance = item.provenance.map((entry) => `${entry.role}:${entry.tool}`);
+      const matchesRepeatedPrefix = (prefix: string, suffix: readonly string[] = []) => {
+        const prefixLength = actualProvenance.length - suffix.length;
+        return (
+          prefixLength >= 1 &&
+          actualProvenance.slice(0, prefixLength).every((step) => step === prefix) &&
+          suffix.every((step, suffixIndex) => step === actualProvenance[prefixLength + suffixIndex])
+        );
+      };
+      const matchesExact = (...steps: string[]) =>
+        steps.length === actualProvenance.length &&
+        steps.every((step, index) => step === actualProvenance[index]);
+      const provenanceMatches =
         item.kind === "SCHEMA"
-          ? ["SCHEMA:list_schema_fields"]
+          ? matchesRepeatedPrefix("SCHEMA:list_schema_fields")
           : item.kind === "LINEAGE_PATH"
-            ? [
-                "LINEAGE_DISCOVERY:get_lineage",
+            ? matchesRepeatedPrefix("LINEAGE_DISCOVERY:get_lineage", [
                 "FIELD_PATH:get_lineage_paths_between",
                 "ENTITY_PATH:get_lineage_paths_between",
-              ]
+              ])
             : item.kind === "DASHBOARD" || item.kind === "ML_MODEL"
-              ? ["ENTITY_DETAILS:get_entities"]
+              ? matchesExact("ENTITY_DETAILS:get_entities")
               : item.kind === "QUERY_USAGE"
-                ? ["QUERY_DISCOVERY:get_dataset_queries", "QUERY_DETAILS:get_entities"]
+                ? matchesRepeatedPrefix("QUERY_DISCOVERY:get_dataset_queries", [
+                    "QUERY_DETAILS:get_entities",
+                  ])
                 : item.kind === "OWNER"
-                  ? ["OWNER:get_entities"]
-                  : ["GLOSSARY_BINDING:list_schema_fields", "GLOSSARY_DETAILS:get_entities"];
-      const actualProvenance = item.provenance.map((entry) => `${entry.role}:${entry.tool}`);
-      if (JSON.stringify(actualProvenance) !== JSON.stringify(expectedProvenance)) {
+                  ? matchesExact("OWNER:get_entities")
+                  : matchesRepeatedPrefix("GLOSSARY_BINDING:list_schema_fields", [
+                      "GLOSSARY_DETAILS:get_entities",
+                    ]);
+      if (!provenanceMatches) {
         issue(refinement, "Evidence provenance does not match its semantic collection steps", [
           "evidence",
           index,
@@ -1035,7 +1088,7 @@ export function createCanonicalImpactContextFixture(changeId: string): ImpactCon
     datasetUrn: canonicalDatasetUrn,
     schemaFieldUrn: canonicalSchemaFieldUrn,
     nativeFieldPath: canonicalNativeFieldPath,
-    provenance: provenance("RESOLUTION", "search", "canonical-resolution"),
+    provenance: [provenance("RESOLUTION", "search", "canonical-resolution")],
   });
   const schema = createEvidence({
     kind: "SCHEMA",

@@ -223,7 +223,7 @@ describe("canonical impact evidence", () => {
       "279bdd00ec97b74d63af2b9ac49732b17f5ee51f0ed1a35363898ab574076018",
     );
     expect(first.collectionFingerprint).toBe(
-      "0163ea5ded6869208ac2be170b24532f758f3b9213baba6809514cb31736f5ba",
+      "4fba22f13d1fa7093e4096ba1dfa7dae113e17e075d6940375da52097b1ae1f6",
     );
     expect(first.evidence.map((item) => `${item.kind}:${item.id}`)).toEqual([
       "SCHEMA:ev_09d0ce72de399bd52bd82247",
@@ -245,6 +245,9 @@ describe("canonical impact evidence", () => {
     expect(first.evidence.some((item) => item.kind === "GLOSSARY_TERM")).toBe(true);
     expect(first.datasetUrn).toBe(canonicalDatasetUrn);
     expect(first.resolution.schemaFieldUrn).toBe(canonicalSchemaFieldUrn);
+    expect(first.resolution.provenance.map((entry) => `${entry.role}:${entry.tool}`)).toEqual([
+      "RESOLUTION:search",
+    ]);
     const paths = first.evidence.filter((item) => item.kind === "LINEAGE_PATH");
     expect(paths.map((item) => item.targetUrn).sort()).toEqual(
       [canonicalDashboardUrn, canonicalFraudModelUrn].sort(),
@@ -323,6 +326,100 @@ describe("canonical impact evidence", () => {
       evidence: context.evidence.map((item) => (item.id === query.id ? reversedQuery : item)),
     });
     expect(impactContextSchema.safeParse(reversedContext).success).toBe(false);
+  });
+
+  it("retains every bounded page invocation without changing semantic evidence identity", () => {
+    const context = createCanonicalImpactContextFixture(canonicalChange().id);
+    const page = <T extends { invocationId: string; responseFingerprint: string }>(
+      entry: T,
+      suffix: string,
+    ): T => ({
+      ...entry,
+      invocationId: `${entry.invocationId}-${suffix}`,
+      responseFingerprint: sha256(`${entry.responseFingerprint}:${suffix}`),
+    });
+    const schema = required(
+      context.evidence.find((item) => item.kind === "SCHEMA"),
+      "schema evidence",
+    );
+    const query = required(
+      context.evidence.find((item) => item.kind === "QUERY_USAGE"),
+      "query evidence",
+    );
+    const lineage = required(
+      context.evidence.find((item) => item.kind === "LINEAGE_PATH"),
+      "lineage evidence",
+    );
+    const glossary = required(
+      context.evidence.find((item) => item.kind === "GLOSSARY_TERM"),
+      "glossary evidence",
+    );
+    const schemaPage = required(schema.provenance[0], "schema page provenance");
+    const queryDiscoveryPage = required(query.provenance[0], "query discovery provenance");
+    const queryDetails = required(query.provenance[1], "query details provenance");
+    const lineageDiscoveryPage = required(lineage.provenance[0], "lineage discovery provenance");
+    const glossaryBindingPage = required(glossary.provenance[0], "glossary binding provenance");
+    const resolutionPage = required(context.resolution.provenance[0], "resolution page provenance");
+    const schemaWithPages = {
+      ...schema,
+      provenance: [schemaPage, page(schemaPage, "page-2")],
+    };
+    const queryWithPages = {
+      ...query,
+      provenance: [queryDiscoveryPage, page(queryDiscoveryPage, "page-2"), queryDetails],
+    };
+    const lineageWithPages = {
+      ...lineage,
+      provenance: [
+        lineageDiscoveryPage,
+        page(lineageDiscoveryPage, "page-2"),
+        ...lineage.provenance.slice(1),
+      ],
+    };
+    const glossaryWithPages = {
+      ...glossary,
+      provenance: [
+        glossaryBindingPage,
+        page(glossaryBindingPage, "page-2"),
+        ...glossary.provenance.slice(1),
+      ],
+    };
+    expect(evidenceItemSchema.parse(schemaWithPages)).toMatchObject({
+      id: schema.id,
+      fingerprint: schema.fingerprint,
+    });
+    expect(evidenceItemSchema.parse(queryWithPages)).toMatchObject({
+      id: query.id,
+      fingerprint: query.fingerprint,
+    });
+    expect(evidenceItemSchema.parse(lineageWithPages)).toMatchObject({
+      id: lineage.id,
+      fingerprint: lineage.fingerprint,
+    });
+    expect(evidenceItemSchema.parse(glossaryWithPages)).toMatchObject({
+      id: glossary.id,
+      fingerprint: glossary.fingerprint,
+    });
+
+    const pagedContext = reboundContext(context, {
+      resolution: {
+        ...context.resolution,
+        provenance: [resolutionPage, page(resolutionPage, "page-2")],
+      },
+      evidence: context.evidence.map((item) => {
+        if (item.id === schema.id) return schemaWithPages;
+        if (item.id === query.id) return queryWithPages;
+        if (item.id === lineage.id) return lineageWithPages;
+        if (item.id === glossary.id) return glossaryWithPages;
+        return item;
+      }),
+    });
+    expect(impactContextSchema.safeParse(pagedContext).success).toBe(true);
+    expect(pagedContext.impactContextFingerprint).toBe(context.impactContextFingerprint);
+    expect(pagedContext.collectionFingerprint).not.toBe(context.collectionFingerprint);
+    expect(pagedContext.evidence.map((item) => item.id)).toEqual(
+      context.evidence.map((item) => item.id),
+    );
   });
 
   it("rejects reversed call chronology and contradictory shared invocation provenance", () => {
