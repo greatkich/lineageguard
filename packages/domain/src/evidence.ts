@@ -192,6 +192,7 @@ function issue(refinement: z.RefinementCtx, message: string, path: PropertyKey[]
 
 export const impactContextSchema = z
   .object({
+    impactContextFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
     changeId: z.string().regex(/^chg_[a-f0-9]{24}$/),
     datasetUrn: z.literal(canonicalDatasetUrn),
     fieldPath: z.literal(canonicalFieldPath),
@@ -202,12 +203,48 @@ export const impactContextSchema = z
   })
   .strict()
   .superRefine((context, refinement) => {
+    const { impactContextFingerprint, ...contextIdentity } = context;
+    if (impactContextFingerprint !== sha256(contextIdentity)) {
+      issue(refinement, "Impact context fingerprint is invalid", ["impactContextFingerprint"]);
+    }
+    const sortedEvidenceIds = context.evidence.map((item) => item.id).sort();
+    if (context.evidence.some((item, index) => item.id !== sortedEvidenceIds[index])) {
+      issue(refinement, "Evidence must use canonical ID order", ["evidence"]);
+    }
+    const failureKeys = context.failures.map(
+      (failure) => `${failure.tool}\u0000${failure.code}\u0000${failure.message}`,
+    );
+    const sortedFailureKeys = [...failureKeys].sort();
+    if (
+      new Set(failureKeys).size !== failureKeys.length ||
+      failureKeys.some((key, index) => key !== sortedFailureKeys[index])
+    ) {
+      issue(refinement, "Collection failures must use canonical order", ["failures"]);
+    }
     const byId = new Map(context.evidence.map((item) => [item.id, item]));
     if (byId.size !== context.evidence.length) {
       issue(refinement, "Evidence IDs must be unique", ["evidence"]);
     }
 
     for (const [index, item] of context.evidence.entries()) {
+      if (
+        new Date(item.provenance.retrievedAt).getTime() > new Date(context.collectedAt).getTime()
+      ) {
+        issue(refinement, "Evidence cannot be retrieved after context collection", [
+          "evidence",
+          index,
+          "provenance",
+          "retrievedAt",
+        ]);
+      }
+      const sortedRelated = [...item.relatedEvidenceIds].sort();
+      if (item.relatedEvidenceIds.some((id, relatedIndex) => id !== sortedRelated[relatedIndex])) {
+        issue(refinement, "Related evidence IDs must use canonical order", [
+          "evidence",
+          index,
+          "relatedEvidenceIds",
+        ]);
+      }
       for (const relatedId of item.relatedEvidenceIds) {
         if (!byId.has(relatedId)) {
           issue(refinement, `Dangling related evidence id: ${relatedId}`, [
@@ -338,29 +375,15 @@ export const impactContextSchema = z
         (item) => item.kind === "QUERY_USAGE" && !item.payload.managed,
       );
       const glossaries = context.evidence.filter((item) => item.kind === "GLOSSARY_TERM");
-      const ownedAssets = new Set(
-        context.evidence
-          .filter((item) => item.kind === "OWNER")
-          .map((item) => item.payload.assetUrn),
-      );
-      const requiredAssets = [
-        ...dashboards
-          .filter((item) => item.criticality === "CRITICAL")
-          .map((item) => item.payload.dashboardUrn),
-        ...models
-          .filter((item) => item.criticality === "CRITICAL")
-          .map((item) => item.payload.modelUrn),
-      ];
       if (
         schemas.length === 0 ||
         paths.length < 2 ||
         dashboards.length === 0 ||
         models.length === 0 ||
         queries.length === 0 ||
-        glossaries.length === 0 ||
-        requiredAssets.some((assetUrn) => !ownedAssets.has(assetUrn))
+        glossaries.length === 0
       ) {
-        issue(refinement, "Complete canonical context is missing required evidence or owners", [
+        issue(refinement, "Complete canonical context is missing required collected evidence", [
           "evidence",
         ]);
       }
@@ -374,6 +397,12 @@ export const impactContextSchema = z
   });
 
 export type ImpactContext = z.infer<typeof impactContextSchema>;
+
+export function computeImpactContextFingerprint(
+  context: Omit<ImpactContext, "impactContextFingerprint">,
+): string {
+  return sha256(context);
+}
 
 type EvidenceDraftFor<Item extends EvidenceItem> = Omit<Item, "fingerprint" | "id">;
 type EvidenceDraft = EvidenceItem extends infer Item
@@ -555,7 +584,7 @@ export function createCanonicalImpactContext(changeId: string): ImpactContext {
     },
   });
 
-  return impactContextSchema.parse({
+  const context = {
     changeId,
     datasetUrn: canonicalDatasetUrn,
     fieldPath: canonicalFieldPath,
@@ -571,7 +600,11 @@ export function createCanonicalImpactContext(changeId: string): ImpactContext {
       financeOwner,
       riskOwner,
       glossary,
-    ],
+    ].sort((left, right) => left.id.localeCompare(right.id)),
     failures: [],
+  } satisfies Omit<ImpactContext, "impactContextFingerprint">;
+  return impactContextSchema.parse({
+    ...context,
+    impactContextFingerprint: computeImpactContextFingerprint(context),
   });
 }

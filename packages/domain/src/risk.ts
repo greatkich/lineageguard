@@ -9,6 +9,7 @@ import {
 
 const isoDateTimeSchema = z.iso.datetime({ offset: true });
 const evidenceIdSchema = z.string().regex(/^ev_[a-f0-9]{24}$/);
+const fingerprintSchema = z.string().regex(/^[a-f0-9]{64}$/);
 const ruleOrder = ["LG001", "LG002", "LG003", "LG004", "LG005"] as const;
 const blockingRules = new Set<string>(["LG001", "LG002", "LG003", "LG004"]);
 
@@ -76,6 +77,7 @@ function deriveOutcome(reasons: RiskReason[]): {
 export const riskAssessmentSchema = z
   .object({
     changeId: z.string().regex(/^chg_[a-f0-9]{24}$/),
+    impactContextFingerprint: fingerprintSchema.optional(),
     contextMode: z.enum(["REPOSITORY_ONLY", "DATAHUB_GROUNDED"]),
     decision: decisionSchema,
     risk: riskLevelSchema,
@@ -108,7 +110,8 @@ export const riskAssessmentSchema = z
       if (
         assessment.decision !== "ALLOW" ||
         assessment.risk !== "LOW" ||
-        assessment.reasons.length !== 0
+        assessment.reasons.length !== 0 ||
+        assessment.impactContextFingerprint !== undefined
       ) {
         refinement.addIssue({
           code: "custom",
@@ -116,6 +119,14 @@ export const riskAssessmentSchema = z
         });
       }
       return;
+    }
+
+    if (assessment.impactContextFingerprint === undefined) {
+      refinement.addIssue({
+        code: "custom",
+        message: "Grounded assessment must bind the impact context fingerprint",
+        path: ["impactContextFingerprint"],
+      });
     }
 
     const derived = deriveOutcome(assessment.reasons);
@@ -248,6 +259,14 @@ export function evaluateGroundedRisk(
 
   const assessedTime = new Date(evaluatedAt).getTime();
   if (!Number.isFinite(assessedTime)) throw new Error("Risk assessment time is invalid");
+  if (assessedTime < new Date(context.collectedAt).getTime()) {
+    throw new Error("Risk assessment cannot precede context collection");
+  }
+  if (
+    context.evidence.some((item) => new Date(item.provenance.retrievedAt).getTime() > assessedTime)
+  ) {
+    throw new Error("Risk assessment cannot precede evidence retrieval");
+  }
   const connectedIds = new Set(
     context.evidence
       .filter((item) => item.kind !== "OWNER" && item.fieldPath === canonicalFieldPath)
@@ -321,6 +340,7 @@ export function evaluateGroundedRisk(
   const derived = deriveOutcome(reasons);
   const assessment = riskAssessmentSchema.parse({
     changeId: change.id,
+    impactContextFingerprint: context.impactContextFingerprint,
     contextMode: "DATAHUB_GROUNDED",
     ...derived,
     reasons,
@@ -338,6 +358,12 @@ export function assertRiskEvidenceReferences(
   const parsedAssessment = riskAssessmentSchema.parse(assessment);
   const parsedContext = impactContextSchema.parse(context);
   const ids = new Set(parsedContext.evidence.map((item) => item.id));
+  if (
+    parsedAssessment.changeId !== parsedContext.changeId ||
+    parsedAssessment.impactContextFingerprint !== parsedContext.impactContextFingerprint
+  ) {
+    throw new Error("Risk assessment is not bound to this impact context");
+  }
   for (const item of parsedAssessment.reasons) {
     for (const evidenceId of item.evidenceIds) {
       if (!ids.has(evidenceId))

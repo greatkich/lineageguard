@@ -2,7 +2,9 @@ import { z } from "zod";
 import { sha256, stableId } from "./hash.js";
 
 const boundedText = (maximum: number) => z.string().min(1).max(maximum);
-const shaSchema = z.string().regex(/^[a-f0-9]{7,64}$/i, "Expected a Git SHA");
+const shaSchema = z
+  .string()
+  .regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/, "Expected a lowercase full Git object ID");
 const repositorySchema = z
   .string()
   .min(3)
@@ -27,9 +29,7 @@ export const datasetRefSchema = z
     dataset: z.literal("orders"),
   })
   .strict();
-
 export type DatasetRef = z.infer<typeof datasetRefSchema>;
-
 export const canonicalDatasetRef = Object.freeze({
   platform: "postgres",
   environment: "PROD",
@@ -44,21 +44,19 @@ export const repositoryChangeFileSchema = z
     patch: boundedText(32_000),
   })
   .strict();
-
 export const repositoryChangeInputSchema = z
   .object({
     source: z.enum(["GITHUB", "FIXTURE"]),
     repository: repositorySchema,
     baseSha: shaSchema,
     headSha: shaSchema,
-    files: z.array(repositoryChangeFileSchema).min(1).max(20),
+    files: z.array(repositoryChangeFileSchema).length(1),
   })
   .strict()
   .refine((input) => input.baseSha !== input.headSha, {
-    message: "Base and head SHA must differ",
+    message: "Base and head object IDs must differ",
     path: ["headSha"],
   });
-
 export type RepositoryChangeInput = z.infer<typeof repositoryChangeInputSchema>;
 
 export const proposedChangeSchema = z
@@ -75,21 +73,28 @@ export const proposedChangeSchema = z
     field: z.literal("customer_id"),
     before: z.object({ field: z.literal("customer_id") }).strict(),
     after: z.object({ field: z.literal("buyer_id") }).strict(),
-    files: z.array(safeRepositoryPathSchema).min(1).max(20),
+    files: z.array(safeRepositoryPathSchema).length(1),
   })
   .strict()
   .superRefine((change, refinement) => {
+    if (change.baseSha === change.headSha) {
+      refinement.addIssue({
+        code: "custom",
+        message: "Base and head must differ",
+        path: ["headSha"],
+      });
+    }
     const identity = {
       source: change.source,
       repository: change.repository,
-      baseSha: change.baseSha.toLowerCase(),
-      headSha: change.headSha.toLowerCase(),
+      baseSha: change.baseSha,
+      headSha: change.headSha,
       datasetRef: change.datasetRef,
       operation: change.operation,
       field: change.field,
       before: change.before,
       after: change.after,
-      files: [...change.files].sort(),
+      files: change.files,
       sourcePatchFingerprint: change.sourcePatchFingerprint,
     };
     if (change.fingerprint !== sha256(identity)) {
@@ -103,7 +108,6 @@ export const proposedChangeSchema = z
       refinement.addIssue({ code: "custom", message: "Change ID is invalid", path: ["id"] });
     }
   });
-
 export type ProposedChange = z.infer<typeof proposedChangeSchema>;
 
 export const parseErrorCodeSchema = z.enum([
@@ -113,9 +117,7 @@ export const parseErrorCodeSchema = z.enum([
   "AMBIGUOUS_CHANGE",
   "UNSUPPORTED_CHANGE",
 ]);
-
 export type ParseErrorCode = z.infer<typeof parseErrorCodeSchema>;
-
 export const parseErrorSchema = z
   .object({
     code: parseErrorCodeSchema,
@@ -123,182 +125,107 @@ export const parseErrorSchema = z
     filePaths: z.array(safeRepositoryPathSchema).max(20),
   })
   .strict();
-
 export type ParseError = z.infer<typeof parseErrorSchema>;
-
 export type ParseProposedChangeResult =
   | { ok: true; value: ProposedChange }
   | { error: ParseError; ok: false };
 
-const canonicalSqlPattern =
-  /^\s*ALTER\s+TABLE\s+commerce\.orders\s+RENAME\s+COLUMN\s+customer_id\s+TO\s+buyer_id\s*;\s*$/i;
-const canonicalSqlStatementPattern =
-  /\bALTER\s+TABLE\s+commerce\.orders\s+RENAME\s+COLUMN\s+customer_id\s+TO\s+buyer_id\s*;/gi;
-const anyRenamePattern = /\bALTER\s+TABLE\b[\s\S]*?\bRENAME\s+COLUMN\b/gi;
-const canonicalMigrationPathPattern = /^walkthrough\/migrations\/[A-Za-z0-9._-]+\.sql$/;
-const canonicalModelPathPattern = /^walkthrough\/models\/[A-Za-z0-9_./-]+\.sql$/;
-const fullDiffPattern =
-  /^diff --git a\/(.+) b\/(.+)\n(?:index [a-f0-9]+\.\.[a-f0-9]+(?: [0-7]{6})?\n)?--- a\/(.+)\n\+\+\+ b\/(.+)\n(@@[^\n]*@@\n[\s\S]+)$/;
-const hunkPattern = /^@@[^\n]*@@\n[\s\S]+$/;
+const canonicalSql = "ALTER TABLE commerce.orders RENAME COLUMN customer_id TO buyer_id;";
+const migrationPathPattern = /^walkthrough\/migrations\/[A-Za-z0-9._-]+\.sql$/;
+const modelPathPattern = /^walkthrough\/models\/[A-Za-z0-9_./-]+\.sql$/;
+const hunkHeaderPattern = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(?: .*)?$/;
 
-function isCanonicalSqlPatch(path: string, patch: string): boolean {
-  return canonicalMigrationPathPattern.test(path) && canonicalSqlPattern.test(patch);
+function isExactFixtureSql(input: RepositoryChangeInput, path: string, patch: string): boolean {
+  return input.source === "FIXTURE" && migrationPathPattern.test(path) && patch === canonicalSql;
 }
 
-function isCanonicalUnifiedDiff(path: string, patch: string): boolean {
-  if (!canonicalModelPathPattern.test(path)) {
+function isExactGitUnifiedDiff(path: string, patch: string): boolean {
+  if (!modelPathPattern.test(path) || patch.includes("\r")) return false;
+  const lines = patch.split("\n");
+  if (lines.at(-1) === "") lines.pop();
+  let cursor = 0;
+  if (lines[cursor] !== `diff --git a/${path} b/${path}`) return false;
+  cursor += 1;
+  if (/^index [a-f0-9]{7,64}\.\.[a-f0-9]{7,64}(?: [0-7]{6})?$/.test(lines[cursor] ?? "")) {
+    cursor += 1;
+  }
+  if (lines[cursor] !== `--- a/${path}` || lines[cursor + 1] !== `+++ b/${path}`) return false;
+  cursor += 2;
+  const header = hunkHeaderPattern.exec(lines[cursor] ?? "");
+  if (!header) return false;
+  cursor += 1;
+  const body = lines.slice(cursor);
+  if (body.length === 0 || body.some((line) => !/^[ +-]/.test(line) || line.startsWith("@@"))) {
     return false;
   }
-  const fullMatch = fullDiffPattern.exec(patch);
-  if (
-    fullMatch &&
-    (fullMatch[1] !== path ||
-      fullMatch[2] !== path ||
-      fullMatch[3] !== path ||
-      fullMatch[4] !== path)
-  ) {
-    return false;
-  }
-  const hunk = fullMatch?.[5] ?? (hunkPattern.test(patch) ? patch : undefined);
-  if (!hunk) return false;
-  const body = hunk.slice(hunk.indexOf("\n") + 1);
-
-  const changedLines = body
-    .split("\n")
-    .filter((line) => line.startsWith("+") || line.startsWith("-"));
-  if (
-    changedLines.length !== 2 ||
-    !changedLines[0]?.startsWith("-") ||
-    !changedLines[1]?.startsWith("+")
-  ) {
-    return false;
-  }
-
-  const before = changedLines[0].slice(1);
-  const after = changedLines[1].slice(1);
-  const unsafeText = /--|\/\*|\*\/|['"`]/;
-  if (unsafeText.test(before) || unsafeText.test(after)) {
-    return false;
-  }
-  if (!/\bcustomer_id\b/.test(before) || /\bcustomer_id\b/.test(after)) {
-    return false;
-  }
-  if (!/\bbuyer_id\b/.test(after) || /\bbuyer_id\b/.test(before)) {
-    return false;
-  }
-
-  const canonicalSqlLine =
-    /^\s*(?:customer_id(?:\s*::\s*[a-z][a-z0-9_]*(?:\s+as\s+customer_id)?|\s+[a-z][a-z0-9_]*(?:\([^)]*\))?(?:\s+not\s+null)?)?)[,;]?\s*$/i;
-  return canonicalSqlLine.test(before) && before.replace(/\bcustomer_id\b/g, "buyer_id") === after;
-}
-
-function containsUnsupportedRename(patch: string): boolean {
-  const renameCount = patch.match(anyRenamePattern)?.length ?? 0;
-  return renameCount > 0;
+  const oldCount = Number(header[2] ?? 1);
+  const newCount = Number(header[4] ?? 1);
+  const observedOld = body.filter((line) => line.startsWith(" ") || line.startsWith("-")).length;
+  const observedNew = body.filter((line) => line.startsWith(" ") || line.startsWith("+")).length;
+  if (observedOld !== oldCount || observedNew !== newCount) return false;
+  const removed = body.filter((line) => line.startsWith("-"));
+  const added = body.filter((line) => line.startsWith("+"));
+  return (
+    removed.length === 1 &&
+    added.length === 1 &&
+    removed[0]?.slice(1).trim() === "customer_id::bigint as customer_id," &&
+    added[0]?.slice(1).trim() === "buyer_id::bigint as buyer_id,"
+  );
 }
 
 function buildProposedChange(input: RepositoryChangeInput): ProposedChange {
-  const canonicalSources = input.files
-    .map((file) => ({ path: file.path, patchFingerprint: sha256(file.patch) }))
-    .sort((left, right) => left.path.localeCompare(right.path));
-  const sourcePatchFingerprint = sha256(canonicalSources);
+  const file = input.files[0];
+  if (!file) throw new Error("Validated repository input has no file");
+  const sourcePatchFingerprint = sha256([
+    { path: file.path, patchFingerprint: sha256(file.patch) },
+  ]);
   const identity = {
     source: input.source,
     repository: input.repository,
-    baseSha: input.baseSha.toLowerCase(),
-    headSha: input.headSha.toLowerCase(),
+    baseSha: input.baseSha,
+    headSha: input.headSha,
     datasetRef: canonicalDatasetRef,
     operation: "RENAME_FIELD" as const,
     field: "customer_id" as const,
     before: { field: "customer_id" as const },
     after: { field: "buyer_id" as const },
-    files: input.files.map((file) => file.path).sort(),
+    files: [file.path],
     sourcePatchFingerprint,
   };
-  const fingerprint = sha256(identity);
   return proposedChangeSchema.parse({
     ...identity,
     id: stableId("chg", identity),
-    fingerprint,
+    fingerprint: sha256(identity),
   });
 }
 
 export function parseProposedChange(untrustedInput: unknown): ParseProposedChangeResult {
-  const parsedInput = repositoryChangeInputSchema.safeParse(untrustedInput);
-  if (!parsedInput.success) {
+  const parsed = repositoryChangeInputSchema.safeParse(untrustedInput);
+  if (!parsed.success) {
     return {
       ok: false,
       error: {
         code: "INVALID_INPUT",
-        message: "Repository change input failed schema validation",
+        message: "Repository input failed strict validation",
         filePaths: [],
       },
     };
   }
-
-  const input = parsedInput.data;
-  const supportedFiles: string[] = [];
-  const unsupportedFiles: string[] = [];
-  const multipleFiles: string[] = [];
-  for (const file of input.files) {
-    const canonicalSqlCount = file.patch.match(canonicalSqlStatementPattern)?.length ?? 0;
-    if (canonicalSqlCount > 1) {
-      multipleFiles.push(file.path);
-    } else if (
-      isCanonicalSqlPatch(file.path, file.patch) ||
-      isCanonicalUnifiedDiff(file.path, file.patch)
-    ) {
-      supportedFiles.push(file.path);
-    } else if (
-      containsUnsupportedRename(file.patch) ||
-      /\bcustomer_id\b/.test(file.patch) ||
-      /\bbuyer_id\b/.test(file.patch)
-    ) {
-      unsupportedFiles.push(file.path);
-    }
-  }
-
-  if (supportedFiles.length > 1 || multipleFiles.length > 0) {
-    return {
-      ok: false,
-      error: {
-        code: "MULTIPLE_SUPPORTED_CHANGES",
-        message: "Exactly one canonical field rename is supported",
-        filePaths: [...supportedFiles, ...multipleFiles].sort(),
-      },
-    };
-  }
-  if (supportedFiles.length === 1 && unsupportedFiles.length > 0) {
-    return {
-      ok: false,
-      error: {
-        code: "AMBIGUOUS_CHANGE",
-        message: "Canonical rename appears alongside another field change",
-        filePaths: [...supportedFiles, ...unsupportedFiles].sort(),
-      },
-    };
-  }
-  if (supportedFiles.length === 0 && unsupportedFiles.length > 0) {
+  const input = parsed.data;
+  const file = input.files[0];
+  if (
+    !file ||
+    (!isExactFixtureSql(input, file.path, file.patch) &&
+      !isExactGitUnifiedDiff(file.path, file.patch))
+  ) {
     return {
       ok: false,
       error: {
         code: "UNSUPPORTED_CHANGE",
-        message:
-          "The repository change resembles a field rename but is not the supported canonical form",
-        filePaths: unsupportedFiles.sort(),
+        message: "The changed file is not the exact supported canonical rename",
+        filePaths: file ? [file.path] : [],
       },
     };
   }
-  if (supportedFiles.length === 0) {
-    return {
-      ok: false,
-      error: {
-        code: "NO_SUPPORTED_CHANGE",
-        message: "No supported canonical field rename was found",
-        filePaths: input.files.map((file) => file.path).sort(),
-      },
-    };
-  }
-
   return { ok: true, value: buildProposedChange(input) };
 }

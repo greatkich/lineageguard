@@ -6,25 +6,32 @@ import { evaluateGroundedRisk, type RiskAssessment, riskAssessmentSchema } from 
 
 const evidenceIdSchema = z.string().regex(/^ev_[a-f0-9]{24}$/);
 const fingerprintSchema = z.string().regex(/^[a-f0-9]{64}$/);
-const gitShaSchema = z.string().regex(/^[a-f0-9]{7,64}$/i);
+const gitShaSchema = z.string().regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/);
 const isoDateTimeSchema = z.iso.datetime({ offset: true });
 const contentSchema = z.string().min(1).max(100_000);
 
-const sqlMigrationPathSchema = z
-  .string()
-  .regex(/^walkthrough\/migrations\/(?!.*rollback)[A-Za-z0-9._-]+\.sql$/);
-const rollbackPathSchema = z
-  .string()
-  .regex(/^walkthrough\/migrations\/[A-Za-z0-9._-]*rollback[A-Za-z0-9._-]*\.sql$/i);
-const dbtModelPathSchema = z
-  .string()
-  .regex(/^walkthrough\/models\/[A-Za-z0-9_./-]+\.sql$/)
-  .refine((path) => !path.includes("//") && !path.includes(".."), "Model path must be normalized");
-const dbtTestPathSchema = z
-  .string()
-  .regex(/^walkthrough\/tests\/[A-Za-z0-9_./-]+\.sql$/)
-  .refine((path) => !path.includes("//") && !path.includes(".."), "Test path must be normalized");
-const migrationDocumentPathSchema = z.string().regex(/^docs\/migrations\/[A-Za-z0-9._-]+\.md$/);
+function artifactPath(pattern: RegExp) {
+  return z
+    .string()
+    .min(1)
+    .max(240)
+    .refine((path) => !path.startsWith("/") && !path.includes("\\"), "Path must be relative POSIX")
+    .refine(
+      (path) =>
+        path.split("/").every((segment) => segment !== "" && segment !== "." && segment !== ".."),
+      "Path must use normalized segments",
+    )
+    .regex(pattern);
+}
+const sqlMigrationPathSchema = artifactPath(
+  /^walkthrough\/migrations\/(?!.*rollback)[A-Za-z0-9._-]+\.sql$/,
+);
+const rollbackPathSchema = artifactPath(
+  /^walkthrough\/migrations\/[A-Za-z0-9._-]*rollback[A-Za-z0-9._-]*\.sql$/i,
+);
+const dbtModelPathSchema = artifactPath(/^walkthrough\/models\/[A-Za-z0-9_./-]+\.sql$/);
+const dbtTestPathSchema = artifactPath(/^walkthrough\/tests\/[A-Za-z0-9_./-]+\.sql$/);
+const migrationDocumentPathSchema = artifactPath(/^docs\/migrations\/[A-Za-z0-9._-]+\.md$/);
 
 export const migrationArtifactPathSchema = z.union([
   sqlMigrationPathSchema,
@@ -73,6 +80,9 @@ export const migrationArtifactSchema = z.discriminatedUnion("kind", [
 ]);
 
 export type MigrationArtifact = z.infer<typeof migrationArtifactSchema>;
+export function migrationArtifactFingerprint(artifact: MigrationArtifact): string {
+  return sha256(migrationArtifactSchema.parse(artifact));
+}
 export const migrationPhaseSchema = z.enum(["EXPAND", "MIGRATE", "CONTRACT"]);
 
 export const migrationStepSchema = z
@@ -97,6 +107,7 @@ export const migrationCandidateSchema = z
     strategy: z.literal("EXPAND_MIGRATE_CONTRACT"),
     sourceChangeFingerprint: fingerprintSchema,
     sourcePatchFingerprint: fingerprintSchema,
+    sourceImpactContextFingerprint: fingerprintSchema,
     sourceDecision: z.literal("BLOCK"),
     sourceEvidenceIds: z.array(evidenceIdSchema).min(1).max(200),
     summary: z.string().min(1).max(2_000),
@@ -173,6 +184,14 @@ export const migrationCandidateSchema = z
           path: ["steps", stepIndex, "affectedEvidenceIds"],
         });
       }
+      const sortedTargets = [...step.artifactTargets].sort();
+      if (step.artifactTargets.some((path, index) => path !== sortedTargets[index])) {
+        refinement.addIssue({
+          code: "custom",
+          message: "Artifact targets must use canonical path order",
+          path: ["steps", stepIndex, "artifactTargets"],
+        });
+      }
     }
 
     const artifactsByPath = new Map(
@@ -183,6 +202,28 @@ export const migrationCandidateSchema = z
         code: "custom",
         message: "Artifact paths must be unique",
         path: ["artifacts"],
+      });
+    }
+    const sortedArtifactPaths = candidate.artifacts.map((artifact) => artifact.path).sort();
+    if (
+      candidate.artifacts.some((artifact, index) => artifact.path !== sortedArtifactPaths[index])
+    ) {
+      refinement.addIssue({
+        code: "custom",
+        message: "Artifacts must use canonical path order",
+        path: ["artifacts"],
+      });
+    }
+    const reviewerUrns = candidate.requiredReviewers.map((reviewer) => reviewer.ownerUrn);
+    const sortedReviewerUrns = [...reviewerUrns].sort();
+    if (
+      new Set(reviewerUrns).size !== reviewerUrns.length ||
+      reviewerUrns.some((urn, index) => urn !== sortedReviewerUrns[index])
+    ) {
+      refinement.addIssue({
+        code: "custom",
+        message: "Reviewers must be unique and canonically ordered",
+        path: ["requiredReviewers"],
       });
     }
     if (candidate.artifacts.filter((artifact) => artifact.kind === "ROLLBACK_SQL").length !== 1) {
@@ -246,6 +287,8 @@ export function bindMigrationCandidate(
     assessment.contextMode !== "DATAHUB_GROUNDED" ||
     candidate.sourceChangeFingerprint !== change.fingerprint ||
     candidate.sourcePatchFingerprint !== change.sourcePatchFingerprint ||
+    candidate.sourceImpactContextFingerprint !== context.impactContextFingerprint ||
+    assessment.impactContextFingerprint !== context.impactContextFingerprint ||
     candidate.sourceDecision !== assessment.decision
   ) {
     throw new Error("Migration candidate source binding does not match the change and decision");
@@ -329,12 +372,21 @@ export const validationCheckSchema = z
     }
   });
 
+export const artifactObservationSchema = z
+  .object({
+    path: migrationArtifactPathSchema,
+    candidateArtifactFingerprint: fingerprintSchema,
+    materializedSha256: fingerprintSchema,
+  })
+  .strict();
+
 export const validationReceiptSchema = z
   .object({
     receiptId: z.string().regex(/^val_[a-f0-9]{24}$/),
     candidateFingerprint: fingerprintSchema,
     status: z.enum(["PASS", "FAIL"]),
     artifactPaths: z.array(migrationArtifactPathSchema).min(1).max(20),
+    artifactObservations: z.array(artifactObservationSchema).min(1).max(20),
     checks: z.array(validationCheckSchema).min(1).max(20),
     completedAt: isoDateTimeSchema,
   })
@@ -348,6 +400,17 @@ export const validationReceiptSchema = z
         path: ["checks"],
       });
     }
+    const canonicalCheckOrder = requiredValidationChecks;
+    if (
+      receipt.status === "PASS" &&
+      checkNames.some((check, index) => check !== canonicalCheckOrder[index])
+    ) {
+      refinement.addIssue({
+        code: "custom",
+        message: "Passing checks must use canonical order",
+        path: ["checks"],
+      });
+    }
     const receiptPaths = [...receipt.artifactPaths].sort();
     if (
       new Set(receipt.artifactPaths).size !== receipt.artifactPaths.length ||
@@ -357,6 +420,17 @@ export const validationReceiptSchema = z
         code: "custom",
         message: "Receipt artifact paths must be unique and sorted",
         path: ["artifactPaths"],
+      });
+    }
+    const observationPaths = receipt.artifactObservations.map((observation) => observation.path);
+    if (
+      new Set(observationPaths).size !== observationPaths.length ||
+      JSON.stringify(observationPaths) !== JSON.stringify(receiptPaths)
+    ) {
+      refinement.addIssue({
+        code: "custom",
+        message: "Artifact observations must exactly cover paths in canonical order",
+        path: ["artifactObservations"],
       });
     }
     const checkPaths = new Set(receipt.checks.flatMap((check) => check.artifactPaths));
@@ -418,15 +492,25 @@ export function assertValidationReceiptBinding(
   if (JSON.stringify(receipt.artifactPaths) !== JSON.stringify(candidatePaths)) {
     throw new Error("Validation receipt does not cover the exact candidate artifact set");
   }
-  const artifactsByPath = new Map(
-    candidate.artifacts.map((artifact) => [artifact.path, artifact.kind]),
+  const candidateArtifacts = new Map(
+    candidate.artifacts.map((artifact) => [artifact.path, artifact]),
   );
+  for (const observation of receipt.artifactObservations) {
+    const artifact = candidateArtifacts.get(observation.path);
+    if (
+      !artifact ||
+      observation.candidateArtifactFingerprint !== migrationArtifactFingerprint(artifact) ||
+      observation.materializedSha256 !== sha256(artifact.content)
+    ) {
+      throw new Error(`Artifact observation does not match candidate bytes: ${observation.path}`);
+    }
+  }
   const allowedKinds = {
     SQL_MIGRATION: new Set<MigrationArtifact["kind"]>(["SQL_MIGRATION"]),
     BACKFILL_EQUALITY: new Set<MigrationArtifact["kind"]>(["SQL_MIGRATION"]),
-    DBT_PARSE: new Set<MigrationArtifact["kind"]>(["DBT_MODEL"]),
-    DBT_COMPILE: new Set<MigrationArtifact["kind"]>(["DBT_MODEL"]),
-    DBT_TEST: new Set<MigrationArtifact["kind"]>(["DBT_TEST"]),
+    DBT_PARSE: new Set<MigrationArtifact["kind"]>(["DBT_MODEL", "DBT_TEST"]),
+    DBT_COMPILE: new Set<MigrationArtifact["kind"]>(["DBT_MODEL", "DBT_TEST"]),
+    DBT_TEST: new Set<MigrationArtifact["kind"]>(["DBT_MODEL", "DBT_TEST"]),
     OLD_CONSUMER_COMPATIBILITY: new Set<MigrationArtifact["kind"]>([
       "SQL_MIGRATION",
       "DBT_MODEL",
@@ -440,13 +524,13 @@ export function assertValidationReceiptBinding(
     ROLLBACK: new Set<MigrationArtifact["kind"]>(["ROLLBACK_SQL"]),
   } as const;
   for (const check of receipt.checks) {
-    if (
-      check.artifactPaths.some((path) => {
-        const kind = artifactsByPath.get(path);
-        return kind === undefined || !allowedKinds[check.check].has(kind);
-      })
-    ) {
-      throw new Error(`Validation check ${check.check} cites an incompatible artifact`);
+    const actualPaths = [...check.artifactPaths].sort();
+    const expectedPaths = candidate.artifacts
+      .filter((artifact) => allowedKinds[check.check].has(artifact.kind))
+      .map((artifact) => artifact.path)
+      .sort();
+    if (JSON.stringify(actualPaths) !== JSON.stringify(expectedPaths)) {
+      throw new Error(`Validation check ${check.check} does not cover exact applicable artifacts`);
     }
   }
 }
