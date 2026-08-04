@@ -84,9 +84,15 @@ const eventBaseShape = {
   sequence: z.number().int().nonnegative(),
   occurredAt: isoDateTimeSchema,
 };
+const leaseEventShape = {
+  leaseId: leaseIdSchema,
+  workerId: workerIdSchema,
+  generation: z.number().int().positive().max(1_000_000),
+};
 export const runStatusEventSchema = z
   .object({
     ...eventBaseShape,
+    ...leaseEventShape,
     type: z.literal("RUN_STATUS_CHANGED"),
     from: runStatusSchema,
     to: runStatusSchema,
@@ -98,7 +104,6 @@ export const runStatusEventSchema = z
     path: ["to"],
   });
 
-const leaseEventShape = { leaseId: leaseIdSchema, workerId: workerIdSchema };
 export const runLeaseAcquiredEventSchema = z
   .object({
     ...eventBaseShape,
@@ -154,15 +159,24 @@ export const runRetryScheduledEventSchema = z
     ...leaseEventShape,
     type: z.literal("RUN_RETRY_SCHEDULED"),
     operation: retryOperationSchema,
-    attempt: z.number().int().min(1).max(10),
+    attempt: z.number().int().min(1).max(3),
     retryAt: isoDateTimeSchema,
     reason: z.string().min(1).max(500),
   })
   .strict()
-  .refine((event) => new Date(event.retryAt).getTime() >= new Date(event.occurredAt).getTime(), {
-    message: "Retry cannot be scheduled in the past",
-    path: ["retryAt"],
-  });
+  .refine(
+    (event) => {
+      const retryDelays = [1_000, 5_000, 30_000] as const;
+      return (
+        new Date(event.retryAt).getTime() - new Date(event.occurredAt).getTime() ===
+        retryDelays[event.attempt - 1]
+      );
+    },
+    {
+      message: "Retry must use the policy delay for its attempt",
+      path: ["retryAt"],
+    },
+  );
 
 export const runEventSchema = z.discriminatedUnion("type", [
   runStatusEventSchema,
@@ -190,7 +204,11 @@ export const runEventStreamSchema = z
     const runId = events[0]?.runId;
     const eventIds = new Set<string>();
     let currentStatus: RunStatus = "CREATED";
-    let activeLease: { id: string; workerId: string; expiresAt: string } | undefined;
+    let activeLease:
+      | { id: string; workerId: string; generation: number; expiresAt: string }
+      | undefined;
+    const usedLeaseIds = new Set<string>();
+    let highestLeaseGeneration = 0;
     const retryAttempts = new Map<string, number>();
     for (const [index, event] of events.entries()) {
       const add = (message: string, field?: string) =>
@@ -210,20 +228,42 @@ export const runEventStreamSchema = z
         add("No event is allowed after terminal state");
 
       if (event.type === "RUN_STATUS_CHANGED") {
+        if (
+          !activeLease ||
+          activeLease.id !== event.leaseId ||
+          activeLease.workerId !== event.workerId ||
+          activeLease.generation !== event.generation ||
+          new Date(event.occurredAt).getTime() >= new Date(activeLease.expiresAt).getTime()
+        ) {
+          add("Status transition requires the live active lease and worker");
+        }
         if (event.from !== currentStatus)
           add("Status transition does not continue from current state", "from");
         currentStatus = event.to;
+        if (isTerminalRunStatus(currentStatus)) activeLease = undefined;
         continue;
       }
       if (event.type === "RUN_LEASE_ACQUIRED") {
         if (activeLease) add("Cannot acquire an overlapping lease");
-        activeLease = { id: event.leaseId, workerId: event.workerId, expiresAt: event.expiresAt };
+        if (usedLeaseIds.has(event.leaseId)) add("Lease IDs cannot be reused", "leaseId");
+        if (event.generation <= highestLeaseGeneration) {
+          add("Lease generation must increase strictly", "generation");
+        }
+        usedLeaseIds.add(event.leaseId);
+        highestLeaseGeneration = Math.max(highestLeaseGeneration, event.generation);
+        activeLease = {
+          id: event.leaseId,
+          workerId: event.workerId,
+          generation: event.generation,
+          expiresAt: event.expiresAt,
+        };
         continue;
       }
       if (
         !activeLease ||
         activeLease.id !== event.leaseId ||
-        activeLease.workerId !== event.workerId
+        activeLease.workerId !== event.workerId ||
+        activeLease.generation !== event.generation
       ) {
         add("Operational event does not match the active lease and worker");
       }
@@ -235,7 +275,12 @@ export const runEventStreamSchema = z
         ) {
           add("Lease renewal does not match a live active lease");
         }
-        activeLease = { id: event.leaseId, workerId: event.workerId, expiresAt: event.expiresAt };
+        activeLease = {
+          id: event.leaseId,
+          workerId: event.workerId,
+          generation: event.generation,
+          expiresAt: event.expiresAt,
+        };
       } else if (event.type === "RUN_LEASE_RELEASED") {
         if (
           activeLease &&
@@ -255,15 +300,14 @@ export const runEventStreamSchema = z
       } else {
         if (
           !activeLease ||
-          new Date(event.occurredAt).getTime() >= new Date(activeLease.expiresAt).getTime() ||
-          new Date(event.retryAt).getTime() >= new Date(activeLease.expiresAt).getTime()
+          new Date(event.occurredAt).getTime() >= new Date(activeLease.expiresAt).getTime()
         ) {
           add("Retry requires a live matching lease");
         }
         if (!retryStates[event.operation].includes(currentStatus)) {
           add(`Retry ${event.operation} is not valid in ${currentStatus}`, "operation");
         }
-        const key = `${event.leaseId}:${event.workerId}:${event.operation}`;
+        const key = event.operation;
         const previousAttempt = retryAttempts.get(key) ?? 0;
         if (event.attempt !== previousAttempt + 1)
           add("Retry attempts must increase contiguously", "attempt");

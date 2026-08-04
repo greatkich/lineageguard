@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   canonicalDatasetRef,
+  type ParseErrorCode,
   parseProposedChange,
   proposedChangeSchema,
   repositoryChangeInputSchema,
@@ -35,6 +36,13 @@ function gitPatch(options: { index?: boolean; header?: string; body?: string } =
       "   order_total",
     ]),
   ].join("\n");
+}
+
+function expectParseError(patch: string, code: ParseErrorCode, source = "FIXTURE") {
+  const path = source === "GITHUB" ? modelPath : "walkthrough/migrations/rename.sql";
+  const result = parseProposedChange(input(patch, path, source));
+  expect(result.ok).toBe(false);
+  if (!result.ok) expect(result.error.code).toBe(code);
 }
 
 describe("strict canonical change parser", () => {
@@ -100,6 +108,63 @@ describe("strict canonical change parser", () => {
         ...input(canonicalSql),
         baseSha: base,
         headSha: head,
+      }).success,
+    ).toBe(false);
+  });
+
+  it("returns every parse classification with exact single-change success semantics", () => {
+    expectParseError("SELECT 1;", "NO_SUPPORTED_CHANGE");
+    expectParseError(`${canonicalSql}${canonicalSql}`, "MULTIPLE_SUPPORTED_CHANGES");
+    expectParseError(`${canonicalSql}\nSELECT 1;`, "AMBIGUOUS_CHANGE");
+    expectParseError(
+      "ALTER TABLE commerce.orders RENAME COLUMN customer_id TO account_id;",
+      "UNSUPPORTED_CHANGE",
+    );
+    expectParseError("@@ malformed", "INVALID_INPUT", "GITHUB");
+
+    expectParseError(
+      gitPatch({
+        header: "@@ -1,2 +1,2 @@",
+        body: "-customer_id::bigint as customer_id,\n-customer_id::bigint as customer_id,\n+buyer_id::bigint as buyer_id,\n+buyer_id::bigint as buyer_id,",
+      }),
+      "MULTIPLE_SUPPORTED_CHANGES",
+      "GITHUB",
+    );
+    expectParseError(
+      gitPatch({
+        header: "@@ -1,2 +1,2 @@",
+        body: "-customer_id::bigint as customer_id,\n-old_extra\n+buyer_id::bigint as buyer_id,\n+new_extra",
+      }),
+      "AMBIGUOUS_CHANGE",
+      "GITHUB",
+    );
+    expectParseError(
+      gitPatch({ header: "@@ -1 +1 @@", body: "-customer_id\n+account_id" }),
+      "UNSUPPORTED_CHANGE",
+      "GITHUB",
+    );
+    expectParseError(
+      gitPatch({ header: "@@ -1 +1 @@", body: "-order_id\n+order_key" }),
+      "NO_SUPPORTED_CHANGE",
+      "GITHUB",
+    );
+  });
+
+  it("rejects invalid Git identity and zero-based hunk coordinates", () => {
+    expectParseError(
+      gitPatch().replace(
+        `${"a".repeat(40)}..${"b".repeat(40)}`,
+        `${"a".repeat(40)}..${"a".repeat(40)}`,
+      ),
+      "INVALID_INPUT",
+      "GITHUB",
+    );
+    expectParseError(gitPatch().replace("b".repeat(40), "b".repeat(64)), "INVALID_INPUT", "GITHUB");
+    expectParseError(gitPatch({ header: "@@ -0,3 +1,3 @@" }), "INVALID_INPUT", "GITHUB");
+    expect(
+      repositoryChangeInputSchema.safeParse({
+        ...input(canonicalSql),
+        headSha: "2".repeat(64),
       }).success,
     ).toBe(false);
   });

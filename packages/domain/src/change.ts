@@ -53,9 +53,21 @@ export const repositoryChangeInputSchema = z
     files: z.array(repositoryChangeFileSchema).length(1),
   })
   .strict()
-  .refine((input) => input.baseSha !== input.headSha, {
-    message: "Base and head object IDs must differ",
-    path: ["headSha"],
+  .superRefine((input, refinement) => {
+    if (input.baseSha === input.headSha) {
+      refinement.addIssue({
+        code: "custom",
+        message: "Base and head IDs must differ",
+        path: ["headSha"],
+      });
+    }
+    if (input.baseSha.length !== input.headSha.length) {
+      refinement.addIssue({
+        code: "custom",
+        message: "Base and head must use the same hash algorithm",
+        path: ["headSha"],
+      });
+    }
   });
 export type RepositoryChangeInput = z.infer<typeof repositoryChangeInputSchema>;
 
@@ -81,6 +93,13 @@ export const proposedChangeSchema = z
       refinement.addIssue({
         code: "custom",
         message: "Base and head must differ",
+        path: ["headSha"],
+      });
+    }
+    if (change.baseSha.length !== change.headSha.length) {
+      refinement.addIssue({
+        code: "custom",
+        message: "Base and head must use the same hash algorithm",
         path: ["headSha"],
       });
     }
@@ -135,42 +154,74 @@ const migrationPathPattern = /^walkthrough\/migrations\/[A-Za-z0-9._-]+\.sql$/;
 const modelPathPattern = /^walkthrough\/models\/[A-Za-z0-9_./-]+\.sql$/;
 const hunkHeaderPattern = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(?: .*)?$/;
 
-function isExactFixtureSql(input: RepositoryChangeInput, path: string, patch: string): boolean {
-  return input.source === "FIXTURE" && migrationPathPattern.test(path) && patch === canonicalSql;
+type ChangeClassification = { kind: "SUCCESS" } | { kind: ParseErrorCode };
+
+function classifyFixture(path: string, patch: string): ChangeClassification {
+  if (!migrationPathPattern.test(path)) return { kind: "INVALID_INPUT" };
+  const occurrences = patch.split(canonicalSql).length - 1;
+  if (occurrences > 1 && patch.replaceAll(canonicalSql, "").trim() === "") {
+    return { kind: "MULTIPLE_SUPPORTED_CHANGES" };
+  }
+  if (occurrences === 1) {
+    return patch === canonicalSql ? { kind: "SUCCESS" } : { kind: "AMBIGUOUS_CHANGE" };
+  }
+  return /customer_id|buyer_id/i.test(patch)
+    ? { kind: "UNSUPPORTED_CHANGE" }
+    : { kind: "NO_SUPPORTED_CHANGE" };
 }
 
-function isExactGitUnifiedDiff(path: string, patch: string): boolean {
-  if (!modelPathPattern.test(path) || patch.includes("\r")) return false;
+function classifyGitDiff(path: string, patch: string): ChangeClassification {
+  if (!modelPathPattern.test(path) || patch.includes("\r")) return { kind: "INVALID_INPUT" };
   const lines = patch.split("\n");
   if (lines.at(-1) === "") lines.pop();
   let cursor = 0;
-  if (lines[cursor] !== `diff --git a/${path} b/${path}`) return false;
+  if (lines[cursor] !== `diff --git a/${path} b/${path}`) return { kind: "INVALID_INPUT" };
   cursor += 1;
-  if (/^index [a-f0-9]{7,64}\.\.[a-f0-9]{7,64}(?: [0-7]{6})?$/.test(lines[cursor] ?? "")) {
+  if ((lines[cursor] ?? "").startsWith("index ")) {
+    const index =
+      /^index ([a-f0-9]{40}|[a-f0-9]{64})\.\.([a-f0-9]{40}|[a-f0-9]{64})(?: [0-7]{6})?$/.exec(
+        lines[cursor] ?? "",
+      );
+    if (!index || index[1] === index[2] || index[1]?.length !== index[2]?.length) {
+      return { kind: "INVALID_INPUT" };
+    }
     cursor += 1;
   }
-  if (lines[cursor] !== `--- a/${path}` || lines[cursor + 1] !== `+++ b/${path}`) return false;
+  if (lines[cursor] !== `--- a/${path}` || lines[cursor + 1] !== `+++ b/${path}`) {
+    return { kind: "INVALID_INPUT" };
+  }
   cursor += 2;
   const header = hunkHeaderPattern.exec(lines[cursor] ?? "");
-  if (!header) return false;
+  if (!header || Number(header[1]) < 1 || Number(header[3]) < 1) return { kind: "INVALID_INPUT" };
   cursor += 1;
   const body = lines.slice(cursor);
   if (body.length === 0 || body.some((line) => !/^[ +-]/.test(line) || line.startsWith("@@"))) {
-    return false;
+    return { kind: "INVALID_INPUT" };
   }
   const oldCount = Number(header[2] ?? 1);
   const newCount = Number(header[4] ?? 1);
   const observedOld = body.filter((line) => line.startsWith(" ") || line.startsWith("-")).length;
   const observedNew = body.filter((line) => line.startsWith(" ") || line.startsWith("+")).length;
-  if (observedOld !== oldCount || observedNew !== newCount) return false;
+  if (observedOld !== oldCount || observedNew !== newCount) return { kind: "INVALID_INPUT" };
   const removed = body.filter((line) => line.startsWith("-"));
   const added = body.filter((line) => line.startsWith("+"));
-  return (
-    removed.length === 1 &&
-    added.length === 1 &&
-    removed[0]?.slice(1).trim() === "customer_id::bigint as customer_id," &&
-    added[0]?.slice(1).trim() === "buyer_id::bigint as buyer_id,"
-  );
+  let canonicalCount = 0;
+  for (let index = 0; index < Math.min(removed.length, added.length); index += 1) {
+    if (
+      removed[index]?.slice(1).trim() === "customer_id::bigint as customer_id," &&
+      added[index]?.slice(1).trim() === "buyer_id::bigint as buyer_id,"
+    )
+      canonicalCount += 1;
+  }
+  if (canonicalCount > 1) return { kind: "MULTIPLE_SUPPORTED_CHANGES" };
+  if (canonicalCount === 1) {
+    return removed.length === 1 && added.length === 1
+      ? { kind: "SUCCESS" }
+      : { kind: "AMBIGUOUS_CHANGE" };
+  }
+  return [...removed, ...added].some((line) => /customer_id|buyer_id/i.test(line))
+    ? { kind: "UNSUPPORTED_CHANGE" }
+    : { kind: "NO_SUPPORTED_CHANGE" };
 }
 
 function buildProposedChange(input: RepositoryChangeInput): ProposedChange {
@@ -213,17 +264,23 @@ export function parseProposedChange(untrustedInput: unknown): ParseProposedChang
   }
   const input = parsed.data;
   const file = input.files[0];
-  if (
-    !file ||
-    (!isExactFixtureSql(input, file.path, file.patch) &&
-      !isExactGitUnifiedDiff(file.path, file.patch))
-  ) {
+  if (!file) {
+    return {
+      ok: false,
+      error: { code: "INVALID_INPUT", message: "Missing changed file", filePaths: [] },
+    };
+  }
+  const classification =
+    input.source === "FIXTURE"
+      ? classifyFixture(file.path, file.patch)
+      : classifyGitDiff(file.path, file.patch);
+  if (classification.kind !== "SUCCESS") {
     return {
       ok: false,
       error: {
-        code: "UNSUPPORTED_CHANGE",
-        message: "The changed file is not the exact supported canonical rename",
-        filePaths: file ? [file.path] : [],
+        code: classification.kind,
+        message: `Canonical change classification: ${classification.kind}`,
+        filePaths: [file.path],
       },
     };
   }

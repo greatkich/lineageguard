@@ -347,29 +347,45 @@ export function evaluateGroundedRisk(
     evaluatedAt,
     policyVersion: "lineageguard-p0.1",
   });
-  assertRiskEvidenceReferences(assessment, context);
   return assessment;
 }
 
-export function assertRiskEvidenceReferences(
-  assessment: RiskAssessment,
-  context: ImpactContext,
-): void {
-  const parsedAssessment = riskAssessmentSchema.parse(assessment);
-  const parsedContext = impactContextSchema.parse(context);
-  const ids = new Set(parsedContext.evidence.map((item) => item.id));
+export function bindGroundedRiskAssessment(
+  changeInput: ProposedChange,
+  contextInput: ImpactContext,
+  assessmentInput: RiskAssessment,
+): RiskAssessment {
+  const change = proposedChangeSchema.parse(changeInput);
+  const parsedContext = impactContextSchema.parse(contextInput);
+  const parsedAssessment = riskAssessmentSchema.parse(assessmentInput);
   if (
-    parsedAssessment.changeId !== parsedContext.changeId ||
+    parsedContext.changeId !== change.id ||
+    parsedAssessment.changeId !== change.id ||
+    parsedAssessment.contextMode !== "DATAHUB_GROUNDED" ||
     parsedAssessment.impactContextFingerprint !== parsedContext.impactContextFingerprint
   ) {
-    throw new Error("Risk assessment is not bound to this impact context");
+    throw new Error("Grounded assessment identity does not match the change and context");
   }
+  const authoritative = evaluateGroundedRisk(change, parsedContext, parsedAssessment.evaluatedAt);
+  if (JSON.stringify(parsedAssessment) !== JSON.stringify(authoritative)) {
+    throw new Error("Grounded assessment is not the authoritative deterministic decision");
+  }
+  const ids = new Set(parsedContext.evidence.map((item) => item.id));
   for (const item of parsedAssessment.reasons) {
     for (const evidenceId of item.evidenceIds) {
       if (!ids.has(evidenceId))
         throw new Error(`Risk reason ${item.ruleId} cites unknown evidence ${evidenceId}`);
     }
   }
+  return parsedAssessment;
+}
+
+export function assertRiskEvidenceReferences(
+  change: ProposedChange,
+  assessment: RiskAssessment,
+  context: ImpactContext,
+): void {
+  bindGroundedRiskAssessment(change, context, assessment);
 }
 
 export function compareRiskAssessments(

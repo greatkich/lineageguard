@@ -18,6 +18,7 @@ import {
 } from "./migration.js";
 import {
   assertRiskEvidenceReferences,
+  bindGroundedRiskAssessment,
   compareRiskAssessments,
   evaluateGroundedRisk,
   evaluateRepositoryBaseline,
@@ -272,7 +273,7 @@ describe("deterministic risk policy", () => {
     };
     expect(impactContextSchema.safeParse(changedProvenance).success).toBe(false);
     const rebound = reboundContext(context, { evidence: changedProvenance.evidence });
-    expect(() => assertRiskEvidenceReferences(grounded, rebound)).toThrow(/not bound/);
+    expect(() => assertRiskEvidenceReferences(change, grounded, rebound)).toThrow(/identity/);
     expect(() => evaluateGroundedRisk(change, context, "2026-08-04T07:59:59.999Z")).toThrow(
       /precede context collection/,
     );
@@ -301,10 +302,25 @@ describe("deterministic risk policy", () => {
       false,
     );
   });
+
+  it("rejects a schema-valid caller-supplied grounded ALLOW decision", () => {
+    const { change, context } = canonicalBundle();
+    const tampered = riskAssessmentSchema.parse({
+      changeId: change.id,
+      impactContextFingerprint: context.impactContextFingerprint,
+      contextMode: "DATAHUB_GROUNDED",
+      decision: "ALLOW",
+      risk: "LOW",
+      reasons: [],
+      evaluatedAt: assessedAt,
+      policyVersion: "lineageguard-p0.1",
+    });
+    expect(() => bindGroundedRiskAssessment(change, context, tampered)).toThrow(/authoritative/);
+  });
 });
 
-function candidateInput() {
-  const { change, context, grounded } = canonicalBundle();
+function candidateInput(bundle = canonicalBundle()) {
+  const { change, context, grounded } = bundle;
   const sourceEvidenceIds = [
     ...new Set(grounded.reasons.flatMap((reason) => reason.evidenceIds)),
   ].sort();
@@ -379,9 +395,52 @@ function candidateInput() {
       },
     ].sort((left, right) => (left.path < right.path ? -1 : left.path > right.path ? 1 : 0)),
     requiredReviewers: [
-      { ownerUrn: "urn:li:corpGroup:finance-analytics", reason: "Critical dashboard owner" },
-      { ownerUrn: "urn:li:corpGroup:risk-ml", reason: "Production model owner" },
-    ],
+      ...Array.from(
+        context.evidence
+          .filter((item) => item.kind === "OWNER")
+          .reduce((reviewers, item) => {
+            const current = reviewers.get(item.payload.ownerUrn) ?? [];
+            reviewers.set(item.payload.ownerUrn, [...current, item.payload.assetUrn]);
+            return reviewers;
+          }, new Map<string, string[]>())
+          .entries(),
+        ([ownerUrn, affectedAssetUrns]) => ({
+          kind: "OWNER" as const,
+          ownerUrn,
+          affectedAssetUrns: affectedAssetUrns.sort(),
+          reason: "Recorded critical asset owner",
+        }),
+      ),
+      ...(grounded.reasons.find((reason) => reason.ruleId === "LG005")?.evidenceIds ?? []).map(
+        (evidenceId) => {
+          const item = required(
+            context.evidence.find((evidence) => evidence.id === evidenceId),
+            "LG005 evidence must exist",
+          );
+          if (item.kind !== "DASHBOARD" && item.kind !== "ML_MODEL") {
+            throw new Error("LG005 evidence must identify a critical asset");
+          }
+          return {
+            kind: "UNRESOLVED_OWNER" as const,
+            evidenceId,
+            affectedAssetUrn:
+              item.kind === "DASHBOARD" ? item.payload.dashboardUrn : item.payload.modelUrn,
+            fallbackAuthority: "DATA_PLATFORM_OWNER" as const,
+            reason: "No recorded owner; escalate to the data platform owner",
+          };
+        },
+      ),
+    ].sort((left, right) => {
+      const leftKey =
+        left.kind === "OWNER"
+          ? `OWNER:${left.ownerUrn}`
+          : `UNRESOLVED_OWNER:${left.evidenceId}:${left.affectedAssetUrn}`;
+      const rightKey =
+        right.kind === "OWNER"
+          ? `OWNER:${right.ownerUrn}`
+          : `UNRESOLVED_OWNER:${right.evidenceId}:${right.affectedAssetUrn}`;
+      return leftKey.localeCompare(rightKey);
+    }),
     compatibilityWindowDays: 30,
     rollbackPlan: "Run the rollback SQL while customer_id remains the source of truth.",
   };
@@ -442,6 +501,112 @@ describe("migration contracts and binding", () => {
       ).path = unsafePath;
       expect(migrationCandidateSchema.safeParse(unsafe).success).toBe(false);
     }
+  });
+
+  it("requires every migration artifact role and rejects a test-only bypass", () => {
+    for (const kind of [
+      "SQL_MIGRATION",
+      "ROLLBACK_SQL",
+      "DBT_MODEL",
+      "DBT_TEST",
+      "MIGRATION_DOCUMENT",
+    ] as const) {
+      const missing = structuredClone(candidateInput());
+      missing.artifacts = missing.artifacts.filter((artifact) => artifact.kind !== kind);
+      expect(migrationCandidateSchema.safeParse(missing).success).toBe(false);
+    }
+
+    const bypass = structuredClone(candidateInput());
+    const modelIndex = bypass.artifacts.findIndex((artifact) => artifact.kind === "DBT_MODEL");
+    if (modelIndex < 0) throw new Error("candidate must have model");
+    const modelPath = bypass.artifacts[modelIndex]?.path;
+    bypass.artifacts[modelIndex] = {
+      operation: "CREATE",
+      path: "walkthrough/tests/orders_model_shape.sql",
+      kind: "DBT_TEST",
+      content: "select 1 where false",
+    };
+    const migrate = required(
+      bypass.steps.find((step) => step.phase === "MIGRATE"),
+      "migrate step",
+    );
+    migrate.artifactTargets = migrate.artifactTargets
+      .map((path) => (path === modelPath ? "walkthrough/tests/orders_model_shape.sql" : path))
+      .sort();
+    bypass.artifacts.sort((left, right) => left.path.localeCompare(right.path));
+    expect(migrationCandidateSchema.safeParse(bypass).success).toBe(false);
+  });
+
+  it("binds exact owner reviewers and unresolved-owner fallbacks", () => {
+    const canonical = canonicalBundle();
+    const withoutOwners = reboundContext(canonical.context, {
+      evidence: canonical.context.evidence.filter((item) => item.kind !== "OWNER"),
+    });
+    const zeroOwnerBundle = {
+      ...canonical,
+      context: withoutOwners,
+      grounded: evaluateGroundedRisk(canonical.change, withoutOwners, assessedAt),
+    };
+    const zeroOwnerCandidate = migrationCandidateSchema.parse(candidateInput(zeroOwnerBundle));
+    expect(() =>
+      bindMigrationCandidate(
+        zeroOwnerCandidate,
+        zeroOwnerBundle.change,
+        zeroOwnerBundle.context,
+        zeroOwnerBundle.grounded,
+      ),
+    ).not.toThrow();
+
+    const ownerToRemove = required(
+      canonical.context.evidence.find((item) => item.kind === "OWNER"),
+      "owner evidence",
+    );
+    const partialOwners = reboundContext(canonical.context, {
+      evidence: canonical.context.evidence.filter((item) => item.id !== ownerToRemove.id),
+    });
+    const partialBundle = {
+      ...canonical,
+      context: partialOwners,
+      grounded: evaluateGroundedRisk(canonical.change, partialOwners, assessedAt),
+    };
+    const partialCandidate = migrationCandidateSchema.parse(candidateInput(partialBundle));
+    expect(() =>
+      bindMigrationCandidate(
+        partialCandidate,
+        partialBundle.change,
+        partialBundle.context,
+        partialBundle.grounded,
+      ),
+    ).not.toThrow();
+
+    const missingEscalation = structuredClone(partialCandidate);
+    missingEscalation.requiredReviewers = missingEscalation.requiredReviewers.filter(
+      (reviewer) => reviewer.kind !== "UNRESOLVED_OWNER",
+    );
+    expect(() =>
+      bindMigrationCandidate(
+        migrationCandidateSchema.parse(missingEscalation),
+        partialBundle.change,
+        partialBundle.context,
+        partialBundle.grounded,
+      ),
+    ).toThrow(/escalations/);
+
+    const wrongOwnerAssets = structuredClone(migrationCandidateSchema.parse(candidateInput()));
+    const ownerReviewer = required(
+      wrongOwnerAssets.requiredReviewers.find((reviewer) => reviewer.kind === "OWNER"),
+      "owner reviewer",
+    );
+    if (ownerReviewer.kind !== "OWNER") throw new Error("expected owner reviewer");
+    ownerReviewer.affectedAssetUrns = ["urn:li:dashboard:(looker,wrong)"];
+    expect(() =>
+      bindMigrationCandidate(
+        wrongOwnerAssets,
+        canonical.change,
+        canonical.context,
+        canonical.grounded,
+      ),
+    ).toThrow(/owner reviewer assets/);
   });
 
   it("fails binding for wrong input fingerprints, evidence, decision, and base SHA", () => {
@@ -652,16 +817,32 @@ describe("run state and operational events", () => {
     "COMPLETED",
   ] as const;
   const eventId = (value: number) => `evt_${value.toString(16).padStart(24, "0")}`;
-  const exactStatusEvents = () =>
-    statuses.slice(0, -1).map((from, index) => ({
-      eventId: eventId(index + 1),
+  const lease = {
+    leaseId: "lease_111111111111111111111111",
+    workerId: "worker-1",
+    generation: 1,
+  };
+  const exactStatusEvents = () => [
+    {
+      eventId: eventId(1),
       runId,
-      sequence: index,
+      sequence: 0,
+      type: "RUN_LEASE_ACQUIRED",
+      ...lease,
+      occurredAt: "2026-08-04T08:59:59.000Z",
+      expiresAt: "2026-08-04T10:00:00.000Z",
+    },
+    ...statuses.slice(0, -1).map((from, index) => ({
+      eventId: eventId(index + 2),
+      runId,
+      sequence: index + 1,
       type: "RUN_STATUS_CHANGED",
+      ...lease,
       from,
       to: required(statuses[index + 1], "next status"),
       occurredAt: `2026-08-04T09:00:${index.toString().padStart(2, "0")}.000Z`,
-    }));
+    })),
+  ];
 
   it("matches the exact documented success sequence and failure states", () => {
     expect(runEventStreamSchema.safeParse(exactStatusEvents()).success).toBe(true);
@@ -673,19 +854,11 @@ describe("run state and operational events", () => {
   });
 
   function contextLeaseEvents() {
-    return [
-      ...exactStatusEvents().slice(0, 3),
-      {
-        eventId: eventId(20),
-        runId,
-        sequence: 3,
-        type: "RUN_LEASE_ACQUIRED",
-        leaseId: "lease_111111111111111111111111",
-        workerId: "worker-1",
-        occurredAt: "2026-08-04T09:00:03.100Z",
-        expiresAt: "2026-08-04T09:10:00.000Z",
-      },
-    ];
+    const events = exactStatusEvents().slice(0, 4);
+    const acquired = required(events[0], "lease acquisition");
+    if (acquired.type !== "RUN_LEASE_ACQUIRED") throw new Error("first event must acquire");
+    Object.assign(acquired, { expiresAt: "2026-08-04T09:10:00.000Z" });
+    return events;
   }
 
   it("preserves lease worker through retry, renewal, release, and ownership change", () => {
@@ -698,6 +871,7 @@ describe("run state and operational events", () => {
         type: "RUN_RETRY_SCHEDULED",
         leaseId: "lease_111111111111111111111111",
         workerId: "worker-1",
+        generation: 1,
         operation: "DATAHUB_READ",
         attempt: 1,
         reason: "Transient timeout.",
@@ -711,6 +885,7 @@ describe("run state and operational events", () => {
         type: "RUN_LEASE_RENEWED",
         leaseId: "lease_111111111111111111111111",
         workerId: "worker-1",
+        generation: 1,
         previousExpiresAt: "2026-08-04T09:10:00.000Z",
         occurredAt: "2026-08-04T09:00:06.000Z",
         expiresAt: "2026-08-04T09:20:00.000Z",
@@ -722,6 +897,7 @@ describe("run state and operational events", () => {
         type: "RUN_LEASE_RELEASED",
         leaseId: "lease_111111111111111111111111",
         workerId: "worker-1",
+        generation: 1,
         occurredAt: "2026-08-04T09:00:07.000Z",
       },
       {
@@ -731,6 +907,7 @@ describe("run state and operational events", () => {
         type: "RUN_LEASE_ACQUIRED",
         leaseId: "lease_222222222222222222222222",
         workerId: "worker-2",
+        generation: 2,
         occurredAt: "2026-08-04T09:00:08.000Z",
         expiresAt: "2026-08-04T09:30:00.000Z",
       },
@@ -748,6 +925,7 @@ describe("run state and operational events", () => {
         type: "RUN_LEASE_EXPIRED",
         leaseId: "lease_111111111111111111111111",
         workerId: "worker-1",
+        generation: 1,
         occurredAt: "2026-08-04T09:10:00.000Z",
         expiredAt: "2026-08-04T09:10:00.000Z",
       },
@@ -758,6 +936,7 @@ describe("run state and operational events", () => {
         type: "RUN_LEASE_ACQUIRED",
         leaseId: "lease_222222222222222222222222",
         workerId: "worker-2",
+        generation: 2,
         occurredAt: "2026-08-04T09:10:00.001Z",
         expiresAt: "2026-08-04T09:20:00.000Z",
       },
@@ -774,6 +953,7 @@ describe("run state and operational events", () => {
         sequence: 4,
         leaseId: "lease_222222222222222222222222",
         workerId: "worker-2",
+        generation: 2,
       },
     ];
     expect(runEventStreamSchema.safeParse(overlap).success).toBe(false);
@@ -786,6 +966,7 @@ describe("run state and operational events", () => {
         type: "RUN_LEASE_RENEWED",
         leaseId: "lease_111111111111111111111111",
         workerId: "worker-1",
+        generation: 1,
         previousExpiresAt: "2026-08-04T09:10:00.000Z",
         occurredAt: "2026-08-04T09:10:00.000Z",
         expiresAt: "2026-08-04T09:20:00.000Z",
@@ -801,6 +982,7 @@ describe("run state and operational events", () => {
         type: "RUN_LEASE_RELEASED",
         leaseId: "lease_111111111111111111111111",
         workerId: "worker-2",
+        generation: 1,
         occurredAt: "2026-08-04T09:00:04.000Z",
       },
     ];
@@ -813,6 +995,7 @@ describe("run state and operational events", () => {
         type: "RUN_LEASE_ACQUIRED",
         leaseId: "lease_111111111111111111111111",
         workerId: "worker-1",
+        generation: 1,
         occurredAt: "2026-08-04T09:00:00.000Z",
         expiresAt: "2026-08-04T09:10:00.000Z",
       },
@@ -823,6 +1006,7 @@ describe("run state and operational events", () => {
         type: "RUN_RETRY_SCHEDULED",
         leaseId: "lease_111111111111111111111111",
         workerId: "worker-1",
+        generation: 1,
         operation: "GITHUB_WRITE",
         attempt: 1,
         reason: "Wrong state.",
@@ -840,6 +1024,7 @@ describe("run state and operational events", () => {
         type: "RUN_RETRY_SCHEDULED",
         leaseId: "lease_111111111111111111111111",
         workerId: "worker-2",
+        generation: 1,
         operation: "DATAHUB_READ",
         attempt: 1,
         reason: "Wrong worker.",
@@ -858,10 +1043,145 @@ describe("run state and operational events", () => {
         type: "RUN_LEASE_ACQUIRED",
         leaseId: "lease_333333333333333333333333",
         workerId: "worker-3",
+        generation: 2,
         occurredAt: "2026-08-04T09:01:00.000Z",
         expiresAt: "2026-08-04T09:02:00.000Z",
       },
     ];
     expect(runEventStreamSchema.safeParse(terminal).success).toBe(false);
+  });
+
+  it("requires a live matching lease for every status transition", () => {
+    const transition = required(exactStatusEvents()[1], "first transition");
+    expect(runEventStreamSchema.safeParse([{ ...transition, sequence: 0 }]).success).toBe(false);
+
+    const expired = exactStatusEvents().slice(0, 2);
+    const acquisition = required(expired[0], "acquisition");
+    if (acquisition.type !== "RUN_LEASE_ACQUIRED") throw new Error("expected acquisition");
+    Object.assign(acquisition, { expiresAt: "2026-08-04T09:00:00.000Z" });
+    expect(runEventStreamSchema.safeParse(expired).success).toBe(false);
+
+    for (const mismatch of [
+      { workerId: "other-worker" },
+      { leaseId: "lease_999999999999999999999999" },
+      { generation: 2 },
+    ]) {
+      const events = exactStatusEvents().slice(0, 2);
+      Object.assign(required(events[1], "transition"), mismatch);
+      expect(runEventStreamSchema.safeParse(events).success).toBe(false);
+    }
+  });
+
+  it("rejects lease ID reuse and non-increasing generations", () => {
+    const released = [
+      ...contextLeaseEvents(),
+      {
+        eventId: eventId(60),
+        runId,
+        sequence: 4,
+        type: "RUN_LEASE_RELEASED",
+        ...lease,
+        occurredAt: "2026-08-04T09:00:04.000Z",
+      },
+    ];
+    expect(
+      runEventStreamSchema.safeParse([
+        ...released,
+        {
+          eventId: eventId(61),
+          runId,
+          sequence: 5,
+          type: "RUN_LEASE_ACQUIRED",
+          ...lease,
+          generation: 2,
+          occurredAt: "2026-08-04T09:00:05.000Z",
+          expiresAt: "2026-08-04T09:01:00.000Z",
+        },
+      ]).success,
+    ).toBe(false);
+    expect(
+      runEventStreamSchema.safeParse([
+        ...released,
+        {
+          eventId: eventId(62),
+          runId,
+          sequence: 5,
+          type: "RUN_LEASE_ACQUIRED",
+          leaseId: "lease_222222222222222222222222",
+          workerId: "worker-2",
+          generation: 1,
+          occurredAt: "2026-08-04T09:00:05.000Z",
+          expiresAt: "2026-08-04T09:01:00.000Z",
+        },
+      ]).success,
+    ).toBe(false);
+  });
+
+  it("keeps retry attempts global across leases and enforces exact backoff", () => {
+    const firstRetry = {
+      eventId: eventId(70),
+      runId,
+      sequence: 4,
+      type: "RUN_RETRY_SCHEDULED",
+      ...lease,
+      operation: "DATAHUB_READ",
+      attempt: 1,
+      reason: "Transient timeout.",
+      occurredAt: "2026-08-04T09:00:04.000Z",
+      retryAt: "2026-08-04T09:00:05.000Z",
+    };
+    const acrossLeases = [
+      ...contextLeaseEvents(),
+      firstRetry,
+      {
+        eventId: eventId(71),
+        runId,
+        sequence: 5,
+        type: "RUN_LEASE_RELEASED",
+        ...lease,
+        occurredAt: "2026-08-04T09:00:05.000Z",
+      },
+      {
+        eventId: eventId(72),
+        runId,
+        sequence: 6,
+        type: "RUN_LEASE_ACQUIRED",
+        leaseId: "lease_222222222222222222222222",
+        workerId: "worker-2",
+        generation: 2,
+        occurredAt: "2026-08-04T09:00:06.000Z",
+        expiresAt: "2026-08-04T09:00:08.000Z",
+      },
+      {
+        eventId: eventId(73),
+        runId,
+        sequence: 7,
+        type: "RUN_RETRY_SCHEDULED",
+        leaseId: "lease_222222222222222222222222",
+        workerId: "worker-2",
+        generation: 2,
+        operation: "DATAHUB_READ",
+        attempt: 2,
+        reason: "Transient timeout again.",
+        occurredAt: "2026-08-04T09:00:07.000Z",
+        retryAt: "2026-08-04T09:00:12.000Z",
+      },
+    ];
+    expect(runEventStreamSchema.safeParse(acrossLeases).success).toBe(true);
+
+    const reset = structuredClone(acrossLeases);
+    Object.assign(required(reset[7], "second retry"), {
+      attempt: 1,
+      retryAt: "2026-08-04T09:00:08.000Z",
+    });
+    expect(runEventStreamSchema.safeParse(reset).success).toBe(false);
+    const wrongDelay = [
+      ...structuredClone(contextLeaseEvents()),
+      { ...firstRetry, retryAt: "2026-08-04T09:00:06.000Z" },
+    ];
+    expect(runEventStreamSchema.safeParse(wrongDelay).success).toBe(false);
+    expect(
+      runEventStreamSchema.safeParse([{ ...firstRetry, sequence: 0, attempt: 4 }]).success,
+    ).toBe(false);
   });
 });
