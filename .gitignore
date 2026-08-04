@@ -1,2 +1,28 @@
 # Local workspace artifacts
 /.project-notes/
+
+# JavaScript and TypeScript
+node_modules/
+.pnpm-store/
+.next/
+dist/
+coverage/
+*.tsbuildinfo
+
+# Browser test output
+playwright-report/
+test-results/
+
+# Python
+.venv/
+__pycache__/
+.pytest_cache/
+*.py[cod]
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+
+# Operating system files
+.DS_Store

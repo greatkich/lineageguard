@@ -1,0 +1,33 @@
+{
+  "name": "lineageguard",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24.0.0 <25.0.0",
+    "pnpm": ">=11.20.0 <12.0.0"
+  },
+  "packageManager": "pnpm@11.20.0",
+  "scripts": {
+    "build": "pnpm --recursive --if-present build",
+    "check:environment": "sh scripts/check-environment.sh",
+    "dev": "pnpm --filter @lineageguard/web dev",
+    "dev:worker": "pnpm --filter @lineageguard/worker build && pnpm --filter @lineageguard/worker start",
+    "format": "biome format --write .",
+    "format:check": "biome format .",
+    "lint": "biome lint .",
+    "test": "node --test scripts/*.test.mjs && vitest run",
+    "test:e2e": "playwright test",
+    "typecheck": "pnpm --recursive --if-present typecheck",
+    "walkthrough:verify": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.7",
+    "@playwright/test": "1.62.1",
+    "@types/node": "24.13.3",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.4",
+    "typescript": "5.9.3",
+    "vitest": "4.1.10"
+  }
+}

@@ -32,13 +32,18 @@ function assert(condition, message) {
 }
 
 function sameStringArray(actual, expected) {
-  return actual.length === expected.length && actual.every((value, index) => value === expected[index]);
+  return (
+    actual.length === expected.length && actual.every((value, index) => value === expected[index])
+  );
 }
 
 function validateLock(lock) {
   assert(lock && typeof lock === "object" && !Array.isArray(lock), "lock must be an object");
   assert(lock.version === 2, "lock version must be 2");
-  assert(lock.source?.repository === "datahub-project/datahub-skills", "unexpected source repository");
+  assert(
+    lock.source?.repository === "datahub-project/datahub-skills",
+    "unexpected source repository",
+  );
   assert(lock.source?.sourceType === "github", "unexpected source type");
   assert(
     typeof lock.source?.ref === "string" && GIT_COMMIT_PATTERN.test(lock.source.ref),
@@ -47,8 +52,14 @@ function validateLock(lock) {
   assert(lock.source.ref === EXPECTED_REF, `source ref must be ${EXPECTED_REF}`);
   assert(lock.source?.license === "Apache-2.0", "source license must be Apache-2.0");
   assert(Array.isArray(lock.vendoredRoots), "vendoredRoots must be an array");
-  assert(sameStringArray(lock.vendoredRoots, EXPECTED_ROOTS), "vendoredRoots must match the exact approved roots");
-  assert(lock.files && typeof lock.files === "object" && !Array.isArray(lock.files), "files must be an object");
+  assert(
+    sameStringArray(lock.vendoredRoots, EXPECTED_ROOTS),
+    "vendoredRoots must match the exact approved roots",
+  );
+  assert(
+    lock.files && typeof lock.files === "object" && !Array.isArray(lock.files),
+    "files must be an object",
+  );
   assert(
     lock.localPatches && typeof lock.localPatches === "object" && !Array.isArray(lock.localPatches),
     "localPatches must be an object",
@@ -101,8 +112,13 @@ async function assertRealVendoredRoot(root, relativeDirectory) {
 async function hashFile(root, relativePath) {
   const absolutePath = resolve(root, ...relativePath.split("/"));
   const metadata = await lstat(absolutePath);
-  assert(metadata.isFile() && !metadata.isSymbolicLink(), `vendored path is not a regular file: ${relativePath}`);
-  return createHash("sha256").update(await readFile(absolutePath)).digest("hex");
+  assert(
+    metadata.isFile() && !metadata.isSymbolicLink(),
+    `vendored path is not a regular file: ${relativePath}`,
+  );
+  return createHash("sha256")
+    .update(await readFile(absolutePath))
+    .digest("hex");
 }
 
 async function verifySnapshot(root, lock) {
@@ -112,7 +128,8 @@ async function verifySnapshot(root, lock) {
   for (const vendoredRoot of EXPECTED_ROOTS) await assertRealVendoredRoot(root, vendoredRoot);
 
   const actualFiles = [];
-  for (const vendoredRoot of EXPECTED_ROOTS) actualFiles.push(...(await walkFiles(root, vendoredRoot)));
+  for (const vendoredRoot of EXPECTED_ROOTS)
+    actualFiles.push(...(await walkFiles(root, vendoredRoot)));
   actualFiles.sort();
   const lockedFiles = Object.keys(lock.files).sort();
 
@@ -134,7 +151,10 @@ async function verifySnapshot(root, lock) {
     `local patch metadata must cover exactly ${EXPECTED_LOCAL_PATCH}`,
   );
   const patch = lock.localPatches[EXPECTED_LOCAL_PATCH];
-  assert(typeof patch.description === "string" && patch.description.trim().length > 0, "local patch description required");
+  assert(
+    typeof patch.description === "string" && patch.description.trim().length > 0,
+    "local patch description required",
+  );
   assert(SHA256_PATTERN.test(patch.upstreamSha256), "local patch upstream SHA-256 invalid");
   assert(SHA256_PATTERN.test(patch.vendoredSha256), "local patch vendored SHA-256 invalid");
   assert(
@@ -150,7 +170,9 @@ async function main() {
   const root = parseRoot(process.argv.slice(2));
   const lock = JSON.parse(await readFile(resolve(root, "skills-lock.json"), "utf8"));
   const result = await verifySnapshot(root, lock);
-  process.stdout.write(`agent skills snapshot: verified (${result.fileCount} files at ${result.ref})\n`);
+  process.stdout.write(
+    `agent skills snapshot: verified (${result.fileCount} files at ${result.ref})\n`,
+  );
 }
 
 main().catch((error) => {
