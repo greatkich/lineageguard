@@ -15,6 +15,11 @@ class Granularity(StrEnum):
     ENTITY = "ENTITY"
 
 
+class OwnershipType(StrEnum):
+    BUSINESS_OWNER = "BUSINESS_OWNER"
+    TECHNICAL_OWNER = "TECHNICAL_OWNER"
+
+
 @dataclass(frozen=True, slots=True)
 class SourceField:
     logical_key: str
@@ -45,6 +50,7 @@ class GraphNode:
     entity_type: EntityType
     name: str
     owner_urns: tuple[str, ...]
+    ownership_type: OwnershipType | None
     tag_urns: tuple[str, ...]
     schema_fields: tuple[str, ...]
 

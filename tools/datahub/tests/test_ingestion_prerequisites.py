@@ -1,88 +1,116 @@
 from __future__ import annotations
 
 import json
+import os
+import shutil
+import stat
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 import yaml
 from datahub.ingestion.source.sql.postgres import PostgresConfig
+from support import (
+    TARGET_ATTESTATION,
+    TARGET_FINGERPRINT,
+    WAREHOUSE_TARGET,
+    append_build_provenance,
+    append_ingestion_receipts,
+    provenance_values,
+)
 
 from lineageguard_datahub.ingestion import (
     CANONICAL_DBT_NODES,
     CANONICAL_DBT_RELATIONS,
     DBT_ARTIFACT_PATHS,
+    DBT_PROJECT_FILE_DIGESTS,
     RECIPE_DIGESTS,
+    build_ingestion_plan,
     ingestion_prerequisite_failures,
+    protected_dbt_project_snapshot,
+    protected_ingestion_snapshot,
     verify_dbt_ingestion_artifacts,
 )
-from lineageguard_datahub.receipts import OperationReceipt, ReceiptStatus
+from lineageguard_datahub.receipts import ReceiptStatus, ReceiptStore
 
 SCENARIO = "canonical-customer-id-rename"
-ATTESTATION = "canonical-local-lineageguard-v1"
-TARGET = "f" * 64
 
 
-def _receipt(
-    relative: str,
-    *,
-    status: ReceiptStatus = ReceiptStatus.SUCCESS,
-    digest: str | None = None,
-    attestation: str = ATTESTATION,
-    target: str = TARGET,
-) -> OperationReceipt:
-    actual_digest = digest or RECIPE_DIGESTS[relative]
-    return OperationReceipt.create(
-        scenario_id=SCENARIO,
-        operation_kind="ingest",
-        entity_urn=None,
-        aspect_name=relative,
-        idempotency_key=actual_digest,
-        proposal_hash=actual_digest,
-        status=status,
-        detail_code="INGESTED" if status is ReceiptStatus.SUCCESS else "EXIT_1",
-        metrics={"targetAttestation": attestation, "targetFingerprint": target},
-    )
-
-
-def _valid_receipts() -> tuple[OperationReceipt, ...]:
-    return tuple(_receipt(relative) for relative in RECIPE_DIGESTS)
-
-
-def test_ingestion_prerequisites_require_both_current_exact_ordered_receipts() -> None:
+def test_ingestion_prerequisites_require_both_current_exact_ordered_receipts(
+    repository_root: Path, tmp_path: Path
+) -> None:
+    store = ReceiptStore(tmp_path / "operations.jsonl")
+    append_build_provenance(store, repository_root)
+    append_ingestion_receipts(store, repository_root)
+    valid = store.read_all()
+    project, artifacts, snapshot = provenance_values(repository_root)
+    kwargs = {
+        "scenario_id": SCENARIO,
+        "ownership_nonce": store.ownership_nonce,
+        "warehouse_target_fingerprint": WAREHOUSE_TARGET,
+        "target_attestation": TARGET_ATTESTATION,
+        "target_fingerprint": TARGET_FINGERPRINT,
+        "dbt_project_sha256": project,
+        "artifact_metrics": artifacts,
+        "snapshot_fingerprint": snapshot,
+    }
     postgres, dbt = RECIPE_DIGESTS
-    assert not ingestion_prerequisite_failures(
-        _valid_receipts(),
-        scenario_id=SCENARIO,
-        target_attestation=ATTESTATION,
-        target_fingerprint=TARGET,
-    )
+    assert not ingestion_prerequisite_failures(valid, **kwargs)
+    indexes = {item.aspect_name: index for index, item in enumerate(valid)}
+    postgres_index = indexes[postgres]
+    dbt_index = indexes[dbt]
     cases = (
-        (_valid_receipts()[:1], "INGEST_PREREQUISITE_MISSING"),
+        (tuple(item for item in valid if item.aspect_name != dbt), "INGEST_PREREQUISITE_MISSING"),
         (
-            (_receipt(postgres), _receipt(dbt, status=ReceiptStatus.FAILURE)),
+            tuple(
+                replace(item, status=ReceiptStatus.FAILURE, detail_code="EXIT_1")
+                if index == dbt_index
+                else item
+                for index, item in enumerate(valid)
+            ),
             "INGEST_PREREQUISITE_NOT_CURRENT",
         ),
         (
-            (*_valid_receipts(), _receipt(dbt, status=ReceiptStatus.PLANNED)),
+            tuple(
+                replace(item, status=ReceiptStatus.PLANNED, detail_code="OPERATION_PLANNED")
+                if index == dbt_index
+                else item
+                for index, item in enumerate(valid)
+            ),
             "INGEST_PREREQUISITE_NOT_CURRENT",
         ),
         (
-            (_receipt(postgres), _receipt(dbt, digest="a" * 64)),
+            tuple(
+                replace(item, idempotency_key="a" * 64, proposal_hash="a" * 64)
+                if index == dbt_index
+                else item
+                for index, item in enumerate(valid)
+            ),
             "INGEST_PREREQUISITE_DIGEST_MISMATCH",
         ),
         (
-            (_receipt(postgres), _receipt(dbt, target="b" * 64)),
+            tuple(
+                replace(item, metrics=item.metrics | {"targetFingerprint": "b" * 64})
+                if index == dbt_index
+                else item
+                for index, item in enumerate(valid)
+            ),
             "INGEST_PREREQUISITE_TARGET_MISMATCH",
         ),
-        ((_receipt(dbt), _receipt(postgres)), "INGEST_PREREQUISITE_ORDER_INVALID"),
+        (
+            tuple(
+                valid[dbt_index]
+                if index == postgres_index
+                else valid[postgres_index]
+                if index == dbt_index
+                else item
+                for index, item in enumerate(valid)
+            ),
+            "INGEST_PREREQUISITE_ORDER_INVALID",
+        ),
     )
     for receipts, code in cases:
-        failures = ingestion_prerequisite_failures(
-            receipts,
-            scenario_id=SCENARIO,
-            target_attestation=ATTESTATION,
-            target_fingerprint=TARGET,
-        )
+        failures = ingestion_prerequisite_failures(receipts, **kwargs)
         assert any(item.startswith(code) for item in failures)
 
 
@@ -105,10 +133,7 @@ def test_dbt_ingestion_requires_complete_successful_clean_target(tmp_path: Path)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(payload))
     assert (
-        tuple(
-            path.relative_to(tmp_path).as_posix()
-            for path in verify_dbt_ingestion_artifacts(tmp_path)
-        )
+        tuple(artifact.relative_path for artifact in verify_dbt_ingestion_artifacts(tmp_path))
         == DBT_ARTIFACT_PATHS
     )
 
@@ -129,3 +154,44 @@ def test_pinned_postgres_recipe_disables_connector_query_lineage(
         (repository_root / "walkthrough/metadata/dbt-ingestion.yml").read_text()
     )
     assert dbt_payload["source"]["config"]["include_column_lineage"] is False
+
+
+def test_external_tools_receive_only_private_captured_snapshots(
+    repository_root: Path, tmp_path: Path
+) -> None:
+    captured_root = tmp_path / "captured"
+    for relative in (*RECIPE_DIGESTS, *DBT_ARTIFACT_PATHS):
+        destination = captured_root / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(repository_root / relative, destination)
+    recipes = build_ingestion_plan(captured_root)
+    artifacts = verify_dbt_ingestion_artifacts(captured_root)
+    original_recipe = recipes[0].content
+    (captured_root / recipes[0].relative_path).write_text("source: replaced-after-check")
+    snapshot_path: Path | None = None
+    with protected_ingestion_snapshot(tmp_path / "state", recipes, artifacts) as snapshot:
+        snapshot_path = snapshot.root
+        assert stat.S_IMODE(snapshot.root.stat().st_mode) == 0o700
+        expected_paths = {item.relative_path for item in (*recipes, *artifacts)}
+        assert {
+            path.relative_to(snapshot.root).as_posix()
+            for path in snapshot.root.rglob("*")
+            if path.is_file()
+        } == expected_paths
+        assert snapshot.path_for(recipes[0].relative_path).read_bytes() == original_recipe
+        assert all(
+            stat.S_IMODE(snapshot.path_for(relative).stat().st_mode) == 0o600
+            for relative in expected_paths
+        )
+    assert snapshot_path is not None and not snapshot_path.exists()
+
+    dbt_snapshot_path: Path | None = None
+    with protected_dbt_project_snapshot(tmp_path / "dbt-state", repository_root) as snapshot:
+        dbt_snapshot_path = snapshot.root
+        assert stat.S_IMODE(snapshot.root.stat().st_mode) == 0o700
+        for relative in DBT_PROJECT_FILE_DIGESTS:
+            path = snapshot.root / relative
+            assert path.read_bytes() == (repository_root / relative).read_bytes()
+            assert stat.S_IMODE(path.stat().st_mode) == 0o600
+            assert path.stat().st_uid == os.getuid()
+    assert dbt_snapshot_path is not None and not dbt_snapshot_path.exists()

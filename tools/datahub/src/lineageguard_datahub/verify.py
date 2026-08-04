@@ -31,8 +31,9 @@ from datahub.metadata.schema_classes import (
 from lineageguard_datahub.ingestion import RECIPE_DIGESTS, ingestion_prerequisite_failures
 from lineageguard_datahub.models import ExpectedGraph, Granularity
 from lineageguard_datahub.paths import resolve_checked_file
+from lineageguard_datahub.provenance import receipt_has_registry_binding
 from lineageguard_datahub.query_history import normalized_sql_fingerprint
-from lineageguard_datahub.receipts import OperationReceipt, ReceiptStatus
+from lineageguard_datahub.receipts import MetricValue, OperationReceipt, ReceiptStatus
 
 Aspect = TypeVar("Aspect", bound=_Aspect)
 
@@ -183,8 +184,13 @@ def _receipt_failures(
     signals: tuple[QuerySignal, ...],
     receipts: tuple[OperationReceipt, ...],
     *,
+    ownership_nonce: str,
+    warehouse_target_fingerprint: str,
     target_attestation: str,
     target_fingerprint: str,
+    dbt_project_sha256: str,
+    artifact_metrics: dict[str, MetricValue],
+    snapshot_fingerprint: str,
 ) -> tuple[VerificationFailure, ...]:
     query_receipts = [
         receipt
@@ -235,8 +241,13 @@ def _receipt_failures(
         for item in ingestion_prerequisite_failures(
             receipts,
             scenario_id=graph.scenario_id,
+            ownership_nonce=ownership_nonce,
+            warehouse_target_fingerprint=warehouse_target_fingerprint,
             target_attestation=target_attestation,
             target_fingerprint=target_fingerprint,
+            dbt_project_sha256=dbt_project_sha256,
+            artifact_metrics=artifact_metrics,
+            snapshot_fingerprint=snapshot_fingerprint,
             require_seed_after=True,
         )
     ]
@@ -251,6 +262,13 @@ def _receipt_failures(
             or latest.metrics.get("normalizedFingerprint") != latest.idempotency_key
             or latest.metrics.get("statementSha256") != query.sha256
             or not latest.metrics.get("queryId")
+            or not latest.metrics.get("databaseId")
+            or not latest.metrics.get("userId")
+            or not receipt_has_registry_binding(
+                latest,
+                ownership_nonce=ownership_nonce,
+                warehouse_target_fingerprint=warehouse_target_fingerprint,
+            )
         ):
             failures.append(VerificationFailure("PG_STAT_RECEIPT_BINDING_INVALID", "query"))
         if int(latest.metrics.get("executionCount", 0)) < 1:
@@ -310,6 +328,16 @@ def _receipt_failures(
                 or metrics.get("observationTimestamp") != latest_query.recorded_at
                 or metrics.get("recipeFingerprint")
                 != RECIPE_DIGESTS["walkthrough/metadata/postgres-ingestion.yml"]
+                or metrics.get("targetAttestation") != target_attestation
+                or metrics.get("targetFingerprint") != target_fingerprint
+                or metrics.get("dbtProjectFingerprint") != dbt_project_sha256
+                or metrics.get("ingestionSnapshotFingerprint") != snapshot_fingerprint
+                or any(metrics.get(key) != value for key, value in artifact_metrics.items())
+                or not receipt_has_registry_binding(
+                    item,
+                    ownership_nonce=ownership_nonce,
+                    warehouse_target_fingerprint=warehouse_target_fingerprint,
+                )
                 or metrics.get("afterStatus")
                 != ("EMITTED" if item.status is ReceiptStatus.SUCCESS else "UNCHANGED")
             ):
@@ -381,8 +409,13 @@ def compare_observed_graph(
     observed: ObservedGraph,
     receipts: tuple[OperationReceipt, ...] = (),
     *,
+    ownership_nonce: str,
+    warehouse_target_fingerprint: str,
     target_attestation: str,
     target_fingerprint: str,
+    dbt_project_sha256: str,
+    artifact_metrics: dict[str, MetricValue],
+    snapshot_fingerprint: str,
 ) -> GraphVerificationReport:
     expected = expected_observation(graph)
     checks = (
@@ -427,8 +460,13 @@ def compare_observed_graph(
             graph,
             tuple(live_query),
             receipts,
+            ownership_nonce=ownership_nonce,
+            warehouse_target_fingerprint=warehouse_target_fingerprint,
             target_attestation=target_attestation,
             target_fingerprint=target_fingerprint,
+            dbt_project_sha256=dbt_project_sha256,
+            artifact_metrics=artifact_metrics,
+            snapshot_fingerprint=snapshot_fingerprint,
         )
     )
     outcomes, intermediates = _reachable(graph, observed)

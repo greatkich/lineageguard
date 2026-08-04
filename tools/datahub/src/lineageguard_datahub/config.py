@@ -48,6 +48,11 @@ class PostgresConfig:
             f"?sslmode={quote(self.sslmode, safe='')}"
         )
 
+    @property
+    def target_fingerprint(self) -> str:
+        identity = f"postgres|{self.host}|{self.port}|{self.database}|{self.sslmode}"
+        return hashlib.sha256(identity.encode()).hexdigest()
+
 
 def _required(name: str, environ: dict[str, str]) -> str:
     value = environ.get(name)
@@ -69,6 +74,25 @@ def _is_loopback(host: str | None) -> bool:
         return False
 
 
+def _is_numeric_loopback(host: str | None) -> bool:
+    if host is None:
+        return False
+    try:
+        return ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def _require_distinct_datahub_tokens(values: dict[str, str]) -> None:
+    tokens = [
+        value
+        for name in ("DATAHUB_READ_TOKEN", "DATAHUB_INGEST_TOKEN", "DATAHUB_MUTATION_TOKEN")
+        if (value := values.get(name)) is not None and value != ""
+    ]
+    if len(tokens) != len(set(tokens)):
+        raise ConfigurationError("DATAHUB_CREDENTIAL_REUSE_DENIED")
+
+
 def load_datahub_config(
     environ: dict[str, str] | None = None,
     *,
@@ -78,6 +102,7 @@ def load_datahub_config(
     if write and ingest:
         raise ConfigurationError("DATAHUB_CREDENTIAL_PURPOSE_CONFLICT")
     values = dict(os.environ if environ is None else environ)
+    _require_distinct_datahub_tokens(values)
     server = _required("DATAHUB_GMS_URL", values)
     parsed = urlsplit(server)
     if parsed.scheme not in {"http", "https"} or parsed.hostname is None:
@@ -99,20 +124,11 @@ def load_datahub_config(
     if credential_kind != "read" and token is None:
         raise ConfigurationError(f"{token_name}_REQUIRED")
     target_attestation = values.get("LINEAGEGUARD_DATAHUB_TARGET_ATTESTATION")
-    if credential_kind == "mutation":
-        if not local:
-            raise ConfigurationError("REMOTE_DATAHUB_MUTATION_DENIED")
+    if credential_kind in {"mutation", "ingest"}:
+        if not _is_numeric_loopback(parsed.hostname):
+            raise ConfigurationError("CANONICAL_DATAHUB_NUMERIC_LOOPBACK_REQUIRED")
         if target_attestation != CANONICAL_TARGET_ATTESTATION:
             raise ConfigurationError("DATAHUB_TARGET_ATTESTATION_REQUIRED")
-    elif credential_kind == "ingest":
-        if target_attestation is None or not target_attestation.strip():
-            raise ConfigurationError("DATAHUB_TARGET_ATTESTATION_REQUIRED")
-        if len(target_attestation) > 4096:
-            raise ConfigurationError("ENV_TOO_LARGE:LINEAGEGUARD_DATAHUB_TARGET_ATTESTATION")
-        if local and target_attestation != CANONICAL_TARGET_ATTESTATION:
-            raise ConfigurationError("DATAHUB_TARGET_ATTESTATION_REQUIRED")
-        if not local and values.get("LINEAGEGUARD_REMOTE_DATAHUB_WRITE") != "approved":
-            raise ConfigurationError("REMOTE_DATAHUB_WRITE_OPT_IN_REQUIRED")
     return DataHubConfig(
         server=server.rstrip("/"),
         token=token,

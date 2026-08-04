@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -13,9 +14,23 @@ from datahub.metadata.schema_classes import (
     QueryUsageStatisticsClass,
     StatusClass,
 )
+from support import (
+    TARGET_ATTESTATION,
+    TARGET_FINGERPRINT,
+    WAREHOUSE_TARGET,
+    RegistryCursor,
+    append_build_provenance,
+    full_target_metrics,
+)
 
 from lineageguard_datahub.ingestion import RECIPE_DIGESTS
-from lineageguard_datahub.live_query import build_live_query_plan, emit_live_query_evidence
+from lineageguard_datahub.live_query import (
+    build_live_query_plan,
+    reconcile_live_query_evidence,
+)
+from lineageguard_datahub.live_query import (
+    emit_live_query_evidence as _emit_live_query_evidence,
+)
 from lineageguard_datahub.models import ExpectedGraph
 from lineageguard_datahub.query_history import plan_query_execution
 from lineageguard_datahub.receipts import OperationReceipt, ReceiptStatus, ReceiptStore
@@ -63,6 +78,7 @@ def _query_receipt(
     count: int = 3,
     total_time: float = 1.25,
     recorded_at: str | None = "2026-08-04T10:00:00+00:00",
+    ownership_nonce: str = "offline-plan",
 ) -> OperationReceipt:
     execution = plan_query_execution(repository_root, graph.query_evidence[0])
     return OperationReceipt.create(
@@ -79,8 +95,12 @@ def _query_receipt(
             "totalExecTimeMs": total_time,
             "normalizedFingerprint": execution.normalized_fingerprint,
             "statementSha256": execution.sha256,
+            "databaseId": "16384",
+            "userId": "16390",
+            **full_target_metrics(repository_root, ownership_nonce),
         },
         recorded_at=recorded_at,
+        ownership_nonce=ownership_nonce,
     )
 
 
@@ -93,16 +113,19 @@ def _prepare_store(
     total_time: float = 1.25,
     recorded_at: str | None = "2026-08-04T10:00:00+00:00",
 ) -> None:
-    store.append(
-        _query_receipt(
-            graph,
-            repository_root,
-            count=count,
-            total_time=total_time,
-            recorded_at=recorded_at,
-        )
+    if not store.read_all():
+        append_build_provenance(store, repository_root)
+    query_receipt = _query_receipt(
+        graph,
+        repository_root,
+        count=count,
+        total_time=total_time,
+        recorded_at=recorded_at,
+        ownership_nonce=store.ownership_nonce,
     )
+    store.append(query_receipt)
     digest = RECIPE_DIGESTS["walkthrough/metadata/postgres-ingestion.yml"]
+    ingest_time = datetime.fromisoformat(query_receipt.recorded_at).isoformat()
     store.append(
         OperationReceipt.create(
             scenario_id=graph.scenario_id,
@@ -112,8 +135,48 @@ def _prepare_store(
             idempotency_key=digest,
             status=ReceiptStatus.SUCCESS,
             detail_code="INGESTED",
-            recorded_at=("2026-08-04T10:01:00+00:00" if recorded_at is not None else None),
+            recorded_at=ingest_time,
+            ownership_nonce=store.ownership_nonce,
+            metrics=full_target_metrics(repository_root, store.ownership_nonce),
         )
+    )
+
+
+def emit_live_query_evidence(
+    emitter: FakeCatalog,
+    reader: FakeCatalog,
+    store: ReceiptStore,
+    graph: ExpectedGraph,
+    root: Path,
+) -> int:
+    return _emit_live_query_evidence(
+        emitter,
+        reader,
+        store,
+        graph,
+        root,
+        RegistryCursor(store.ownership_nonce),
+        warehouse_target_fingerprint=WAREHOUSE_TARGET,
+        target_attestation=TARGET_ATTESTATION,
+        target_fingerprint=TARGET_FINGERPRINT,
+    )
+
+
+def _reconcile_live(
+    reader: FakeCatalog,
+    store: ReceiptStore,
+    graph: ExpectedGraph,
+    root: Path,
+) -> int:
+    return reconcile_live_query_evidence(
+        reader,
+        store,
+        graph,
+        root,
+        RegistryCursor(store.ownership_nonce),
+        warehouse_target_fingerprint=WAREHOUSE_TARGET,
+        target_attestation=TARGET_ATTESTATION,
+        target_fingerprint=TARGET_FINGERPRINT,
     )
 
 
@@ -139,6 +202,9 @@ def test_live_query_partial_failure_reconciles_successful_aspects(
         emit_live_query_evidence(catalog, catalog, store, expected_graph, repository_root)
     catalog.fail_at = None
     before = len(catalog.emitted)
+    with pytest.raises(ValueError, match="SCENARIO_RECONCILIATION_REQUIRED"):
+        emit_live_query_evidence(catalog, catalog, store, expected_graph, repository_root)
+    assert _reconcile_live(catalog, store, expected_graph, repository_root) == 3
     emitted = emit_live_query_evidence(catalog, catalog, store, expected_graph, repository_root)
     assert before == 2
     assert emitted == 3
@@ -253,6 +319,9 @@ def test_ambiguous_usage_apply_is_reconciled_from_live_state(
     with pytest.raises(RuntimeError, match="ambiguous-after-apply"):
         emit_live_query_evidence(catalog, catalog, store, expected_graph, repository_root)
     catalog.fail_after_at = None
+    with pytest.raises(ValueError, match="SCENARIO_RECONCILIATION_REQUIRED"):
+        emit_live_query_evidence(catalog, catalog, store, expected_graph, repository_root)
+    assert _reconcile_live(catalog, store, expected_graph, repository_root) == 1
     assert emit_live_query_evidence(catalog, catalog, store, expected_graph, repository_root) == 0
     assert any(
         item.aspect_name == "queryUsageStatistics" and item.status is ReceiptStatus.SKIPPED

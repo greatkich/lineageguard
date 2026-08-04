@@ -13,6 +13,7 @@ from lineageguard_datahub.models import (
     GraphNode,
     LineageEdge,
     Owner,
+    OwnershipType,
     QueryEvidence,
     SourceField,
     Tag,
@@ -101,6 +102,68 @@ CANONICAL_NON_DATASET_URNS = {
     "urn:li:tag:lineageguard-canonical.Critical",
     "urn:li:tag:lineageguard-canonical.Production",
 }
+CANONICAL_OWNER_SPECS = frozenset(
+    {
+        (
+            "team.finance-analytics",
+            "urn:li:corpGroup:lineageguard-canonical.finance-analytics",
+            "Finance Analytics",
+        ),
+        ("team.risk-ml", "urn:li:corpGroup:lineageguard-canonical.risk-ml", "Risk ML"),
+    }
+)
+CANONICAL_TAG_SPECS = frozenset(
+    {
+        ("critical", "urn:li:tag:lineageguard-canonical.Critical", "Critical"),
+        ("production", "urn:li:tag:lineageguard-canonical.Production", "Production"),
+    }
+)
+CANONICAL_NODE_SEMANTICS = frozenset(
+    {
+        ("commerce.orders", "orders", (), None, ()),
+        ("analytics.stg_orders", "stg_orders", (), None, ()),
+        (
+            "analytics.customer_revenue",
+            "customer_revenue",
+            ("urn:li:corpGroup:lineageguard-canonical.finance-analytics",),
+            OwnershipType.TECHNICAL_OWNER,
+            ("urn:li:tag:lineageguard-canonical.Critical",),
+        ),
+        (
+            "fraud.customer_features",
+            "customer_features",
+            ("urn:li:corpGroup:lineageguard-canonical.risk-ml",),
+            OwnershipType.TECHNICAL_OWNER,
+            ("urn:li:tag:lineageguard-canonical.Production",),
+        ),
+        (
+            "finance.revenue-dashboard",
+            "Finance Revenue Dashboard",
+            ("urn:li:corpGroup:lineageguard-canonical.finance-analytics",),
+            OwnershipType.BUSINESS_OWNER,
+            (
+                "urn:li:tag:lineageguard-canonical.Critical",
+                "urn:li:tag:lineageguard-canonical.Production",
+            ),
+        ),
+        (
+            "fraud.model-v3",
+            "Fraud Model v3",
+            ("urn:li:corpGroup:lineageguard-canonical.risk-ml",),
+            OwnershipType.TECHNICAL_OWNER,
+            (
+                "urn:li:tag:lineageguard-canonical.Critical",
+                "urn:li:tag:lineageguard-canonical.Production",
+            ),
+        ),
+    }
+)
+CANONICAL_QUERY_SEMANTICS = (
+    "query.finance-monthly-close",
+    "lineageguard:finance-monthly-close",
+    "walkthrough/warehouse/queries/finance-monthly-close.sql",
+    "customer_id",
+)
 
 
 ROOT_KEYS = {
@@ -202,19 +265,41 @@ def _tag(raw: dict[str, Any]) -> Tag:
 def _node(raw: dict[str, Any]) -> GraphNode:
     _exact_keys(
         raw,
-        {"logicalKey", "urn", "entityType", "name", "ownerUrns", "tagUrns", "schemaFields"},
+        {
+            "logicalKey",
+            "urn",
+            "entityType",
+            "name",
+            "ownerUrns",
+            "ownershipType",
+            "tagUrns",
+            "schemaFields",
+        },
         "node",
     )
     try:
         entity_type = EntityType(_string(raw["entityType"], "node.entityType"))
     except ValueError as error:
         raise GraphContractError(f"unsupported node entityType: {raw['entityType']}") from error
+    raw_ownership_type = raw["ownershipType"]
+    try:
+        ownership_type = (
+            None
+            if raw_ownership_type is None
+            else OwnershipType(_string(raw_ownership_type, "node.ownershipType"))
+        )
+    except ValueError as error:
+        raise GraphContractError(f"unsupported node ownershipType: {raw_ownership_type}") from error
+    owner_urns = _strings(raw["ownerUrns"], "node.ownerUrns")
+    if bool(owner_urns) != (ownership_type is not None):
+        raise GraphContractError("node ownershipType must exactly accompany ownerUrns")
     return GraphNode(
         logical_key=_string(raw["logicalKey"], "node.logicalKey"),
         urn=_string(raw["urn"], "node.urn"),
         entity_type=entity_type,
         name=_string(raw["name"], "node.name"),
-        owner_urns=_strings(raw["ownerUrns"], "node.ownerUrns"),
+        owner_urns=owner_urns,
+        ownership_type=ownership_type,
         tag_urns=_strings(raw["tagUrns"], "node.tagUrns"),
         schema_fields=_strings(raw["schemaFields"], "node.schemaFields"),
     )
@@ -359,6 +444,26 @@ def _validate_canonical_allowlist(graph: ExpectedGraph) -> None:
     actual_non_dataset = set(graph.managed_urns) - dataset_urns
     if actual_non_dataset != CANONICAL_NON_DATASET_URNS:
         raise GraphContractError("canonical non-dataset URN allowlist mismatch")
+    owner_specs = frozenset(
+        (owner.logical_key, owner.urn, owner.display_name) for owner in graph.owners
+    )
+    if owner_specs != CANONICAL_OWNER_SPECS:
+        raise GraphContractError("canonical owner logical/name mapping mismatch")
+    tag_specs = frozenset((tag.logical_key, tag.urn, tag.display_name) for tag in graph.tags)
+    if tag_specs != CANONICAL_TAG_SPECS:
+        raise GraphContractError("canonical tag logical/name mapping mismatch")
+    node_semantics = frozenset(
+        (
+            node.logical_key,
+            node.name,
+            node.owner_urns,
+            node.ownership_type,
+            node.tag_urns,
+        )
+        for node in graph.nodes
+    )
+    if node_semantics != CANONICAL_NODE_SEMANTICS:
+        raise GraphContractError("canonical node name/owner/tag mapping mismatch")
     if len(graph.query_evidence) != 1:
         raise GraphContractError("canonical query evidence count must equal one")
     query = graph.query_evidence[0]
@@ -366,6 +471,13 @@ def _validate_canonical_allowlist(graph: ExpectedGraph) -> None:
         raise GraphContractError("canonical query digest mismatch")
     if query.query_urn != CANONICAL_LIVE_QUERY_URN:
         raise GraphContractError("canonical live query URN mismatch")
+    if (
+        query.logical_key,
+        query.marker,
+        query.sql_path,
+        query.field_path,
+    ) != CANONICAL_QUERY_SEMANTICS:
+        raise GraphContractError("canonical query logical mapping mismatch")
     if (
         query.dataset_urn
         != next(
@@ -433,6 +545,16 @@ def graph_fingerprint(graph: ExpectedGraph) -> str:
     payload = {
         "scenario": graph.scenario_id,
         "urns": graph.managed_urns,
+        "nodeSemantics": tuple(
+            (
+                node.logical_key,
+                node.name,
+                node.owner_urns,
+                node.ownership_type,
+                node.tag_urns,
+            )
+            for node in graph.nodes
+        ),
         "edges": tuple(edge.logical_key for edge in graph.edges),
         "queries": tuple((query.logical_key, query.sha256) for query in graph.query_evidence),
     }

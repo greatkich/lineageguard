@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 from psycopg.sql import Composable
+from support import SCENARIO, WAREHOUSE_TARGET
 
 from lineageguard_datahub.config import load_datahub_config, load_postgres_config
 from lineageguard_datahub.ingestion import (
@@ -31,8 +32,9 @@ class BootstrapCursor:
         self.commands.append((query, params))
         return self
 
-    def fetchone(self) -> tuple[object]:
-        return (self.responses.pop(0),)
+    def fetchone(self) -> tuple[object, ...]:
+        value = self.responses.pop(0)
+        return value if isinstance(value, tuple) else (value,)
 
 
 class RoleCursor:
@@ -45,7 +47,7 @@ class RoleCursor:
         return self
 
     def fetchone(self) -> tuple[bool, ...]:
-        return (self.safe,) * 15
+        return (self.safe,) * 16
 
 
 def _receipt(
@@ -178,6 +180,7 @@ def test_bootstrap_refuses_wrong_database_and_preexisting_schema(repository_root
             ingest_password="ingest",
             seed_password="seed",
             dbt_password="dbt",
+            warehouse_target_fingerprint=WAREHOUSE_TARGET,
         )
     with pytest.raises(ValueError, match="PREEXISTING_OBJECTS"):
         apply_warehouse_seed(
@@ -188,6 +191,7 @@ def test_bootstrap_refuses_wrong_database_and_preexisting_schema(repository_root
             ingest_password="ingest",
             seed_password="seed",
             dbt_password="dbt",
+            warehouse_target_fingerprint=WAREHOUSE_TARGET,
         )
 
 
@@ -201,23 +205,33 @@ def test_clean_bootstrap_provisions_distinct_login_members(repository_root: Path
         ingest_password="ingest-password",
         seed_password="seed-password",
         dbt_password="dbt-password",
+        warehouse_target_fingerprint=WAREHOUSE_TARGET,
     )
     raw_sql = "\n".join(command for command, _ in cursor.commands if isinstance(command, str))
-    assert "CREATE ROLE lineageguard_reader NOLOGIN" in raw_sql
+    assert "CREATE ROLE lineageguard_query_reader NOLOGIN" in raw_sql
+    assert "CREATE ROLE lineageguard_ingest_reader NOLOGIN" in raw_sql
     assert "CREATE ROLE lineageguard_query LOGIN" in raw_sql
     assert "CREATE ROLE lineageguard_ingest LOGIN" in raw_sql
     assert "CREATE ROLE lineageguard_seed LOGIN" in raw_sql
     assert "CREATE ROLE lineageguard_dbt LOGIN" in raw_sql
     assert "GRANT USAGE, CREATE ON SCHEMA analytics, fraud TO lineageguard_dbt" in raw_sql
     assert "GRANT SELECT ON commerce.orders TO lineageguard_dbt" in raw_sql
-    assert "GRANT lineageguard_reader TO lineageguard_query" in raw_sql
-    assert "GRANT lineageguard_reader TO lineageguard_ingest" in raw_sql
+    assert "GRANT lineageguard_query_reader TO lineageguard_query" in raw_sql
+    assert "GRANT lineageguard_ingest_reader TO lineageguard_ingest" in raw_sql
     secrets = ("query-password", "ingest-password", "seed-password", "dbt-password")
     assert all(secret not in raw_sql for secret in secrets)
     password_commands = [
-        command for command, _ in cursor.commands if isinstance(command, Composable)
+        command
+        for command, _ in cursor.commands
+        if isinstance(command, Composable) and "PASSWORD" in command.as_string()
     ]
     assert len(password_commands) == 4
+    assert {command.as_string().rsplit("PASSWORD ", 1)[1] for command in password_commands} == {
+        "'query-password'",
+        "'ingest-password'",
+        "'seed-password'",
+        "'dbt-password'",
+    }
     verify_dbt_role(BootstrapCursor([True]))
     with pytest.raises(ValueError, match="DBT_POSTGRES_ROLE_UNSAFE"):
         verify_dbt_role(BootstrapCursor([False]))
@@ -225,9 +239,44 @@ def test_clean_bootstrap_provisions_distinct_login_members(repository_root: Path
 
 def test_seed_rows_run_under_separate_owned_principal(repository_root: Path) -> None:
     plan = build_warehouse_seed_plan(repository_root)
-    first = BootstrapCursor(["lineageguard", "nonce", 0])
-    apply_warehouse_rows(first, plan, ownership_nonce="nonce")
-    assert first.commands[-1][0] == plan.sql_paths[2].read_text()
-    drifted = BootstrapCursor(["lineageguard", "nonce", 5, False])
+    registry = (SCENARIO, "nonce", WAREHOUSE_TARGET)
+    first = BootstrapCursor(["lineageguard", registry, 0])
+    apply_warehouse_rows(
+        first,
+        plan,
+        ownership_nonce="nonce",
+        warehouse_target_fingerprint=WAREHOUSE_TARGET,
+    )
+    assert first.commands[-1][0] == plan.sql_assets[2].statement
+    drifted = BootstrapCursor(["lineageguard", registry, 5, False])
     with pytest.raises(ValueError, match="SEED_CONTENT_MISMATCH"):
-        apply_warehouse_rows(drifted, plan, ownership_nonce="nonce")
+        apply_warehouse_rows(
+            drifted,
+            plan,
+            ownership_nonce="nonce",
+            warehouse_target_fingerprint=WAREHOUSE_TARGET,
+        )
+
+
+def test_warehouse_execution_uses_the_verified_sql_bytes(
+    repository_root: Path, tmp_path: Path
+) -> None:
+    for relative in (
+        "walkthrough/warehouse/init/001-schemas.sql",
+        "walkthrough/warehouse/init/002-tables.sql",
+        "walkthrough/warehouse/init/003-seed.sql",
+    ):
+        destination = tmp_path / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes((repository_root / relative).read_bytes())
+    plan = build_warehouse_seed_plan(tmp_path)
+    verified_seed = plan.sql_assets[2].statement
+    (tmp_path / plan.sql_assets[2].relative_path).write_text("DROP SCHEMA commerce CASCADE;")
+    cursor = BootstrapCursor(["lineageguard", (SCENARIO, "nonce", WAREHOUSE_TARGET), 0])
+    apply_warehouse_rows(
+        cursor,
+        plan,
+        ownership_nonce="nonce",
+        warehouse_target_fingerprint=WAREHOUSE_TARGET,
+    )
+    assert cursor.commands[-1][0] == verified_seed

@@ -88,7 +88,7 @@ def test_datahub_target_policy_and_separate_mutation_token() -> None:
     assert local.token is None
     assert "token=" not in repr(local)
     with pytest.raises(ConfigurationError, match="DATAHUB_MUTATION_TOKEN_REQUIRED"):
-        load_datahub_config({"DATAHUB_GMS_URL": "http://localhost:8080"}, write=True)
+        load_datahub_config({"DATAHUB_GMS_URL": "http://127.0.0.1:8080"}, write=True)
     with pytest.raises(ConfigurationError, match="REMOTE_DATAHUB_HTTPS_REQUIRED"):
         load_datahub_config({"DATAHUB_GMS_URL": "http://datahub.example.com"})
     with pytest.raises(ConfigurationError, match="DATAHUB_GMS_URL_UNSAFE_COMPONENT"):
@@ -96,7 +96,7 @@ def test_datahub_target_policy_and_separate_mutation_token() -> None:
     with pytest.raises(ConfigurationError, match="TARGET_ATTESTATION_REQUIRED"):
         load_datahub_config(
             {
-                "DATAHUB_GMS_URL": "http://localhost:8080",
+                "DATAHUB_GMS_URL": "http://127.0.0.1:8080",
                 "DATAHUB_MUTATION_TOKEN": "hidden",
             },
             write=True,
@@ -107,10 +107,10 @@ def test_datahub_target_policy_and_separate_mutation_token() -> None:
         "LINEAGEGUARD_REMOTE_DATAHUB_WRITE": "approved",
         "DATAHUB_MUTATION_TOKEN": "hidden",
     }
-    with pytest.raises(ConfigurationError, match="REMOTE_DATAHUB_MUTATION_DENIED"):
+    with pytest.raises(ConfigurationError, match="CANONICAL_DATAHUB_NUMERIC_LOOPBACK_REQUIRED"):
         load_datahub_config(remote, write=True)
     local_mutation = {
-        "DATAHUB_GMS_URL": "http://localhost:8080",
+        "DATAHUB_GMS_URL": "http://127.0.0.1:8080",
         "DATAHUB_MUTATION_TOKEN": "hidden",
         "LINEAGEGUARD_DATAHUB_TARGET_ATTESTATION": "canonical-local-lineageguard-v1",
     }
@@ -118,8 +118,20 @@ def test_datahub_target_policy_and_separate_mutation_token() -> None:
     with pytest.raises(ConfigurationError, match="TARGET_ATTESTATION_REQUIRED"):
         load_datahub_config(
             {
-                "DATAHUB_GMS_URL": "http://localhost:8080",
+                "DATAHUB_GMS_URL": "http://127.0.0.1:8080",
                 "DATAHUB_INGEST_TOKEN": "hidden",
             },
             ingest=True,
         )
+
+
+def test_datahub_credentials_must_be_distinct() -> None:
+    values = {
+        "DATAHUB_GMS_URL": "http://127.0.0.1:8080",
+        "DATAHUB_READ_TOKEN": "reused",
+        "DATAHUB_INGEST_TOKEN": "reused",
+        "DATAHUB_MUTATION_TOKEN": "mutation",
+        "LINEAGEGUARD_DATAHUB_TARGET_ATTESTATION": "canonical-local-lineageguard-v1",
+    }
+    with pytest.raises(ConfigurationError, match="DATAHUB_CREDENTIAL_REUSE_DENIED"):
+        load_datahub_config(values, ingest=True)

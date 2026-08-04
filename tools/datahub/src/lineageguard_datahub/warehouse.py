@@ -7,7 +7,7 @@ from typing import Protocol
 
 from psycopg import sql
 
-from lineageguard_datahub.paths import resolve_checked_file
+from lineageguard_datahub.paths import read_checked_bytes
 
 WAREHOUSE_DATABASE = "lineageguard"
 WAREHOUSE_FILE_DIGESTS = {
@@ -27,6 +27,7 @@ CANONICAL_RELATIONS = (
     "analytics.customer_revenue",
     "fraud.customer_features",
 )
+SCENARIO_ID = "canonical-customer-id-rename"
 
 
 class SqlCursor(Protocol):
@@ -39,16 +40,42 @@ class SqlCursor(Protocol):
 
 
 @dataclass(frozen=True, slots=True)
+class VerifiedSqlAsset:
+    relative_path: str
+    sha256: str
+    statement: str
+
+    @property
+    def path(self) -> Path:
+        return Path(self.relative_path)
+
+
+@dataclass(frozen=True, slots=True)
 class WarehouseSeedPlan:
-    sql_paths: tuple[Path, ...]
+    sql_assets: tuple[VerifiedSqlAsset, ...]
+
+    @property
+    def sql_paths(self) -> tuple[Path, ...]:
+        return tuple(asset.path for asset in self.sql_assets)
+
+
+@dataclass(frozen=True, slots=True)
+class ScenarioRegistryBinding:
+    scenario_id: str
+    ownership_nonce: str
+    warehouse_target_fingerprint: str
 
 
 def build_warehouse_seed_plan(root: Path) -> WarehouseSeedPlan:
-    paths = tuple(
-        resolve_checked_file(root, relative, digest, maximum_bytes=32 * 1024)
-        for relative, digest in WAREHOUSE_FILE_DIGESTS.items()
-    )
-    return WarehouseSeedPlan(sql_paths=paths)
+    assets: list[VerifiedSqlAsset] = []
+    for relative, digest in WAREHOUSE_FILE_DIGESTS.items():
+        checked = read_checked_bytes(root, relative, digest, maximum_bytes=32 * 1024)
+        try:
+            statement = checked.content.decode("utf-8")
+        except UnicodeDecodeError as error:
+            raise ValueError(f"WAREHOUSE_SQL_ENCODING_INVALID:{relative}") from error
+        assets.append(VerifiedSqlAsset(relative, digest, statement))
+    return WarehouseSeedPlan(sql_assets=tuple(assets))
 
 
 def _scalar(cursor: SqlCursor, query: str, params: tuple[object, ...] | None = None) -> object:
@@ -57,6 +84,46 @@ def _scalar(cursor: SqlCursor, query: str, params: tuple[object, ...] | None = N
     if row is None or len(row) != 1:
         raise ValueError("WAREHOUSE_PREFLIGHT_RESULT_INVALID")
     return row[0]
+
+
+def attest_scenario_registry(
+    cursor: SqlCursor,
+    *,
+    ownership_nonce: str,
+    warehouse_target_fingerprint: str,
+) -> ScenarioRegistryBinding:
+    cursor.execute(
+        "SELECT scenario_id, ownership_nonce, warehouse_target_fingerprint "
+        "FROM lineageguard_control.scenario_registry WHERE scenario_id = %s",
+        (SCENARIO_ID,),
+    )
+    row = cursor.fetchone()
+    if row is None or len(row) != 3:
+        raise ValueError("WAREHOUSE_SCENARIO_REGISTRY_REQUIRED")
+    binding = ScenarioRegistryBinding(str(row[0]), str(row[1]), str(row[2]))
+    if binding.scenario_id != SCENARIO_ID:
+        raise ValueError("WAREHOUSE_SCENARIO_ID_MISMATCH")
+    if binding.ownership_nonce != ownership_nonce:
+        raise ValueError("WAREHOUSE_OWNERSHIP_MISMATCH")
+    if binding.warehouse_target_fingerprint != warehouse_target_fingerprint:
+        raise ValueError("WAREHOUSE_TARGET_FINGERPRINT_MISMATCH")
+    return binding
+
+
+def _ensure_login_role(cursor: SqlCursor, role: str, password: str) -> None:
+    cursor.execute(
+        f"DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '{role}') "
+        f"THEN CREATE ROLE {role} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE INHERIT; "
+        "END IF; END $$"
+    )
+    # PostgreSQL's ALTER ROLE utility grammar rejects server-side $1 parameters. psycopg's
+    # Literal performs the required libpq-style value quoting without string interpolation.
+    cursor.execute(
+        sql.SQL(
+            "ALTER ROLE {} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE "
+            "NOREPLICATION INHERIT PASSWORD {}"
+        ).format(sql.Identifier(role), sql.Literal(password))
+    )
 
 
 def apply_warehouse_seed(
@@ -68,6 +135,7 @@ def apply_warehouse_seed(
     ingest_password: str,
     seed_password: str,
     dbt_password: str,
+    warehouse_target_fingerprint: str,
 ) -> None:
     if _scalar(cursor, "SELECT current_database()") != WAREHOUSE_DATABASE:
         raise ValueError("WAREHOUSE_DATABASE_IDENTITY_MISMATCH")
@@ -81,7 +149,8 @@ def apply_warehouse_seed(
             "SELECT (SELECT count(*) FROM pg_namespace "
             "WHERE nspname IN ('commerce','analytics','fraud')) + "
             "(SELECT count(*) FROM pg_roles WHERE rolname IN "
-            "('lineageguard_reader','lineageguard_query','lineageguard_ingest',"
+            "('lineageguard_query_reader','lineageguard_ingest_reader',"
+            "'lineageguard_query','lineageguard_ingest',"
             "'lineageguard_seed','lineageguard_dbt'))",
         )
         if int(str(conflicts)) != 0:
@@ -90,56 +159,46 @@ def apply_warehouse_seed(
         cursor.execute(
             "CREATE TABLE lineageguard_control.scenario_registry ("
             "scenario_id text PRIMARY KEY, ownership_nonce text NOT NULL, "
+            "warehouse_target_fingerprint text NOT NULL, "
             "created_at timestamptz NOT NULL)"
         )
         cursor.execute(
             "INSERT INTO lineageguard_control.scenario_registry "
-            "(scenario_id, ownership_nonce, created_at) VALUES (%s, %s, CURRENT_TIMESTAMP)",
-            ("canonical-customer-id-rename", ownership_nonce),
+            "(scenario_id, ownership_nonce, warehouse_target_fingerprint, created_at) "
+            "VALUES (%s, %s, %s, CURRENT_TIMESTAMP)",
+            (SCENARIO_ID, ownership_nonce, warehouse_target_fingerprint),
         )
-        for path in plan.sql_paths[:2]:
-            cursor.execute(path.read_text(encoding="utf-8"))
+        for asset in plan.sql_assets[:2]:
+            cursor.execute(asset.statement)
     else:
-        registered = _scalar(
+        attest_scenario_registry(
             cursor,
-            "SELECT ownership_nonce FROM lineageguard_control.scenario_registry "
-            "WHERE scenario_id = %s",
-            ("canonical-customer-id-rename",),
+            ownership_nonce=ownership_nonce,
+            warehouse_target_fingerprint=warehouse_target_fingerprint,
         )
-        if registered != ownership_nonce:
-            raise ValueError("WAREHOUSE_OWNERSHIP_MISMATCH")
-    cursor.execute(
-        "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'lineageguard_reader') "
-        "THEN CREATE ROLE lineageguard_reader NOLOGIN NOSUPERUSER NOCREATEDB "
-        "NOCREATEROLE NOINHERIT; "
-        "END IF; END $$"
-    )
-    cursor.execute(
-        "ALTER ROLE lineageguard_reader NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE "
-        "NOREPLICATION NOINHERIT"
-    )
-    for role, password in (
-        ("lineageguard_query", query_password),
-        ("lineageguard_ingest", ingest_password),
-    ):
+    for role in ("lineageguard_query_reader", "lineageguard_ingest_reader"):
         cursor.execute(
             f"DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '{role}') "
-            f"THEN CREATE ROLE {role} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE INHERIT; "
+            f"THEN CREATE ROLE {role} NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT; "
             "END IF; END $$"
         )
         cursor.execute(
             sql.SQL(
-                "ALTER ROLE {} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE "
-                "NOREPLICATION INHERIT PASSWORD {}"
-            ).format(sql.Identifier(role), sql.Literal(password))
+                "ALTER ROLE {} NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOINHERIT"
+            ).format(sql.Identifier(role))
         )
-        cursor.execute(f"GRANT lineageguard_reader TO {role}")
+    for role, password, reader_role in (
+        ("lineageguard_query", query_password, "lineageguard_query_reader"),
+        ("lineageguard_ingest", ingest_password, "lineageguard_ingest_reader"),
+    ):
+        _ensure_login_role(cursor, role, password)
+        cursor.execute(f"GRANT {reader_role} TO {role}")
         role_safe = _scalar(
             cursor,
             "SELECT rolcanlogin AND NOT rolsuper AND NOT rolcreatedb AND NOT rolcreaterole "
-            "AND NOT rolreplication AND pg_has_role(%s, 'lineageguard_reader', 'MEMBER') "
+            "AND NOT rolreplication AND pg_has_role(%s, %s, 'MEMBER') "
             "FROM pg_roles WHERE rolname = %s",
-            (role, role),
+            (role, reader_role, role),
         )
         if role_safe is not True:
             raise ValueError(f"WAREHOUSE_ROLE_UNSAFE:{role}")
@@ -148,12 +207,7 @@ def apply_warehouse_seed(
         "THEN CREATE ROLE lineageguard_seed LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE INHERIT; "
         "END IF; END $$"
     )
-    cursor.execute(
-        sql.SQL(
-            "ALTER ROLE {} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE "
-            "NOREPLICATION INHERIT PASSWORD {}"
-        ).format(sql.Identifier("lineageguard_seed"), sql.Literal(seed_password))
-    )
+    _ensure_login_role(cursor, "lineageguard_seed", seed_password)
     seed_safe = _scalar(
         cursor,
         "SELECT rolcanlogin AND NOT rolsuper AND NOT rolcreatedb AND NOT rolcreaterole "
@@ -166,12 +220,7 @@ def apply_warehouse_seed(
         "THEN CREATE ROLE lineageguard_dbt LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE INHERIT; "
         "END IF; END $$"
     )
-    cursor.execute(
-        sql.SQL(
-            "ALTER ROLE {} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE "
-            "NOREPLICATION INHERIT PASSWORD {}"
-        ).format(sql.Identifier("lineageguard_dbt"), sql.Literal(dbt_password))
-    )
+    _ensure_login_role(cursor, "lineageguard_dbt", dbt_password)
     dbt_safe = _scalar(
         cursor,
         "SELECT rolcanlogin AND NOT rolsuper AND NOT rolcreatedb AND NOT rolcreaterole "
@@ -179,13 +228,21 @@ def apply_warehouse_seed(
     )
     if dbt_safe is not True:
         raise ValueError("WAREHOUSE_ROLE_UNSAFE:lineageguard_dbt")
-    cursor.execute("GRANT USAGE ON SCHEMA commerce, analytics, fraud TO lineageguard_reader")
-    cursor.execute("GRANT SELECT ON commerce.orders TO lineageguard_reader")
-    cursor.execute("GRANT pg_read_all_stats TO lineageguard_reader")
+    cursor.execute("GRANT USAGE ON SCHEMA analytics TO lineageguard_query_reader")
+    cursor.execute("GRANT USAGE ON SCHEMA commerce, analytics, fraud TO lineageguard_ingest_reader")
+    cursor.execute("GRANT SELECT ON commerce.orders TO lineageguard_ingest_reader")
     cursor.execute("GRANT USAGE ON SCHEMA commerce TO lineageguard_seed")
     cursor.execute("GRANT SELECT, INSERT ON commerce.orders TO lineageguard_seed")
     cursor.execute("GRANT USAGE ON SCHEMA lineageguard_control TO lineageguard_seed")
     cursor.execute("GRANT SELECT ON lineageguard_control.scenario_registry TO lineageguard_seed")
+    cursor.execute(
+        "GRANT USAGE ON SCHEMA lineageguard_control TO lineageguard_query, "
+        "lineageguard_ingest, lineageguard_dbt"
+    )
+    cursor.execute(
+        "GRANT SELECT ON lineageguard_control.scenario_registry TO lineageguard_query, "
+        "lineageguard_ingest, lineageguard_dbt"
+    )
     cursor.execute(f"GRANT CONNECT ON DATABASE {WAREHOUSE_DATABASE} TO lineageguard_dbt")
     cursor.execute("GRANT USAGE ON SCHEMA commerce TO lineageguard_dbt")
     cursor.execute("GRANT SELECT ON commerce.orders TO lineageguard_dbt")
@@ -197,19 +254,18 @@ def apply_warehouse_rows(
     plan: WarehouseSeedPlan,
     *,
     ownership_nonce: str,
+    warehouse_target_fingerprint: str,
 ) -> None:
     if _scalar(cursor, "SELECT current_database()") != WAREHOUSE_DATABASE:
         raise ValueError("WAREHOUSE_DATABASE_IDENTITY_MISMATCH")
-    registered = _scalar(
+    attest_scenario_registry(
         cursor,
-        "SELECT ownership_nonce FROM lineageguard_control.scenario_registry WHERE scenario_id = %s",
-        ("canonical-customer-id-rename",),
+        ownership_nonce=ownership_nonce,
+        warehouse_target_fingerprint=warehouse_target_fingerprint,
     )
-    if registered != ownership_nonce:
-        raise ValueError("WAREHOUSE_OWNERSHIP_MISMATCH")
     row_count = int(str(_scalar(cursor, "SELECT count(*) FROM commerce.orders")))
     if row_count == 0:
-        cursor.execute(plan.sql_paths[2].read_text(encoding="utf-8"))
+        cursor.execute(plan.sql_assets[2].statement)
         return
     seed_exact = _scalar(
         cursor,
@@ -242,3 +298,21 @@ def verify_dbt_role(cursor: SqlCursor) -> None:
     )
     if checks is not True:
         raise ValueError("DBT_POSTGRES_ROLE_UNSAFE")
+
+
+def verify_dbt_relations(cursor: SqlCursor) -> None:
+    checks = _scalar(
+        cursor,
+        "SELECT current_database() = 'lineageguard' "
+        "AND to_regclass('analytics.stg_orders') IS NOT NULL "
+        "AND to_regclass('analytics.customer_revenue') IS NOT NULL "
+        "AND to_regclass('fraud.customer_features') IS NOT NULL "
+        "AND (SELECT array_agg(n.nspname || '.' || c.relname ORDER BY 1) "
+        "FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+        "WHERE (n.nspname, c.relname) IN ("
+        "('analytics','stg_orders'),('analytics','customer_revenue'),"
+        "('fraud','customer_features'))) = "
+        "ARRAY['analytics.customer_revenue','analytics.stg_orders','fraud.customer_features']",
+    )
+    if checks is not True:
+        raise ValueError("DBT_CANONICAL_RELATIONS_MISSING")

@@ -6,17 +6,35 @@ from typing import Any
 
 import pytest
 from datahub.metadata.schema_classes import StatusClass
+from support import (
+    TARGET_ATTESTATION,
+    TARGET_FINGERPRINT,
+    WAREHOUSE_TARGET,
+    RegistryCursor,
+    full_target_metrics,
+)
 
 from lineageguard_datahub.models import ExpectedGraph
 from lineageguard_datahub.receipts import OperationReceipt, ReceiptStatus, ReceiptStore
-from lineageguard_datahub.reset import ResetPolicyError, build_reset_plan, execute_reset
+from lineageguard_datahub.reset import (
+    ResetPolicyError,
+    build_reset_plan,
+    execute_reset,
+    reconcile_reset,
+)
 from lineageguard_datahub.seed import _entity_proposal_hash, build_seed_plan
 
 
 class CatalogDeleter:
-    def __init__(self, aspects: dict[tuple[str, type[object]], Any], fail_at: int | None = None):
+    def __init__(
+        self,
+        aspects: dict[tuple[str, type[object]], Any],
+        fail_at: int | None = None,
+        fail_after_at: int | None = None,
+    ):
         self.aspects = aspects
         self.fail_at = fail_at
+        self.fail_after_at = fail_after_at
         self.deleted: list[tuple[str, bool]] = []
 
     def exists(self, entity_urn: str) -> bool:
@@ -31,6 +49,8 @@ class CatalogDeleter:
             raise RuntimeError("injected")
         self.deleted.append((urn, hard))
         self.aspects[(urn, StatusClass)] = StatusClass(removed=True)
+        if self.fail_after_at is not None and len(self.deleted) - 1 == self.fail_after_at:
+            raise RuntimeError("ambiguous-after-apply")
 
 
 def _creation_state(
@@ -58,6 +78,7 @@ def _creation_state(
                 detail_code="ENTITY_CREATED",
                 proposal_hash=_entity_proposal_hash(operations),
                 ownership_nonce=nonce,
+                metrics=full_target_metrics(repository_root, nonce),
             )
         )
     return aspects
@@ -74,6 +95,9 @@ def test_reset_refuses_non_canonical_environment(
             creation_receipts=(),
             root=repository_root,
             ownership_nonce="nonce",
+            warehouse_target_fingerprint=WAREHOUSE_TARGET,
+            target_attestation=TARGET_ATTESTATION,
+            target_fingerprint=TARGET_FINGERPRINT,
         )
 
 
@@ -88,6 +112,9 @@ def test_reset_requires_creation_receipts(
             creation_receipts=(),
             root=repository_root,
             ownership_nonce="nonce",
+            warehouse_target_fingerprint=WAREHOUSE_TARGET,
+            target_attestation=TARGET_ATTESTATION,
+            target_fingerprint=TARGET_FINGERPRINT,
         )
 
 
@@ -112,6 +139,9 @@ def test_reset_rejects_receipt_outside_allowlist(
             creation_receipts=(receipt,),
             root=repository_root,
             ownership_nonce="nonce",
+            warehouse_target_fingerprint=WAREHOUSE_TARGET,
+            target_attestation=TARGET_ATTESTATION,
+            target_fingerprint=TARGET_FINGERPRINT,
         )
 
 
@@ -127,16 +157,70 @@ def test_reset_uses_receipts_markers_and_recovers_partial_failure(
         creation_receipts=store.read_all(),
         root=repository_root,
         ownership_nonce=store.ownership_nonce,
+        warehouse_target_fingerprint=WAREHOUSE_TARGET,
+        target_attestation=TARGET_ATTESTATION,
+        target_fingerprint=TARGET_FINGERPRINT,
     )
     catalog = CatalogDeleter(aspects, fail_at=2)
     assert not set(plan.urns) & set(expected_graph.connector_dataset_urns)
     with pytest.raises(RuntimeError, match="injected"):
-        execute_reset(catalog, catalog, store, plan)
+        execute_reset(catalog, catalog, store, plan, RegistryCursor(store.ownership_nonce))
     assert len(catalog.deleted) == 2
     catalog.fail_at = None
-    receipt = execute_reset(catalog, catalog, store, plan)
+    with pytest.raises(ValueError, match="SCENARIO_RECONCILIATION_REQUIRED"):
+        execute_reset(catalog, catalog, store, plan, RegistryCursor(store.ownership_nonce))
+    assert reconcile_reset(catalog, store, plan, RegistryCursor(store.ownership_nonce)) == 1
+    receipt = execute_reset(catalog, catalog, store, plan, RegistryCursor(store.ownership_nonce))
     assert len(receipt.deleted_urns) == len(plan.urns) - 2
     assert set(urn for urn, _ in catalog.deleted) == set(plan.urns)
     assert all(hard is False for _, hard in catalog.deleted)
-    skipped = [item for item in store.read_all() if item.status is ReceiptStatus.SKIPPED]
+    skipped = [
+        item
+        for item in store.read_all()
+        if item.status is ReceiptStatus.SKIPPED and item.detail_code == "ALREADY_DELETED"
+    ]
     assert {item.entity_urn for item in skipped} == set(plan.urns[:2])
+
+
+def test_reset_rejects_creation_receipts_from_another_target(
+    expected_graph: ExpectedGraph, repository_root: Path, tmp_path: Path
+) -> None:
+    store = ReceiptStore(tmp_path / "operations.jsonl")
+    _creation_state(expected_graph, repository_root, store)
+    with pytest.raises(ResetPolicyError, match="CREATION_TARGET_MISMATCH"):
+        build_reset_plan(
+            expected_graph,
+            environment_gate="canonical",
+            platform_instance=expected_graph.platform_instance,
+            creation_receipts=store.read_all(),
+            root=repository_root,
+            ownership_nonce=store.ownership_nonce,
+            warehouse_target_fingerprint=WAREHOUSE_TARGET,
+            target_attestation=TARGET_ATTESTATION,
+            target_fingerprint="a" * 64,
+        )
+
+
+def test_reset_reconciliation_does_not_repeat_an_applied_delete(
+    expected_graph: ExpectedGraph, repository_root: Path, tmp_path: Path
+) -> None:
+    store = ReceiptStore(tmp_path / "operations.jsonl")
+    aspects = _creation_state(expected_graph, repository_root, store)
+    plan = build_reset_plan(
+        expected_graph,
+        environment_gate="canonical",
+        platform_instance=expected_graph.platform_instance,
+        creation_receipts=store.read_all(),
+        root=repository_root,
+        ownership_nonce=store.ownership_nonce,
+        warehouse_target_fingerprint=WAREHOUSE_TARGET,
+        target_attestation=TARGET_ATTESTATION,
+        target_fingerprint=TARGET_FINGERPRINT,
+    )
+    catalog = CatalogDeleter(aspects, fail_after_at=0)
+    with pytest.raises(RuntimeError, match="ambiguous-after-apply"):
+        execute_reset(catalog, catalog, store, plan, RegistryCursor(store.ownership_nonce))
+    catalog.fail_after_at = None
+    assert reconcile_reset(catalog, store, plan, RegistryCursor(store.ownership_nonce)) == 1
+    execute_reset(catalog, catalog, store, plan, RegistryCursor(store.ownership_nonce))
+    assert [urn for urn, _ in catalog.deleted].count(plan.urns[0]) == 1

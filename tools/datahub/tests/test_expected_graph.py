@@ -93,3 +93,29 @@ def test_loader_freezes_complete_schema_inventory(
     invalid.write_text(json.dumps(manifest))
     with pytest.raises(GraphContractError, match="schemaFields mismatch"):
         load_expected_graph(invalid)
+
+
+@pytest.mark.parametrize(
+    ("logical_key", "ownership_type"),
+    [
+        ("finance.revenue-dashboard", "TECHNICAL_OWNER"),
+        ("fraud.model-v3", "BUSINESS_OWNER"),
+    ],
+)
+def test_loader_freezes_canonical_ownership_types(
+    repository_root: Path,
+    tmp_path: Path,
+    logical_key: str,
+    ownership_type: str,
+) -> None:
+    manifest = json.loads(
+        (
+            repository_root / "walkthrough/scenarios/canonical/expected-datahub-graph.json"
+        ).read_text()
+    )
+    node = next(item for item in manifest["nodes"] if item["logicalKey"] == logical_key)
+    node["ownershipType"] = ownership_type
+    invalid = tmp_path / "ownership-drift.json"
+    invalid.write_text(json.dumps(manifest))
+    with pytest.raises(GraphContractError, match="name/owner/tag mapping mismatch"):
+        load_expected_graph(invalid)

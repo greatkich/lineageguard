@@ -37,14 +37,23 @@ from datahub.metadata.schema_classes import (
     UpstreamLineageClass,
 )
 
-from lineageguard_datahub.ingestion import require_ingestion_prerequisites
+from lineageguard_datahub.ingestion import (
+    build_ingestion_plan,
+    dbt_artifact_metrics,
+    dbt_project_fingerprint,
+    ingestion_snapshot_fingerprint,
+    require_ingestion_prerequisites,
+    verify_dbt_ingestion_artifacts,
+)
 from lineageguard_datahub.lineage import edges_by_downstream
 from lineageguard_datahub.models import EntityType, ExpectedGraph, Granularity, GraphNode
+from lineageguard_datahub.provenance import datahub_target_metrics
 from lineageguard_datahub.receipts import (
     OperationReceipt,
     ReceiptStatus,
     ReceiptStore,
 )
+from lineageguard_datahub.warehouse import SqlCursor, attest_scenario_registry
 
 ACTOR_URN = "urn:li:corpuser:lineageguard"
 AUDIT_STAMP = AuditStampClass(time=0, actor=ACTOR_URN)
@@ -96,11 +105,14 @@ def _upsert(logical_key: str, urn: str, entity_type: str, aspect: object) -> Pla
 
 
 def _ownership(node: GraphNode) -> OwnershipClass:
+    if node.ownership_type is None:
+        raise ValueError(f"OWNERSHIP_TYPE_REQUIRED:{node.logical_key}")
+    owner_type = {
+        "BUSINESS_OWNER": OwnershipTypeClass.BUSINESS_OWNER,
+        "TECHNICAL_OWNER": OwnershipTypeClass.TECHNICAL_OWNER,
+    }[node.ownership_type.value]
     return OwnershipClass(
-        owners=[
-            OwnerClass(owner=owner_urn, type=OwnershipTypeClass.TECHNICAL_OWNER)
-            for owner_urn in node.owner_urns
-        ],
+        owners=[OwnerClass(owner=owner_urn, type=owner_type) for owner_urn in node.owner_urns],
         lastModified=AUDIT_STAMP,
     )
 
@@ -358,22 +370,71 @@ def seed_metadata(
     receipt_store: ReceiptStore,
     graph: ExpectedGraph,
     root: Path,
+    registry_cursor: SqlCursor,
     *,
+    warehouse_target_fingerprint: str,
     target_attestation: str,
     target_fingerprint: str,
 ) -> SeedReceipt:
+    with receipt_store.scenario_operation(graph.scenario_id, "seed"):
+        attest_scenario_registry(
+            registry_cursor,
+            ownership_nonce=receipt_store.ownership_nonce,
+            warehouse_target_fingerprint=warehouse_target_fingerprint,
+        )
+        return _seed_metadata_under_lock(
+            emitter,
+            reader,
+            receipt_store,
+            graph,
+            root,
+            warehouse_target_fingerprint=warehouse_target_fingerprint,
+            target_attestation=target_attestation,
+            target_fingerprint=target_fingerprint,
+        )
+
+
+def _seed_metadata_under_lock(
+    emitter: McpEmitter,
+    reader: EntityReader,
+    receipt_store: ReceiptStore,
+    graph: ExpectedGraph,
+    root: Path,
+    *,
+    warehouse_target_fingerprint: str,
+    target_attestation: str,
+    target_fingerprint: str,
+) -> SeedReceipt:
+    nonce = receipt_store.ownership_nonce
+    artifacts = verify_dbt_ingestion_artifacts(root)
+    artifact_metrics = dbt_artifact_metrics(artifacts)
+    project_fingerprint = dbt_project_fingerprint(root)
+    snapshot_fingerprint = ingestion_snapshot_fingerprint(build_ingestion_plan(root), artifacts)
     require_ingestion_prerequisites(
         receipt_store.read_all(),
         scenario_id=graph.scenario_id,
+        ownership_nonce=nonce,
+        warehouse_target_fingerprint=warehouse_target_fingerprint,
         target_attestation=target_attestation,
         target_fingerprint=target_fingerprint,
+        dbt_project_sha256=project_fingerprint,
+        artifact_metrics=artifact_metrics,
+        snapshot_fingerprint=snapshot_fingerprint,
     )
-    nonce = receipt_store.ownership_nonce
     plan = build_seed_plan(graph, root, nonce)
-    target_metrics: dict[str, int | float | str] = {
-        "targetAttestation": target_attestation,
-        "targetFingerprint": target_fingerprint,
-    }
+    target_metrics: dict[str, int | float | str] = (
+        datahub_target_metrics(
+            nonce,
+            warehouse_target_fingerprint,
+            target_attestation,
+            target_fingerprint,
+        )
+        | artifact_metrics
+        | {
+            "dbtProjectFingerprint": project_fingerprint,
+            "ingestionSnapshotFingerprint": snapshot_fingerprint,
+        }
+    )
     for operation in plan:
         receipt_store.append(
             OperationReceipt.create(
@@ -436,8 +497,6 @@ def seed_metadata(
                     raise ValueError("SEED_ASPECT_MISSING")
                 current = reader.get_aspect(urn, type(aspect))
                 if current is not None and current.to_obj() != aspect.to_obj():
-                    if isinstance(aspect, UpstreamLineageClass):
-                        continue
                     receipt_store.append(
                         OperationReceipt.create(
                             scenario_id=graph.scenario_id,
@@ -446,15 +505,22 @@ def seed_metadata(
                             aspect_name=operation.proposal.aspectName,
                             idempotency_key=operation.idempotency_key,
                             status=ReceiptStatus.RECONCILIATION_REQUIRED,
-                            detail_code="CONNECTOR_OVERLAY_CONFLICT",
+                            detail_code=(
+                                "CONNECTOR_LINEAGE_CONFLICT"
+                                if isinstance(aspect, UpstreamLineageClass)
+                                else "CONNECTOR_OVERLAY_CONFLICT"
+                            ),
                             proposal_hash=operation.idempotency_key,
                             ownership_nonce=nonce,
                             metrics=target_metrics,
                         )
                     )
-                    raise ValueError(
-                        f"CONNECTOR_OVERLAY_CONFLICT:{urn}:{operation.proposal.aspectName}"
+                    code = (
+                        "CONNECTOR_LINEAGE_CONFLICT"
+                        if isinstance(aspect, UpstreamLineageClass)
+                        else "CONNECTOR_OVERLAY_CONFLICT"
                     )
+                    raise ValueError(f"{code}:{urn}:{operation.proposal.aspectName}")
             continue
         if not reader.exists(urn):
             continue
@@ -610,3 +676,155 @@ def seed_metadata(
 def _entity_proposal_hash(operations: list[PlannedUpsert]) -> str:
     payload = "\n".join(sorted(operation.idempotency_key for operation in operations))
     return hashlib.sha256(payload.encode()).hexdigest()
+
+
+def reconcile_seed_metadata(
+    reader: EntityReader,
+    receipt_store: ReceiptStore,
+    graph: ExpectedGraph,
+    root: Path,
+    registry_cursor: SqlCursor,
+    *,
+    warehouse_target_fingerprint: str,
+    target_attestation: str,
+    target_fingerprint: str,
+) -> int:
+    """Resolve an interrupted seed only after comparing every pending aspect to live state."""
+    nonce = receipt_store.ownership_nonce
+    artifacts = verify_dbt_ingestion_artifacts(root)
+    artifact_metrics = dbt_artifact_metrics(artifacts)
+    project_fingerprint = dbt_project_fingerprint(root)
+    snapshot_fingerprint = ingestion_snapshot_fingerprint(build_ingestion_plan(root), artifacts)
+    metrics: dict[str, int | float | str] = (
+        datahub_target_metrics(
+            nonce,
+            warehouse_target_fingerprint,
+            target_attestation,
+            target_fingerprint,
+        )
+        | artifact_metrics
+        | {
+            "dbtProjectFingerprint": project_fingerprint,
+            "ingestionSnapshotFingerprint": snapshot_fingerprint,
+        }
+    )
+    plan = build_seed_plan(graph, root, nonce)
+    by_identity = {
+        (
+            operation.proposal.entityUrn,
+            operation.proposal.aspectName,
+            operation.idempotency_key,
+        ): operation
+        for operation in plan
+    }
+    reconciled = 0
+    with receipt_store.scenario_operation(
+        graph.scenario_id, "seed-reconcile", reconciliation=True
+    ) as unresolved:
+        attest_scenario_registry(
+            registry_cursor,
+            ownership_nonce=nonce,
+            warehouse_target_fingerprint=warehouse_target_fingerprint,
+        )
+        foreign = [item for item in unresolved if item.operation_kind != "seed"]
+        if foreign:
+            raise ValueError("SEED_RECONCILIATION_FOREIGN_OPERATION")
+        if not unresolved:
+            raise ValueError("SEED_RECONCILIATION_NOT_REQUIRED")
+        applied_after_failure: set[str] = set()
+        for pending in unresolved:
+            operation = by_identity.get(
+                (pending.entity_urn, pending.aspect_name, pending.idempotency_key)
+            )
+            if operation is None or operation.proposal.entityUrn is None:
+                raise ValueError("SEED_RECONCILIATION_PLAN_MISMATCH")
+            if any(pending.metrics.get(key) != value for key, value in metrics.items()):
+                raise ValueError("SEED_RECONCILIATION_PROVENANCE_MISMATCH")
+            expected = operation.proposal.aspect
+            if expected is None:
+                raise ValueError("SEED_ASPECT_MISSING")
+            current = reader.get_aspect(operation.proposal.entityUrn, type(expected))
+            if current is not None and current.to_obj() == expected.to_obj():
+                detail = "LIVE_RECONCILED_APPLIED"
+                after = "EXACT"
+                if pending.status is ReceiptStatus.FAILURE:
+                    applied_after_failure.add(operation.proposal.entityUrn)
+            elif current is None or (
+                isinstance(expected, StatusClass)
+                and isinstance(current, StatusClass)
+                and current.removed is True
+                and expected.removed is False
+            ):
+                detail = "LIVE_RECONCILED_NOT_APPLIED"
+                after = "ABSENT"
+            else:
+                receipt_store.append(
+                    OperationReceipt.create(
+                        scenario_id=graph.scenario_id,
+                        operation_kind="seed",
+                        entity_urn=pending.entity_urn,
+                        aspect_name=pending.aspect_name,
+                        idempotency_key=pending.idempotency_key,
+                        status=ReceiptStatus.RECONCILIATION_REQUIRED,
+                        detail_code="LIVE_RECONCILIATION_CONFLICT",
+                        proposal_hash=pending.proposal_hash,
+                        ownership_nonce=nonce,
+                        metrics=metrics,
+                    )
+                )
+                raise ValueError(f"SEED_LIVE_RECONCILIATION_CONFLICT:{pending.entity_urn}")
+            receipt_store.append(
+                OperationReceipt.create(
+                    scenario_id=graph.scenario_id,
+                    operation_kind="seed",
+                    entity_urn=pending.entity_urn,
+                    aspect_name=pending.aspect_name,
+                    idempotency_key=pending.idempotency_key,
+                    status=ReceiptStatus.SKIPPED,
+                    detail_code=detail,
+                    proposal_hash=pending.proposal_hash,
+                    ownership_nonce=nonce,
+                    metrics=metrics | {"beforeStatus": pending.status.value, "afterStatus": after},
+                )
+            )
+            reconciled += 1
+        current_receipts = receipt_store.read_all()
+        created = {
+            item.entity_urn
+            for item in current_receipts
+            if item.operation_kind == "entity"
+            and item.status is ReceiptStatus.SUCCESS
+            and item.detail_code == "ENTITY_CREATED"
+        }
+        by_entity: dict[tuple[str, str], list[PlannedUpsert]] = {}
+        for operation in plan:
+            urn = operation.proposal.entityUrn
+            if urn is not None:
+                by_entity.setdefault((urn, operation.proposal.entityType), []).append(operation)
+        for (urn, entity_type), operations in by_entity.items():
+            if (
+                urn not in applied_after_failure
+                or urn not in graph.owned_urns
+                or urn in created
+                or not reader.exists(urn)
+            ):
+                continue
+            if not entity_has_scenario_marker(reader, urn, entity_type, nonce):
+                continue
+            receipt_store.append(
+                OperationReceipt.create(
+                    scenario_id=graph.scenario_id,
+                    operation_kind="entity",
+                    entity_urn=urn,
+                    aspect_name=None,
+                    idempotency_key=hashlib.sha256(
+                        f"entity:{graph.scenario_id}:{urn}".encode()
+                    ).hexdigest(),
+                    status=ReceiptStatus.SUCCESS,
+                    detail_code="ENTITY_CREATED",
+                    proposal_hash=_entity_proposal_hash(operations),
+                    ownership_nonce=nonce,
+                    metrics=metrics | {"beforeStatus": "LIVE", "afterStatus": "RECONCILED_CREATED"},
+                )
+            )
+    return reconciled

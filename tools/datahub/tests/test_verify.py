@@ -8,9 +8,15 @@ from typing import Any
 import pytest
 from datahub.metadata.schema_classes import StatusClass
 
-from lineageguard_datahub.ingestion import RECIPE_DIGESTS
+from lineageguard_datahub.ingestion import (
+    DBT_ARTIFACT_VERIFICATION_FINGERPRINT,
+    DBT_BUILD_COMMAND_FINGERPRINT,
+    DBT_DOCS_COMMAND_FINGERPRINT,
+    RECIPE_DIGESTS,
+)
 from lineageguard_datahub.live_query import build_live_query_plan
 from lineageguard_datahub.models import ExpectedGraph
+from lineageguard_datahub.provenance import datahub_target_metrics, registry_binding_metrics
 from lineageguard_datahub.query_history import plan_query_execution
 from lineageguard_datahub.receipts import OperationReceipt, ReceiptStatus
 from lineageguard_datahub.verify import (
@@ -24,6 +30,16 @@ from lineageguard_datahub.verify import (
 
 TARGET_ATTESTATION = "canonical-local-lineageguard-v1"
 TARGET_FINGERPRINT = "f" * 64
+WAREHOUSE_TARGET_FINGERPRINT = "e" * 64
+OWNERSHIP_NONCE = "d" * 64
+DBT_PROJECT_FINGERPRINT = "9" * 64
+SNAPSHOT_FINGERPRINT = "8" * 64
+ARTIFACT_METRICS = {
+    "dbtManifestSha256": "1" * 64,
+    "dbtRunResultsSha256": "2" * 64,
+    "dbtCatalogSha256": "3" * 64,
+    "dbtArtifactSetFingerprint": "4" * 64,
+}
 
 
 def compare_observed_graph(
@@ -35,8 +51,13 @@ def compare_observed_graph(
         graph,
         observed,
         receipts,
+        ownership_nonce=OWNERSHIP_NONCE,
+        warehouse_target_fingerprint=WAREHOUSE_TARGET_FINGERPRINT,
         target_attestation=TARGET_ATTESTATION,
         target_fingerprint=TARGET_FINGERPRINT,
+        dbt_project_sha256=DBT_PROJECT_FINGERPRINT,
+        artifact_metrics=ARTIFACT_METRICS,
+        snapshot_fingerprint=SNAPSHOT_FINGERPRINT,
     )
 
 
@@ -44,6 +65,70 @@ def _live_bundle(
     graph: ExpectedGraph, repository_root: Path
 ) -> tuple[ObservedGraph, tuple[OperationReceipt, ...]]:
     execution = plan_query_execution(repository_root, graph.query_evidence[0])
+    registry_metrics = registry_binding_metrics(OWNERSHIP_NONCE, WAREHOUSE_TARGET_FINGERPRINT)
+    target_metrics = (
+        datahub_target_metrics(
+            OWNERSHIP_NONCE,
+            WAREHOUSE_TARGET_FINGERPRINT,
+            TARGET_ATTESTATION,
+            TARGET_FINGERPRINT,
+        )
+        | ARTIFACT_METRICS
+        | {
+            "dbtProjectFingerprint": DBT_PROJECT_FINGERPRINT,
+            "ingestionSnapshotFingerprint": SNAPSHOT_FINGERPRINT,
+        }
+    )
+    warehouse = OperationReceipt.create(
+        scenario_id=graph.scenario_id,
+        operation_kind="warehouse",
+        entity_urn=None,
+        aspect_name="canonical-schema",
+        idempotency_key="0" * 64,
+        status=ReceiptStatus.SUCCESS,
+        detail_code="WAREHOUSE_READY",
+        recorded_at="2026-08-04T08:00:00+00:00",
+        ownership_nonce=OWNERSHIP_NONCE,
+        metrics=registry_metrics,
+    )
+    dbt_build = tuple(
+        OperationReceipt.create(
+            scenario_id=graph.scenario_id,
+            operation_kind="dbt-build",
+            entity_urn=None,
+            aspect_name=aspect,
+            idempotency_key=fingerprint,
+            proposal_hash=DBT_PROJECT_FINGERPRINT,
+            status=ReceiptStatus.SUCCESS,
+            detail_code="DBT_COMMAND_SUCCEEDED",
+            recorded_at=recorded_at,
+            ownership_nonce=OWNERSHIP_NONCE,
+            metrics=registry_metrics | {"dbtProjectFingerprint": DBT_PROJECT_FINGERPRINT},
+        )
+        for aspect, fingerprint, recorded_at in (
+            ("build", DBT_BUILD_COMMAND_FINGERPRINT, "2026-08-04T08:01:00+00:00"),
+            (
+                "docs-generate",
+                DBT_DOCS_COMMAND_FINGERPRINT,
+                "2026-08-04T08:02:00+00:00",
+            ),
+        )
+    )
+    dbt_artifacts = OperationReceipt.create(
+        scenario_id=graph.scenario_id,
+        operation_kind="dbt-build",
+        entity_urn=None,
+        aspect_name="artifact-set",
+        idempotency_key=DBT_ARTIFACT_VERIFICATION_FINGERPRINT,
+        proposal_hash=DBT_PROJECT_FINGERPRINT,
+        status=ReceiptStatus.SUCCESS,
+        detail_code="DBT_ARTIFACTS_VERIFIED",
+        recorded_at="2026-08-04T08:03:00+00:00",
+        ownership_nonce=OWNERSHIP_NONCE,
+        metrics=registry_metrics
+        | ARTIFACT_METRICS
+        | {"dbtProjectFingerprint": DBT_PROJECT_FINGERPRINT},
+    )
     query = OperationReceipt.create(
         scenario_id=graph.scenario_id,
         operation_kind="query",
@@ -59,13 +144,13 @@ def _live_bundle(
             "totalExecTimeMs": 1.5,
             "normalizedFingerprint": execution.normalized_fingerprint,
             "statementSha256": execution.sha256,
+            "databaseId": "16384",
+            "userId": "16390",
+            **registry_metrics,
         },
+        ownership_nonce=OWNERSHIP_NONCE,
     )
     recipe_digest = RECIPE_DIGESTS["walkthrough/metadata/postgres-ingestion.yml"]
-    target_metrics = {
-        "targetAttestation": TARGET_ATTESTATION,
-        "targetFingerprint": TARGET_FINGERPRINT,
-    }
     ingest = OperationReceipt.create(
         scenario_id=graph.scenario_id,
         operation_kind="ingest",
@@ -75,10 +160,11 @@ def _live_bundle(
         status=ReceiptStatus.SUCCESS,
         detail_code="INGESTED",
         recorded_at="2026-08-04T10:01:00+00:00",
+        ownership_nonce=OWNERSHIP_NONCE,
         metrics=target_metrics,
     )
-    plan = build_live_query_plan(graph, repository_root, query, "nonce")
-    metrics = {
+    plan = build_live_query_plan(graph, repository_root, query, OWNERSHIP_NONCE)
+    metrics = target_metrics | {
         "queryFingerprint": execution.normalized_fingerprint,
         "pgStatQueryId": "48291",
         "executionCount": 2,
@@ -99,6 +185,7 @@ def _live_bundle(
             status=ReceiptStatus.SUCCESS,
             detail_code="LIVE_QUERY_EMITTED",
             recorded_at="2026-08-04T10:01:01+00:00",
+            ownership_nonce=OWNERSHIP_NONCE,
             metrics=metrics,
         )
         for item in plan
@@ -121,6 +208,7 @@ def _live_bundle(
         status=ReceiptStatus.SUCCESS,
         detail_code="INGESTED",
         recorded_at="2026-08-04T10:02:00+00:00",
+        ownership_nonce=OWNERSHIP_NONCE,
         metrics=target_metrics,
     )
     seed = OperationReceipt.create(
@@ -133,9 +221,13 @@ def _live_bundle(
         status=ReceiptStatus.SUCCESS,
         detail_code="ASPECT_EMITTED",
         recorded_at="2026-08-04T10:03:00+00:00",
+        ownership_nonce=OWNERSHIP_NONCE,
         metrics=target_metrics,
     )
     return replace(observed, query_signals=(signal,)), (
+        warehouse,
+        *dbt_build,
+        dbt_artifacts,
         query,
         ingest,
         *live,
@@ -210,6 +302,8 @@ def test_missing_receipts_cannot_report_live_success(expected_graph: ExpectedGra
     report = compare_observed_graph(expected_graph, expected_observation(expected_graph))
     assert report.ok is False
     assert {failure.code for failure in report.failures} == {
+        "WAREHOUSE_RECEIPT_REQUIRED",
+        "DBT_BUILD_RECEIPT_REQUIRED",
         "INGEST_PREREQUISITE_MISSING",
         "PG_STAT_RECEIPT_MISSING",
         "POSTGRES_INGEST_RECEIPT_MISSING",
@@ -243,7 +337,10 @@ def test_live_receipts_are_exactly_bound(
 ) -> None:
     observed, receipts = _live_bundle(expected_graph, repository_root)
     changed = list(receipts)
-    changed[2] = mutation(changed[2])
+    live_index = next(
+        index for index, item in enumerate(changed) if item.operation_kind == "ingest-query"
+    )
+    changed[live_index] = mutation(changed[live_index])
     report = compare_observed_graph(expected_graph, observed, tuple(changed))
     assert expected_code in {item.code for item in report.failures}
 

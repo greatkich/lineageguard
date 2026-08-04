@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Protocol, cast
 
 from lineageguard_datahub.models import QueryEvidence
-from lineageguard_datahub.paths import resolve_checked_file
+from lineageguard_datahub.paths import read_checked_bytes
 
 CANONICAL_NORMALIZED_SQL = (
     "select customer_id, lifetime_revenue from analytics.customer_revenue "
@@ -41,6 +41,8 @@ class QueryExecutionReceipt:
     query_id: str
     execution_count: int
     total_exec_time_ms: float
+    database_id: str
+    user_id: str
 
 
 class Cursor(Protocol):
@@ -69,10 +71,13 @@ def normalized_sql_fingerprint(statement: str) -> str:
 
 def plan_query_execution(root: Path, expected: QueryEvidence) -> QueryExecutionPlan:
     try:
-        path = resolve_checked_file(root, expected.sql_path, expected.sha256)
+        checked = read_checked_bytes(root, expected.sql_path, expected.sha256)
     except ValueError as error:
         raise QueryPolicyError(str(error)) from error
-    statement = path.read_text(encoding="utf-8")
+    try:
+        statement = checked.content.decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise QueryPolicyError("QUERY_ENCODING_INVALID") from error
     digest = hashlib.sha256(statement.encode()).hexdigest()
     if digest != expected.sha256:
         raise QueryPolicyError("QUERY_DIGEST_MISMATCH")
@@ -96,8 +101,13 @@ def execute_query(cursor: Cursor, plan: QueryExecutionPlan) -> QueryExecutionRec
         "SELECT current_user = 'lineageguard_query', "
         "current_setting('transaction_read_only') = 'on', NOT rolsuper, "
         "NOT rolcreatedb, NOT rolcreaterole, NOT rolreplication, "
-        "pg_has_role(current_user, 'lineageguard_reader', 'MEMBER'), "
+        "pg_has_role(current_user, 'lineageguard_query_reader', 'MEMBER'), "
+        "NOT pg_has_role(current_user, 'pg_read_all_stats', 'MEMBER'), "
         "has_table_privilege(current_user, 'analytics.customer_revenue', 'SELECT'), "
+        "NOT COALESCE(has_table_privilege(current_user, 'commerce.orders', 'SELECT'), false), "
+        "NOT COALESCE(has_table_privilege(current_user, 'analytics.stg_orders', 'SELECT'), false), "
+        "NOT COALESCE(has_table_privilege(current_user, 'fraud.customer_features', "
+        "'SELECT'), false), "
         "NOT COALESCE(has_table_privilege(current_user, 'commerce.orders', "
         "'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER'), false), "
         "NOT COALESCE(has_table_privilege(current_user, 'analytics.stg_orders', "
@@ -111,19 +121,22 @@ def execute_query(cursor: Cursor, plan: QueryExecutionPlan) -> QueryExecutionRec
     role_check = cursor.fetchone()
     if (
         role_check is None
-        or len(role_check) != 12
+        or len(role_check) != 16
         or not all(value is True for value in role_check)
     ):
         raise QueryPolicyError("QUERY_ROLE_NOT_READ_ONLY")
     cursor.execute(plan.statement)
     rows = cursor.fetchall()
     cursor.execute(
-        "SELECT queryid::text, calls::bigint, total_exec_time::double precision, query "
-        "FROM pg_stat_statements WHERE query LIKE %s ORDER BY calls DESC LIMIT 1",
+        "SELECT queryid::text, calls::bigint, total_exec_time::double precision, query, "
+        "dbid::text, userid::text FROM pg_stat_statements "
+        "WHERE dbid = (SELECT oid FROM pg_database WHERE datname = current_database()) "
+        "AND userid = (SELECT oid FROM pg_roles WHERE rolname = current_user) "
+        "AND query LIKE %s ORDER BY calls DESC LIMIT 1",
         (f"%{plan.marker}%",),
     )
     observed = cursor.fetchone()
-    if observed is None or len(observed) != 4:
+    if observed is None or len(observed) != 6:
         raise QueryPolicyError("QUERY_HISTORY_NOT_OBSERVED")
     if _normalized(str(observed[3])) != CANONICAL_PG_STAT_SQL:
         raise QueryPolicyError("QUERY_HISTORY_FINGERPRINT_MISMATCH")
@@ -139,4 +152,6 @@ def execute_query(cursor: Cursor, plan: QueryExecutionPlan) -> QueryExecutionRec
         query_id=str(observed[0]),
         execution_count=execution_count,
         total_exec_time_ms=total_exec_time_ms,
+        database_id=str(observed[4]),
+        user_id=str(observed[5]),
     )

@@ -10,60 +10,48 @@ from datahub.metadata.schema_classes import (
     DashboardInfoClass,
     DashboardKeyClass,
     DatasetKeyClass,
+    DatasetLineageTypeClass,
     DatasetPropertiesClass,
     GlossaryTermKeyClass,
     MLModelKeyClass,
     OtherSchemaClass,
+    OwnershipClass,
+    OwnershipTypeClass,
     QueryKeyClass,
     SchemaFieldKeyClass,
     SchemaMetadataClass,
     StatusClass,
     TagKeyClass,
+    UpstreamClass,
     UpstreamLineageClass,
 )
+from support import (
+    TARGET_ATTESTATION,
+    TARGET_FINGERPRINT,
+    WAREHOUSE_TARGET,
+    RegistryCursor,
+    append_build_provenance,
+    append_ingestion_receipts,
+)
 
-from lineageguard_datahub.ingestion import RECIPE_DIGESTS
 from lineageguard_datahub.models import ExpectedGraph
-from lineageguard_datahub.receipts import OperationReceipt, ReceiptStatus, ReceiptStore
+from lineageguard_datahub.receipts import ReceiptStatus, ReceiptStore
 from lineageguard_datahub.seed import (
     SeedReceipt,
     build_seed_plan,
     entity_has_scenario_marker,
+    reconcile_seed_metadata,
 )
 from lineageguard_datahub.seed import (
     seed_metadata as _seed_metadata,
 )
 
-TARGET_ATTESTATION = "canonical-local-lineageguard-v1"
-TARGET_FINGERPRINT = "f" * 64
 
-
-def _add_ingestion_prerequisites(store: ReceiptStore, graph: ExpectedGraph) -> None:
-    existing = store.read_all()
-    for relative, digest in RECIPE_DIGESTS.items():
-        if any(
-            item.operation_kind == "ingest"
-            and item.aspect_name == relative
-            and item.status is ReceiptStatus.SUCCESS
-            for item in existing
-        ):
-            continue
-        store.append(
-            OperationReceipt.create(
-                scenario_id=graph.scenario_id,
-                operation_kind="ingest",
-                entity_urn=None,
-                aspect_name=relative,
-                idempotency_key=digest,
-                proposal_hash=digest,
-                status=ReceiptStatus.SUCCESS,
-                detail_code="INGESTED",
-                metrics={
-                    "targetAttestation": TARGET_ATTESTATION,
-                    "targetFingerprint": TARGET_FINGERPRINT,
-                },
-            )
-        )
+def _add_ingestion_prerequisites(store: ReceiptStore, root: Path) -> None:
+    if store.read_all():
+        return
+    append_build_provenance(store, root)
+    append_ingestion_receipts(store, root)
 
 
 def seed_metadata(
@@ -73,13 +61,15 @@ def seed_metadata(
     graph: ExpectedGraph,
     root: Path,
 ) -> SeedReceipt:
-    _add_ingestion_prerequisites(store, graph)
+    _add_ingestion_prerequisites(store, root)
     return _seed_metadata(
         emitter,
         reader,
         store,
         graph,
         root,
+        RegistryCursor(store.ownership_nonce),
+        warehouse_target_fingerprint=WAREHOUSE_TARGET,
         target_attestation=TARGET_ATTESTATION,
         target_fingerprint=TARGET_FINGERPRINT,
     )
@@ -178,13 +168,16 @@ def test_metadata_seed_rejects_missing_ingestion_prerequisites(
 ) -> None:
     catalog = FakeCatalog()
     _add_connector_entities(catalog, expected_graph)
+    store = ReceiptStore(tmp_path / "operations.jsonl")
     with pytest.raises(ValueError, match="INGEST_PREREQUISITE_MISSING"):
         _seed_metadata(
             RecordingEmitter(catalog),
             catalog,
-            ReceiptStore(tmp_path / "operations.jsonl"),
+            store,
             expected_graph,
             repository_root,
+            RegistryCursor(store.ownership_nonce),
+            warehouse_target_fingerprint=WAREHOUSE_TARGET,
             target_attestation=TARGET_ATTESTATION,
             target_fingerprint=TARGET_FINGERPRINT,
         )
@@ -213,6 +206,19 @@ def test_partial_failure_is_durable_and_retry_reconciles_exact_successes(
         == 4
     )
     assert sum(item.status is ReceiptStatus.FAILURE for item in receipts) == 1
+    with pytest.raises(ValueError, match="SCENARIO_RECONCILIATION_REQUIRED"):
+        seed_metadata(RecordingEmitter(catalog), catalog, store, expected_graph, repository_root)
+    reconciled = reconcile_seed_metadata(
+        catalog,
+        store,
+        expected_graph,
+        repository_root,
+        RegistryCursor(store.ownership_nonce),
+        warehouse_target_fingerprint=WAREHOUSE_TARGET,
+        target_attestation=TARGET_ATTESTATION,
+        target_fingerprint=TARGET_FINGERPRINT,
+    )
+    assert reconciled == len(build_seed_plan(expected_graph, repository_root)) - 4
     retry = seed_metadata(
         RecordingEmitter(catalog), catalog, store, expected_graph, repository_root
     )
@@ -234,6 +240,21 @@ def test_plan_contains_query_governance_and_each_lineage_target(
     }
     for downstream_urn in dataset_downstreams:
         assert f"lineage:{downstream_urn}" in logical_keys
+
+
+def test_seed_compiles_exact_official_ownership_types(
+    expected_graph: ExpectedGraph, repository_root: Path
+) -> None:
+    plan = {
+        item.logical_key: item.proposal.aspect
+        for item in build_seed_plan(expected_graph, repository_root)
+    }
+    dashboard = plan["finance.revenue-dashboard:ownership"]
+    model = plan["fraud.model-v3:ownership"]
+    assert isinstance(dashboard, OwnershipClass)
+    assert isinstance(model, OwnershipClass)
+    assert [owner.type for owner in dashboard.owners] == [OwnershipTypeClass.BUSINESS_OWNER]
+    assert [owner.type for owner in model.owners] == [OwnershipTypeClass.TECHNICAL_OWNER]
 
 
 def test_every_upsert_uses_an_aspect_allowed_for_its_entity(
@@ -287,6 +308,20 @@ def test_public_marker_without_creation_proof_cannot_authorize_reconciliation(
     catalog.aspects[(first.proposal.entityUrn, type(first.proposal.aspect))] = first.proposal.aspect
     with pytest.raises(ValueError, match="EXISTING_ENTITY_NOT_OWNED"):
         seed_metadata(RecordingEmitter(catalog), catalog, store, expected_graph, repository_root)
+    reconcile_seed_metadata(
+        catalog,
+        store,
+        expected_graph,
+        repository_root,
+        RegistryCursor(store.ownership_nonce),
+        warehouse_target_fingerprint=WAREHOUSE_TARGET,
+        target_attestation=TARGET_ATTESTATION,
+        target_fingerprint=TARGET_FINGERPRINT,
+    )
+    assert not any(
+        item.operation_kind == "entity" and item.entity_urn == first.proposal.entityUrn
+        for item in store.read_all()
+    )
 
 
 def test_owned_entity_drift_is_not_clobbered(
@@ -351,6 +386,38 @@ def test_repeat_connector_refresh_preserves_overlays_and_owned_markers(
     )
     assert isinstance(catalog.get_aspect(dashboard.urn, DashboardInfoClass), DashboardInfoClass)
     assert entity_has_scenario_marker(catalog, dashboard.urn, "dashboard", store.ownership_nonce)
+
+
+def test_connector_lineage_conflict_is_never_overwritten(
+    expected_graph: ExpectedGraph, repository_root: Path, tmp_path: Path
+) -> None:
+    store = ReceiptStore(tmp_path / "operations.jsonl")
+    catalog = FakeCatalog()
+    _add_connector_entities(catalog, expected_graph)
+    stg_orders = next(
+        node for node in expected_graph.nodes if node.logical_key == "analytics.stg_orders"
+    )
+    lineage = next(
+        item
+        for item in build_seed_plan(expected_graph, repository_root, store.ownership_nonce)
+        if item.proposal.entityUrn == stg_orders.urn
+        and isinstance(item.proposal.aspect, UpstreamLineageClass)
+    )
+    assert lineage.proposal.entityUrn is not None
+    unrelated = UpstreamLineageClass(
+        upstreams=[
+            UpstreamClass(
+                dataset="urn:li:dataset:(urn:li:dataPlatform:postgres,shared.unrelated,PROD)",
+                type=DatasetLineageTypeClass.TRANSFORMED,
+            )
+        ]
+    )
+    catalog.aspects[(lineage.proposal.entityUrn, UpstreamLineageClass)] = unrelated
+    emitter = RecordingEmitter(catalog)
+    with pytest.raises(ValueError, match="CONNECTOR_LINEAGE_CONFLICT"):
+        seed_metadata(emitter, catalog, store, expected_graph, repository_root)
+    assert emitter.proposals == []
+    assert catalog.get_aspect(lineage.proposal.entityUrn, UpstreamLineageClass) is unrelated
 
 
 def test_reseed_undeletes_only_receipt_owned_entity(

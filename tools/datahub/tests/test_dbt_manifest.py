@@ -64,7 +64,9 @@ def test_dbt_parse_relations_match_expected_graph(
 
 def test_dbt_grants_only_exact_canonical_relations(repository_root: Path) -> None:
     macro = (repository_root / "walkthrough/dbt/macros/grant_canonical_readers.sql").read_text()
-    assert "TO lineageguard_reader" in macro
+    assert "TO lineageguard_ingest_reader" in macro
+    assert "analytics.customer_revenue TO lineageguard_query_reader" in macro
+    assert "TO lineageguard_reader" not in macro
     for relation in (
         "analytics.stg_orders",
         "analytics.customer_revenue",

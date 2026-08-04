@@ -41,6 +41,7 @@
       "entityType": "DATASET",
       "name": "orders",
       "ownerUrns": [],
+      "ownershipType": null,
       "tagUrns": [],
       "schemaFields": ["order_id", "customer_id", "order_total", "ordered_at"]
     },
@@ -50,6 +51,7 @@
       "entityType": "DATASET",
       "name": "stg_orders",
       "ownerUrns": [],
+      "ownershipType": null,
       "tagUrns": [],
       "schemaFields": ["order_id", "customer_id", "order_total", "ordered_at"]
     },
@@ -59,6 +61,7 @@
       "entityType": "DATASET",
       "name": "customer_revenue",
       "ownerUrns": ["urn:li:corpGroup:lineageguard-canonical.finance-analytics"],
+      "ownershipType": "TECHNICAL_OWNER",
       "tagUrns": ["urn:li:tag:lineageguard-canonical.Critical"],
       "schemaFields": ["customer_id", "lifetime_revenue"]
     },
@@ -68,6 +71,7 @@
       "entityType": "DATASET",
       "name": "customer_features",
       "ownerUrns": ["urn:li:corpGroup:lineageguard-canonical.risk-ml"],
+      "ownershipType": "TECHNICAL_OWNER",
       "tagUrns": ["urn:li:tag:lineageguard-canonical.Production"],
       "schemaFields": ["customer_id", "order_count", "max_order_total"]
     },
@@ -77,6 +81,7 @@
       "entityType": "DASHBOARD",
       "name": "Finance Revenue Dashboard",
       "ownerUrns": ["urn:li:corpGroup:lineageguard-canonical.finance-analytics"],
+      "ownershipType": "BUSINESS_OWNER",
       "tagUrns": ["urn:li:tag:lineageguard-canonical.Critical", "urn:li:tag:lineageguard-canonical.Production"],
       "schemaFields": []
     },
@@ -86,6 +91,7 @@
       "entityType": "MLMODEL",
       "name": "Fraud Model v3",
       "ownerUrns": ["urn:li:corpGroup:lineageguard-canonical.risk-ml"],
+      "ownershipType": "TECHNICAL_OWNER",
       "tagUrns": ["urn:li:tag:lineageguard-canonical.Critical", "urn:li:tag:lineageguard-canonical.Production"],
       "schemaFields": []
     }
