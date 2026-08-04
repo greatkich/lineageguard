@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { chmod, mkdtemp, mkdir, readFile, rm, unlink, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, mkdir, readFile, rm, symlink, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -130,6 +130,24 @@ test("rejects an extra vendored file", async () => {
     assert.match(result.stderr, /unexpected vendored file/);
   } finally {
     await rm(snapshot.root, { recursive: true, force: true });
+  }
+});
+
+test("rejects a declared vendored root that is a symlink", async () => {
+  const snapshot = await createSnapshot();
+  const externalRoot = await mkdtemp(join(tmpdir(), "lineageguard-external-agent-skill-"));
+  try {
+    const vendoredRoot = ".agents/skills/datahub-search";
+    await writeFile(join(externalRoot, "fixture.txt"), `${vendoredRoot}\n`);
+    await rm(join(snapshot.root, vendoredRoot), { recursive: true });
+    await symlink(externalRoot, join(snapshot.root, vendoredRoot), "dir");
+
+    const result = runVerifier(snapshot.root);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /vendored root is not a real directory/);
+  } finally {
+    await rm(snapshot.root, { recursive: true, force: true });
+    await rm(externalRoot, { recursive: true, force: true });
   }
 });
 
