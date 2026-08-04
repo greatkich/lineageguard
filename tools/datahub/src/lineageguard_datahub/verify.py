@@ -72,7 +72,7 @@ class ObservedGraph:
     schema_fields: frozenset[str]
     entity_edges: frozenset[tuple[str, str]]
     field_edges: frozenset[tuple[str, str]]
-    ownership: frozenset[tuple[str, str]]
+    ownership: frozenset[tuple[str, str, str]]
     tags: frozenset[tuple[str, str]]
     glossary_terms: frozenset[tuple[str, str]]
     query_signals: tuple[QuerySignal, ...]
@@ -128,7 +128,10 @@ def expected_observation(graph: ExpectedGraph) -> ObservedGraph:
             if edge.granularity is Granularity.FIELD
         ),
         ownership=frozenset(
-            (node.urn, owner_urn) for node in graph.nodes for owner_urn in node.owner_urns
+            (node.urn, owner_urn, node.ownership_type.value)
+            for node in graph.nodes
+            if node.ownership_type is not None
+            for owner_urn in node.owner_urns
         ),
         tags=frozenset((node.urn, tag_urn) for node in graph.nodes for tag_urn in node.tag_urns),
         glossary_terms=frozenset(
@@ -500,7 +503,7 @@ def observe_live(reader: GraphReader, graph: ExpectedGraph) -> ObservedGraph:
     schema_fields: set[str] = set()
     entity_edges: set[tuple[str, str]] = set()
     field_edges: set[tuple[str, str]] = set()
-    ownership: set[tuple[str, str]] = set()
+    ownership: set[tuple[str, str, str]] = set()
     tags: set[tuple[str, str]] = set()
     glossary_terms: set[tuple[str, str]] = set()
     query_signals: list[QuerySignal] = []
@@ -543,7 +546,9 @@ def observe_live(reader: GraphReader, graph: ExpectedGraph) -> ObservedGraph:
             continue
         owner_aspect = reader.get_aspect(node.urn, OwnershipClass)
         if owner_aspect is not None:
-            ownership.update((node.urn, owner.owner) for owner in owner_aspect.owners)
+            ownership.update(
+                (node.urn, owner.owner, str(owner.type)) for owner in owner_aspect.owners
+            )
         tag_aspect = reader.get_aspect(node.urn, GlobalTagsClass)
         if tag_aspect is not None:
             tags.update((node.urn, association.tag) for association in tag_aspect.tags)

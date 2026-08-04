@@ -6,7 +6,12 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from datahub.metadata.schema_classes import StatusClass
+from datahub.metadata.schema_classes import (
+    OwnerClass,
+    OwnershipClass,
+    OwnershipTypeClass,
+    StatusClass,
+)
 
 from lineageguard_datahub.ingestion import (
     DBT_ARTIFACT_VERIFICATION_FINGERPRINT,
@@ -287,8 +292,11 @@ def test_custom_query_owner_cannot_replace_official_asset_ownership(
         node for node in expected_graph.nodes if node.logical_key == "analytics.customer_revenue"
     )
     owner = expected_graph.owners[0].urn
-    ownership = (set(observed.ownership) - {(revenue.urn, owner)}) | {
-        (expected_graph.query_evidence[0].query_urn, owner)
+    revenue_ownership = next(
+        item for item in observed.ownership if item[:2] == (revenue.urn, owner)
+    )
+    ownership = (set(observed.ownership) - {revenue_ownership}) | {
+        (expected_graph.query_evidence[0].query_urn, owner, revenue_ownership[2])
     }
     report = compare_observed_graph(
         expected_graph,
@@ -296,6 +304,78 @@ def test_custom_query_owner_cannot_replace_official_asset_ownership(
         receipts,
     )
     assert "OWNER_MISMATCH" in {failure.code for failure in report.failures}
+
+
+class OwnershipTypeSwapReader:
+    def __init__(self, graph: ExpectedGraph, swapped_logical_key: str) -> None:
+        self.graph = graph
+        self.swapped_logical_key = swapped_logical_key
+
+    def exists(self, entity_urn: str) -> bool:
+        return entity_urn in self.graph.managed_urns
+
+    def get_aspect(self, entity_urn: str, aspect_type: type[Any], version: int = 0) -> Any | None:
+        del version
+        if aspect_type is not OwnershipClass:
+            return None
+        node = next((item for item in self.graph.nodes if item.urn == entity_urn), None)
+        if node is None or node.ownership_type is None:
+            return None
+        ownership_type = node.ownership_type.value
+        if node.logical_key == self.swapped_logical_key:
+            ownership_type = {
+                OwnershipTypeClass.BUSINESS_OWNER: OwnershipTypeClass.TECHNICAL_OWNER,
+                OwnershipTypeClass.TECHNICAL_OWNER: OwnershipTypeClass.BUSINESS_OWNER,
+            }[ownership_type]
+        return OwnershipClass(
+            owners=[
+                OwnerClass(owner=owner_urn, type=ownership_type) for owner_urn in node.owner_urns
+            ]
+        )
+
+    def get_timeseries_values(
+        self,
+        entity_urn: str,
+        aspect_type: type[Any],
+        filter: dict[str, Any],
+        limit: int = 10,
+    ) -> list[Any]:
+        del entity_urn, aspect_type, filter, limit
+        return []
+
+
+@pytest.mark.parametrize(
+    ("logical_key", "expected_type", "swapped_type"),
+    [
+        (
+            "finance.revenue-dashboard",
+            OwnershipTypeClass.BUSINESS_OWNER,
+            OwnershipTypeClass.TECHNICAL_OWNER,
+        ),
+        (
+            "fraud.model-v3",
+            OwnershipTypeClass.TECHNICAL_OWNER,
+            OwnershipTypeClass.BUSINESS_OWNER,
+        ),
+    ],
+)
+def test_live_verification_rejects_swapped_ownership_type(
+    expected_graph: ExpectedGraph,
+    logical_key: str,
+    expected_type: str,
+    swapped_type: str,
+) -> None:
+    node = next(item for item in expected_graph.nodes if item.logical_key == logical_key)
+    owner = node.owner_urns[0]
+    observed = observe_live(OwnershipTypeSwapReader(expected_graph, logical_key), expected_graph)
+
+    assert (node.urn, owner, swapped_type) in observed.ownership
+    assert (node.urn, owner, expected_type) not in observed.ownership
+
+    report = compare_observed_graph(expected_graph, observed)
+    owner_failure = next(item for item in report.failures if item.code == "OWNER_MISMATCH")
+    assert expected_type in owner_failure.detail
+    assert swapped_type in owner_failure.detail
 
 
 def test_missing_receipts_cannot_report_live_success(expected_graph: ExpectedGraph) -> None:
