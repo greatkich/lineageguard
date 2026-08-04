@@ -139,7 +139,7 @@ git commit -m "chore: pin runtime environment policy"
 
 **Interfaces:**
 - Consumes: Node/pnpm policy from Task 1.
-- Produces: root scripts `format:check`, `lint`, `typecheck`, `test`, `build`, `test:e2e`, `demo:verify`, `env:check`, `boundaries:check`, and `db:test:up`.
+- Produces: root scripts `format:check`, `lint`, `typecheck`, `test`, `build`, `test:e2e`, `browser:install`, `demo:verify`, `env:check`, `boundaries:check`, and `db:test:up`.
 
 - [ ] **Step 1: Write a failing workspace-contract test**
 
@@ -163,6 +163,7 @@ describe("workspace contract", () => {
         "test",
         "build",
         "test:e2e",
+        "browser:install",
         "demo:verify",
         "env:check",
         "boundaries:check",
@@ -195,6 +196,7 @@ Use these script contracts:
     "test": "vitest run --workspace vitest.workspace.ts",
     "build": "pnpm -r --if-present build",
     "test:e2e": "playwright test",
+    "browser:install": "playwright install chromium",
     "demo:verify": "node scripts/demo-verify.mjs --foundation-only",
     "boundaries:check": "node scripts/check-boundaries.mjs",
     "db:test:up": "docker compose -f compose.yaml up -d --wait app-postgres validation-postgres"
@@ -202,7 +204,7 @@ Use these script contracts:
 }
 ```
 
-Set `strict`, `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`, `useUnknownInCatchVariables`, `noImplicitOverride`, and `noFallthroughCasesInSwitch` to `true` in `tsconfig.base.json`. Configure Biome for two-space indentation, double quotes, organized imports, recommended lint rules, and generated-directory ignores. Configure Playwright with one `chromium` project and `tests/e2e` as its directory.
+Set `strict`, `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`, `useUnknownInCatchVariables`, `noImplicitOverride`, and `noFallthroughCasesInSwitch` to `true` in `tsconfig.base.json`. Configure Biome for two-space indentation, double quotes, organized imports, recommended lint rules, and generated-directory ignores. Configure Playwright with one `chromium` project and `tests/e2e` as its directory. `browser:install` resolves the pinned workspace Playwright 1.62.1 binary; it provisions Chromium as setup and never changes `test:e2e` behavior.
 
 - [ ] **Step 4: Run the workspace contract and static gates**
 
@@ -256,7 +258,30 @@ it("labels the repository as foundation only", () => {
 });
 ```
 
-Also write `tests/foundation/package-boundaries.test.ts` against a temporary package fixture. It must fail when `packages/domain` imports a framework, database driver, MCP client, or model SDK, and when raw MCP modules escape `packages/datahub`; it must pass a clean dependency graph.
+Also write `tests/foundation/package-boundaries.test.ts` against temporary workspace fixtures. Define this exact deny-by-default matrix in the checker and import it in the tests:
+
+```js
+export const INTERNAL_DEPENDENCY_POLICY = {
+  "packages/domain": [],
+  "packages/agent": ["packages/domain"],
+  "packages/datahub": ["packages/domain"],
+  "packages/github": ["packages/domain"],
+  "packages/validation": ["packages/domain"],
+  "packages/db": ["packages/domain"],
+  "packages/ui": ["packages/domain"],
+  "apps/worker": [
+    "packages/domain",
+    "packages/agent",
+    "packages/datahub",
+    "packages/github",
+    "packages/validation",
+    "packages/db",
+  ],
+  "apps/web": ["packages/domain", "packages/db", "packages/ui"],
+};
+```
+
+For every distinct importer/target pair in the nine-owner Cartesian product whose target is not in the importer's allowed set, generate a one-edge fixture and assert `FORBIDDEN_INTERNAL_EDGE` with both owner names. Assert the generated table contains exactly 57 forbidden cases; this is the complete forbidden-edge table, not a sample. Add one clean fixture containing all 15 allowed edges and assert it is acyclic. Explicitly assert that every `packages/* -> apps/*` edge is denied, that `packages/domain` rejects framework/database/MCP/model SDK imports, and that raw MCP modules or official MCP-shaped fixture types imported from `packages/datahub/src/mcp/**` or `packages/datahub/test/fixtures/**` are rejected outside the DataHub owner. Add a cycle fixture such as `apps/worker -> packages/agent -> apps/worker` and assert both the forbidden edge and a separate `INTERNAL_DEPENDENCY_CYCLE` finding with a stable path. Allowed edges remain permissions only; do not create runtime imports merely to exercise the matrix.
 
 ```ts
 // apps/worker/src/worker.test.ts
@@ -301,12 +326,15 @@ export function createWorkerHeartbeat(observedAt: string): WorkerHeartbeat {
 
 Render the same honest foundation status on `/` with semantic `<main>`, `<h1>LineageGuard</h1>`, and text `Foundation installed; canonical demo not implemented.` The Playwright smoke asserts that exact copy and zero console errors. `scripts/demo-verify.mjs --foundation-only` parses `FOUNDATION_STATUS` through a tiny JSON child process and exits zero only while `productReady === false`.
 
-Implement `scripts/check-boundaries.mjs` as a deterministic source/import graph check with explicit package rules. It accepts repository-relative fixture roots in tests, emits file/import violations without source contents, and exits non-zero on any violation. It is the sole owner of the `boundaries:check` command used by F3 and later plans.
+Implement `scripts/check-boundaries.mjs` as a deterministic source/import graph check over both workspace manifest dependencies and normalized source imports. Unknown internal owners and every unlisted cross-owner edge fail closed. No package may import an app. Preserve the domain infrastructure denylist and raw MCP containment rule in addition to the matrix. Run explicit DFS or Tarjan cycle detection over the complete internal owner graph and emit a stable canonical cycle path. The checker accepts repository-relative fixture roots in tests, emits owner/file/import violations without source contents, and exits non-zero on any edge, containment, or cycle violation. It is the sole owner of the `boundaries:check` command used by F3 and later plans; a future allowed edge requires an architecture review plus a synchronized policy/test change before the dependency lands.
 
 - [ ] **Step 4: Run package, build, and browser smoke gates**
 
+Run: `pnpm browser:install`
+Expected: the pinned workspace Playwright CLI installs Chromium successfully. This is a local setup step, not a test result.
+
 Run: `pnpm test && pnpm boundaries:check && pnpm typecheck && pnpm build && pnpm test:e2e && pnpm demo:verify`
-Expected: all exit zero; package boundaries hold and the browser displays foundation-only copy.
+Expected: all exit zero; the complete dependency matrix and acyclicity policy hold, and the provisioned Chromium browser displays foundation-only copy.
 
 - [ ] **Step 5: Commit the minimal application boundaries**
 
@@ -402,8 +430,8 @@ git commit -m "chore: lock python and database service boundaries"
 - Modify: `docs/SOURCES.md`
 
 **Interfaces:**
-- Consumes: all F0 gates.
-- Produces: CI job matrix, `make verify-foundation`, and accepted architecture records for dependent plans.
+- Consumes: all F0 gates and the pinned Playwright CLI from Task 2.
+- Produces: CI job matrix, local `make setup`/`make browser-install`/`make verify-foundation` ownership, clean-clone README commands, and accepted architecture records for dependent plans.
 
 - [ ] **Step 1: Write a failing documentation/config contract test**
 
@@ -415,12 +443,19 @@ const bootstrap = await readFile("scripts/bootstrap-agent-tooling.sh", "utf8");
 expect(codexExample).toContain("mcp-server-datahub==0.6.0");
 expect(bootstrap).toContain("uvx");
 expect(`${codexExample}\n${bootstrap}`).not.toContain("@acryldata/mcp-server-datahub");
+
+const makefile = await readFile("Makefile", "utf8");
+const readme = await readFile("README.md", "utf8");
+const ci = await readFile(".github/workflows/ci.yml", "utf8");
+expect(makefile).toContain("pnpm exec playwright install chromium");
+expect(readme).toContain("make setup");
+expect(ci).toContain("pnpm exec playwright install --with-deps chromium");
 ```
 
-- [ ] **Step 2: Run the contract and observe stale MCP configuration**
+- [ ] **Step 2: Run the contract and observe stale/missing setup contracts**
 
 Run: `pnpm vitest run tests/foundation/workspace.test.ts`
-Expected: FAIL because the obsolete npm MCP launcher is still present.
+Expected: FAIL because the obsolete npm MCP launcher remains and the Makefile/CI browser-provisioning contracts do not exist yet.
 
 - [ ] **Step 3: Implement CI and documents**
 
@@ -428,12 +463,14 @@ Update both MCP examples to use the absolute `uvx` resolution pattern and `uvx -
 
 The delivery design was approved on 2026-08-04, so create each ADR with `Status: Accepted`. ADR-003 records deterministic context collection plus split read/write/verifier ports; ADR-004 records the accepted status/failure table, `FOR UPDATE SKIP LOCKED`, 60-second lease/20-second heartbeat, 1/5/30-second retry delays, polling, and idempotency keys; ADR-005 records public replay/operator-only live mode. Later evidence may change these only through an explicit superseding ADR.
 
-CI uses setup-node with `node-version-file`, Corepack, frozen install, `astral-sh/setup-uv` pinned to 0.11.32, `uv sync --locked`, and invokes `bash scripts/verify-foundation.sh`. The script executes the F0 gate commands in the specification in order and prints the failing command through shell tracing without environment dumps.
+Makefile owns these local targets: `browser-install` runs `pnpm exec playwright install chromium`; `setup` runs the frozen Corepack/pnpm install, locked uv sync, and then `browser-install`; `verify-foundation` runs `bash scripts/verify-foundation.sh` without silently provisioning or skipping a browser. README's clean-clone path is exactly `make setup` followed by `make verify-foundation`, explains that setup downloads pinned Chromium, and gives `pnpm exec playwright install chromium` as the direct recovery command.
+
+Linux CI uses setup-node with `node-version-file`, Corepack, frozen install, `astral-sh/setup-uv` pinned to 0.11.32, and `uv sync --locked`. After the frozen pnpm install and before `bash scripts/verify-foundation.sh`, it must run `pnpm exec playwright install --with-deps chromium` so both the pinned browser and required Linux system packages exist. `scripts/verify-foundation.sh` executes the F0 gate commands in specification order and prints the failing command through shell tracing without environment dumps; it never converts an absent browser into success.
 
 - [ ] **Step 4: Run the complete F0 gate**
 
-Run: `bash scripts/verify-foundation.sh`
-Expected: format, lint, type, unit, build, browser smoke, foundation demo smoke, and Python tests all exit zero.
+Run: `make setup && make verify-foundation`
+Expected: clean local setup provisions dependencies and pinned Chromium, then format, lint, boundary matrix/cycle checks, type, unit, build, real browser smoke, foundation demo smoke, and Python tests all exit zero.
 
 Run: `git diff --exit-code -- pnpm-lock.yaml tools/datahub/uv.lock`
 Expected: no lockfile drift.
@@ -472,7 +509,7 @@ Expected: no unresolved blocking findings. Commit accepted fixes separately.
 Run:
 
 ```bash
-pnpm install --frozen-lockfile
+make setup
 pnpm env:check
 pnpm format:check
 pnpm lint

@@ -50,6 +50,7 @@ A contributor can clone the repository, install pinned Node/Python dependencies,
 - Biome formatting/linting;
 - Vitest workspace;
 - Playwright browser smoke configuration;
+- explicit local Chromium provisioning through the pinned workspace Playwright CLI and Linux CI provisioning with browser system dependencies;
 - `tools/datahub` uv project and locked Python toolchain;
 - Compose layers for application PostgreSQL, validation PostgreSQL, and pinned DataHub 1.6 Quickstart integration;
 - CI skeleton and environment preflight;
@@ -78,11 +79,14 @@ biome.jsonc
 vitest.workspace.ts
 playwright.config.ts
 Makefile
+README.md
 compose.yaml
 compose.datahub.yaml
 .github/workflows/ci.yml
 scripts/check-environment.sh
+scripts/check-boundaries.mjs
 scripts/verify-foundation.sh
+tests/foundation/package-boundaries.test.ts
 apps/web/package.json
 apps/worker/package.json
 packages/{domain,agent,datahub,github,validation,db,ui}/package.json
@@ -94,7 +98,7 @@ docs/DECISIONS/ADR-004-durable-workflow-and-idempotency.md
 docs/DECISIONS/ADR-005-demo-deployment-and-exposure.md
 ```
 
-The root `package.json` exposes exactly these repository gates, even when a later feature initially has no tests:
+The root `package.json` exposes exactly these repository gates plus the explicit browser setup command, even when a later feature initially has no tests:
 
 ```text
 format:check
@@ -103,6 +107,7 @@ typecheck
 test
 build
 test:e2e
+browser:install       # setup command, not a gate
 demo:verify
 env:check
 boundaries:check
@@ -111,18 +116,40 @@ db:test:up
 
 No empty gate may print a false success claim. A not-yet-applicable gate must run a documented smoke assertion or fail with a clear “feature not installed” state until its owning feature lands.
 
+`browser:install` resolves the pinned workspace Playwright 1.62.1 CLI and installs Chromium. Local clean-clone setup owns `pnpm exec playwright install chromium`; Linux CI owns `pnpm exec playwright install --with-deps chromium` after the frozen pnpm install and before `scripts/verify-foundation.sh`. Browser provisioning is a setup prerequisite, never a test stub or a false-success branch inside `test:e2e`.
+
+F0's sole `boundaries:check` gate uses this deny-by-default internal dependency matrix. A row is the importer; its set contains every internal owner it may import:
+
+| Importer | Allowed internal imports |
+|---|---|
+| `packages/domain` | none |
+| `packages/agent` | `packages/domain` |
+| `packages/datahub` | `packages/domain` |
+| `packages/github` | `packages/domain` |
+| `packages/validation` | `packages/domain` |
+| `packages/db` | `packages/domain` |
+| `packages/ui` | `packages/domain` |
+| `apps/worker` | `packages/domain`, `packages/agent`, `packages/datahub`, `packages/github`, `packages/validation`, `packages/db` |
+| `apps/web` | `packages/domain`, `packages/db`, `packages/ui` |
+
+Every unlisted cross-owner edge is forbidden, including every package-to-app edge. The gate inspects both workspace manifest dependencies and normalized source imports, rejects raw MCP modules/fixture shapes outside `packages/datahub`, and rejects every internal owner cycle with a stable cycle path. The matrix has 15 allowed and 57 forbidden off-diagonal edges. Tests generate one fixture for each of those 57 forbidden edges, exercise all 15 allowed edges in a fixture-only acyclic graph, assert package-to-app denial and raw MCP containment explicitly, and include a cycle fixture. Allowed edges are permissions, not required runtime coupling; a future package need changes the reviewed matrix and its table-driven tests before adding an import.
+
 ### Acceptance examples
 
 - Fresh install with the pinned runtimes and lockfiles exits zero.
 - A minimal `apps/web` route, worker process smoke, pure domain test, and Python test pass.
+- A clean local setup provisions the pinned Chromium binary before the Playwright smoke; clean Linux CI provisions Chromium plus required system dependencies before the verification script.
 - A TypeScript fixture containing implicit `any` fails `pnpm typecheck` in the test harness.
 - A deliberately malformed environment fails `pnpm env:check` with all missing requirements listed and no secret values.
 - CI uses frozen/locked dependency installation and never generates a changed lockfile.
+- The boundary fixture suite rejects every forbidden matrix edge and a cycle, while the complete allowed-edge fixture remains acyclic and passes.
 
 ### Feature verification
 
 ```bash
-pnpm install --frozen-lockfile
+corepack pnpm install --frozen-lockfile
+pnpm exec playwright install chromium
+uv sync --project tools/datahub --locked
 pnpm env:check
 pnpm format:check
 pnpm lint
