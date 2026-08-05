@@ -194,6 +194,38 @@ describe("controlled DataHub write-back", () => {
     ).toThrow("target different instances");
   });
 
+  it("rejects credential reuse and unsafe targets before any process starts", () => {
+    const shared = {
+      dataHubGmsUrl: "https://datahub.example.test",
+      uvCacheDir: "/tmp/datahub-cache",
+      uvxPath: "/usr/local/bin/uvx",
+    };
+    expect(() =>
+      createOfficialLiveDataHubWritebackPort({
+        authority: authority(),
+        mutationCredentials: { ...shared, mutationToken: "shared-token" },
+        readCredentials: { ...shared, readToken: "shared-token" },
+        targetInstanceFingerprint: hash("datahub-instance"),
+      }),
+    ).toThrow("must be separate");
+    expect(() =>
+      createOfficialLiveDataHubWritebackPort({
+        authority: authority(),
+        mutationCredentials: {
+          ...shared,
+          dataHubGmsUrl: "file:///tmp/datahub",
+          mutationToken: "mutation-token",
+        },
+        readCredentials: {
+          ...shared,
+          dataHubGmsUrl: "file:///tmp/datahub",
+          readToken: "read-token",
+        },
+        targetInstanceFingerprint: hash("datahub-instance"),
+      }),
+    ).toThrow("unsafe");
+  });
+
   it("rejects a mismatched trusted target-instance attestation before authority or read", async () => {
     const trusted = authority();
     const read = vi.fn(() => snapshot());

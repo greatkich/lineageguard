@@ -16,6 +16,8 @@ import { createReadOnlyToolClient } from "./tool-client.js";
 const fingerprint = z.string().regex(/^[a-f0-9]{64}$/u);
 const CANONICAL_SCENARIO_MARKER = "canonical-customer-id-rename";
 const CANONICAL_REVIEWED_TAG_URN = "urn:li:tag:lineageguard-canonical.Reviewed";
+const CANONICAL_REVIEWED_TAG_DESCRIPTION =
+  "LineageGuard review status: a validated migration decision was written back through the approved effect gate.";
 const identifier = z
   .string()
   .min(1)
@@ -873,11 +875,17 @@ export function parseOfficialWritebackEntities(
     schemaMetadata: entity.schemaMetadata,
     tagUrns: tagUrns.filter((item) => item !== tagUrn).sort(),
   };
+  const matchingTags = entities.filter((item) => item.urn === tagUrn && !("error" in item));
+  const tagProperties = matchingTags.length === 1 ? record(matchingTags[0]?.properties) : undefined;
+  const knownTagUrns =
+    tagProperties?.name === "Reviewed" &&
+    typeof tagProperties.description === "string" &&
+    tagProperties.description.startsWith(CANONICAL_REVIEWED_TAG_DESCRIPTION)
+      ? [tagUrn]
+      : [];
   return Object.freeze({
     documentProofs: Object.freeze(documentProofs.map((proof) => Object.freeze(proof))),
-    knownTagUrns: Object.freeze(
-      entities.some((item) => item.urn === tagUrn && !("error" in item)) ? [tagUrn] : [],
-    ),
+    knownTagUrns: Object.freeze(knownTagUrns),
     observedAt,
     relevantMetadataFingerprint: sha256(relevantMetadata),
     scenarioMarker,
@@ -957,12 +965,22 @@ function normalizedGmsUrl(value: string): string {
   if (url.username || url.password || url.search || url.hash) {
     throw new DataHubAdapterError("CONFIGURATION", "DataHub GMS target URL is unsafe.");
   }
+  const loopback = url.hostname === "127.0.0.1" || url.hostname === "localhost";
+  if (url.protocol !== "https:" && !(url.protocol === "http:" && loopback)) {
+    throw new DataHubAdapterError("CONFIGURATION", "DataHub GMS target URL is unsafe.");
+  }
   return url.href;
 }
 
 export function createOfficialLiveDataHubWritebackPort(
   configuration: OfficialLiveDataHubWritebackConfiguration,
 ): DataHubWritebackPort {
+  if (configuration.readCredentials.readToken === configuration.mutationCredentials.mutationToken) {
+    throw new DataHubAdapterError(
+      "CONFIGURATION",
+      "DataHub read and mutation credentials must be separate.",
+    );
+  }
   if (
     normalizedGmsUrl(configuration.readCredentials.dataHubGmsUrl) !==
     normalizedGmsUrl(configuration.mutationCredentials.dataHubGmsUrl)
