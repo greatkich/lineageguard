@@ -261,6 +261,12 @@ describe("LiveGitHubPort", () => {
     await expect(createPort(transport).createMigrationReview(cyclic)).rejects.toMatchObject({
       code: "INVALID_INPUT",
     });
+    const nestedCycle = request();
+    const evidence = nestedCycle.body.reasonEvidenceIds as string[] & { self?: unknown };
+    evidence.self = evidence;
+    await expect(createPort(transport).createMigrationReview(nestedCycle)).rejects.toMatchObject({
+      code: "INVALID_INPUT",
+    });
     expect(transport.calls).toHaveLength(0);
   });
 

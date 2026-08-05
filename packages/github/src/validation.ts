@@ -101,12 +101,9 @@ function hasRuntimeRequestShape(input: GitHubReviewRequest): boolean {
     return false;
   if (
     typeof input.body.summary !== "string" ||
-    !plainArray(input.body.reasonEvidenceIds) ||
-    !plainArray(input.body.rolloutSteps) ||
-    !plainArray(input.body.rollbackSteps) ||
-    input.body.reasonEvidenceIds.length > 200 ||
-    input.body.rolloutSteps.length > 20 ||
-    input.body.rollbackSteps.length > 20 ||
+    !plainArray(input.body.reasonEvidenceIds, 200) ||
+    !plainArray(input.body.rolloutSteps, 20) ||
+    !plainArray(input.body.rollbackSteps, 20) ||
     input.body.reasonEvidenceIds.some((value) => typeof value !== "string") ||
     input.body.rolloutSteps.some((value) => typeof value !== "string") ||
     input.body.rollbackSteps.some((value) => typeof value !== "string")
@@ -124,8 +121,7 @@ function hasRuntimeRequestShape(input: GitHubReviewRequest): boolean {
     typeof input.validation.candidateFingerprint !== "string" ||
     typeof input.validation.artifactSetFingerprint !== "string" ||
     typeof input.validation.receiptFingerprint !== "string" ||
-    !plainArray(input.validation.artifacts) ||
-    input.validation.artifacts.length > 20 ||
+    !plainArray(input.validation.artifacts, 20) ||
     input.validation.artifacts.some(
       (artifact) =>
         !plainExact(artifact, ["path", "candidateArtifactFingerprint", "materializedSha256"]) ||
@@ -136,8 +132,7 @@ function hasRuntimeRequestShape(input: GitHubReviewRequest): boolean {
   )
     return false;
   return (
-    plainArray(input.artifacts) &&
-    input.artifacts.length <= 20 &&
+    plainArray(input.artifacts, 20) &&
     input.artifacts.every((artifact) => {
       if (!artifact || typeof artifact !== "object" || Array.isArray(artifact)) return false;
       const operation = Object.getOwnPropertyDescriptor(artifact, "operation");
@@ -165,8 +160,21 @@ function hasRuntimeRequestShape(input: GitHubReviewRequest): boolean {
   );
 }
 
-function plainArray(value: unknown): value is unknown[] {
-  return Array.isArray(value) && Object.getPrototypeOf(value) === Array.prototype;
+function plainArray(value: unknown, maxLength: number): value is unknown[] {
+  if (
+    !Array.isArray(value) ||
+    Object.getPrototypeOf(value) !== Array.prototype ||
+    value.length > maxLength
+  )
+    return false;
+  const keys = Reflect.ownKeys(value);
+  if (keys.length !== value.length + 1 || keys[keys.length - 1] !== "length") return false;
+  for (let index = 0; index < value.length; index += 1) {
+    if (keys[index] !== String(index)) return false;
+    const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+    if (!descriptor || !("value" in descriptor)) return false;
+  }
+  return true;
 }
 
 function plainExact(
@@ -190,8 +198,10 @@ function plainExact(
 
 export function immutableRequestSnapshot(input: GitHubReviewRequest): GitHubReviewRequest {
   const snapshot = structuredClone(input);
+  const visited = new WeakSet<object>();
   const freeze = (value: unknown): void => {
-    if (!value || typeof value !== "object" || Object.isFrozen(value)) return;
+    if (!value || typeof value !== "object" || visited.has(value)) return;
+    visited.add(value);
     for (const child of Object.values(value)) freeze(child);
     Object.freeze(value);
   };
