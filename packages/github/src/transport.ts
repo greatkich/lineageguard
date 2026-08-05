@@ -5,9 +5,9 @@ const MAX_RESPONSE_BYTES = 1_000_000;
 
 function malformed(input: GitHubHttpRequest, message: string): GitHubEffectError {
   return new GitHubEffectError({
-    code: "REMOTE_FAILURE",
+    code: input.method === "POST" ? "TRANSPORT_AMBIGUOUS" : "REMOTE_FAILURE",
     operation: input.operation,
-    retry: "NEVER",
+    retry: input.method === "POST" ? "RECONCILE" : "NEVER",
     message,
   });
 }

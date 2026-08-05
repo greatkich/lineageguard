@@ -118,8 +118,12 @@ export interface GitHubEffectAuthorization {
 export interface GitHubEffectAuthorityPort {
   verifyCurrentEffectReservation(input: {
     canonicalEffectFingerprint: string;
+    signal: AbortSignal;
   }): Promise<GitHubEffectAuthorization>;
-  consumeCurrentEffect(input: { canonicalEffectFingerprint: string }): Promise<{
+  consumeCurrentEffect(input: {
+    canonicalEffectFingerprint: string;
+    signal: AbortSignal;
+  }): Promise<{
     canonicalEffectFingerprint: string;
     invokeBy: string;
     attemptFence: string;

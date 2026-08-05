@@ -75,9 +75,14 @@ export async function resolveAuthorization(input: GitHubReviewRequest, options: 
   const computed = githubEffectFingerprint(input, options.apiBaseUrl);
   let authorized: GitHubEffectAuthorization;
   try {
-    authorized = await options.authority.verifyCurrentEffectReservation({
-      canonicalEffectFingerprint: computed,
-    });
+    authorized = await withAuthorityDeadline(
+      (signal) =>
+        options.authority.verifyCurrentEffectReservation({
+          canonicalEffectFingerprint: computed,
+          signal,
+        }),
+      options.timeoutMs,
+    );
   } catch {
     throw new GitHubEffectError({
       code: "AUTHORIZATION_REJECTED",
@@ -87,6 +92,7 @@ export async function resolveAuthorization(input: GitHubReviewRequest, options: 
     });
   }
   if (
+    !isVerifiedAuthorization(authorized) ||
     authorized.reservationId !== input.effectReservationId ||
     authorized.canonicalEffectFingerprint !== computed ||
     (authorized.state !== "RESERVED" && authorized.state !== "CONSUMED") ||
@@ -101,6 +107,66 @@ export async function resolveAuthorization(input: GitHubReviewRequest, options: 
     });
   }
   return authorized;
+}
+
+function exactDataObject(
+  value: unknown,
+  keys: readonly string[],
+): value is Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) return false;
+  const ownKeys = Reflect.ownKeys(value);
+  return (
+    ownKeys.length === keys.length &&
+    ownKeys.every((key) => {
+      if (typeof key !== "string" || !keys.includes(key)) return false;
+      const descriptor = Object.getOwnPropertyDescriptor(value, key);
+      return descriptor !== undefined && "value" in descriptor;
+    })
+  );
+}
+
+function isVerifiedAuthorization(value: unknown): value is GitHubEffectAuthorization {
+  return (
+    exactDataObject(value, ["reservationId", "canonicalEffectFingerprint", "state", "invokeBy"]) &&
+    typeof value.reservationId === "string" &&
+    typeof value.canonicalEffectFingerprint === "string" &&
+    (value.state === "RESERVED" || value.state === "CONSUMED") &&
+    typeof value.invokeBy === "string"
+  );
+}
+
+export function isConsumedAuthorization(value: unknown): value is {
+  canonicalEffectFingerprint: string;
+  invokeBy: string;
+  attemptFence: string;
+} {
+  return (
+    exactDataObject(value, ["canonicalEffectFingerprint", "invokeBy", "attemptFence"]) &&
+    typeof value.canonicalEffectFingerprint === "string" &&
+    typeof value.invokeBy === "string" &&
+    typeof value.attemptFence === "string"
+  );
+}
+
+export async function withAuthorityDeadline<T>(
+  operation: (signal: AbortSignal) => Promise<T>,
+  timeoutMs: number,
+): Promise<T> {
+  const controller = new AbortController();
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_resolve, reject) => {
+    timeout = setTimeout(() => {
+      controller.abort();
+      reject(new Error("authority deadline exceeded"));
+    }, timeoutMs);
+  });
+  try {
+    return await Promise.race([operation(controller.signal), deadline]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
 }
 
 export function validInvokeBy(value: string): boolean {

@@ -38,6 +38,12 @@ The raw token never enters the public GitHub request DTO. The injected trusted-a
 closes over the opaque verified capability and presents the raw token to the durable store internally;
 the GitHub port supplies only the non-secret reservation ID and canonical fingerprint.
 
+The adapter strictly bounds and snapshots the request before its first await, uses only that immutable
+snapshot, and recomputes the canonical fingerprint immediately before consume. Authority verify and
+consume calls receive abort signals and hard deadlines; malformed verification fails before network,
+while a missing or malformed consume acknowledgement is treated as ambiguous because atomic consume
+may already have succeeded.
+
 The canonical GitHub payload binds the exact `https://api.github.com` host, owner/repository, base
 branch and SHA, deterministic head branch, every artifact path and `CREATE | MODIFY` operation,
 expected base blob SHA for modifications, materialized SHA-256, exact pull-request title/body, and all

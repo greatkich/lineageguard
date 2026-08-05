@@ -56,7 +56,29 @@ export function validateOptions(options: LiveGitHubOptions): void {
 }
 
 function hasRuntimeRequestShape(input: GitHubReviewRequest): boolean {
-  if (!input || typeof input !== "object" || Array.isArray(input)) return false;
+  if (
+    !plainExact(input, [
+      "effectReservationId",
+      "runId",
+      "effectKind",
+      "target",
+      "idempotencyKey",
+      "intentFingerprint",
+      "inputFingerprint",
+      "repository",
+      "baseBranch",
+      "baseSha",
+      "candidateFingerprint",
+      "artifactSetFingerprint",
+      "validationReceiptFingerprint",
+      "approvalFingerprint",
+      "validation",
+      "artifacts",
+      "title",
+      "body",
+    ])
+  )
+    return false;
   const strings = [
     input.effectReservationId,
     input.runId,
@@ -75,31 +97,38 @@ function hasRuntimeRequestShape(input: GitHubReviewRequest): boolean {
     input.title,
   ];
   if (strings.some((value) => typeof value !== "string")) return false;
-  if (!input.body || typeof input.body !== "object" || Array.isArray(input.body)) return false;
+  if (!plainExact(input.body, ["summary", "reasonEvidenceIds", "rolloutSteps", "rollbackSteps"]))
+    return false;
   if (
     typeof input.body.summary !== "string" ||
-    !Array.isArray(input.body.reasonEvidenceIds) ||
-    !Array.isArray(input.body.rolloutSteps) ||
-    !Array.isArray(input.body.rollbackSteps) ||
-    [...input.body.reasonEvidenceIds, ...input.body.rolloutSteps, ...input.body.rollbackSteps].some(
-      (value) => typeof value !== "string",
-    )
+    !plainArray(input.body.reasonEvidenceIds) ||
+    !plainArray(input.body.rolloutSteps) ||
+    !plainArray(input.body.rollbackSteps) ||
+    input.body.reasonEvidenceIds.length > 200 ||
+    input.body.rolloutSteps.length > 20 ||
+    input.body.rollbackSteps.length > 20 ||
+    input.body.reasonEvidenceIds.some((value) => typeof value !== "string") ||
+    input.body.rolloutSteps.some((value) => typeof value !== "string") ||
+    input.body.rollbackSteps.some((value) => typeof value !== "string")
   )
     return false;
   if (
-    !input.validation ||
-    typeof input.validation !== "object" ||
-    Array.isArray(input.validation) ||
+    !plainExact(input.validation, [
+      "runId",
+      "candidateFingerprint",
+      "artifactSetFingerprint",
+      "receiptFingerprint",
+      "artifacts",
+    ]) ||
     typeof input.validation.runId !== "string" ||
     typeof input.validation.candidateFingerprint !== "string" ||
     typeof input.validation.artifactSetFingerprint !== "string" ||
     typeof input.validation.receiptFingerprint !== "string" ||
-    !Array.isArray(input.validation.artifacts) ||
+    !plainArray(input.validation.artifacts) ||
+    input.validation.artifacts.length > 20 ||
     input.validation.artifacts.some(
       (artifact) =>
-        !artifact ||
-        typeof artifact !== "object" ||
-        Array.isArray(artifact) ||
+        !plainExact(artifact, ["path", "candidateArtifactFingerprint", "materializedSha256"]) ||
         typeof artifact.path !== "string" ||
         typeof artifact.candidateArtifactFingerprint !== "string" ||
         typeof artifact.materializedSha256 !== "string",
@@ -107,19 +136,67 @@ function hasRuntimeRequestShape(input: GitHubReviewRequest): boolean {
   )
     return false;
   return (
-    Array.isArray(input.artifacts) &&
-    input.artifacts.every(
-      (artifact) =>
-        artifact &&
-        typeof artifact === "object" &&
-        !Array.isArray(artifact) &&
+    plainArray(input.artifacts) &&
+    input.artifacts.length <= 20 &&
+    input.artifacts.every((artifact) => {
+      if (!artifact || typeof artifact !== "object" || Array.isArray(artifact)) return false;
+      const operation = Object.getOwnPropertyDescriptor(artifact, "operation");
+      const value = operation && "value" in operation ? operation.value : undefined;
+      return (
+        plainExact(
+          artifact,
+          value === "MODIFY"
+            ? [
+                "path",
+                "content",
+                "candidateArtifactFingerprint",
+                "operation",
+                "expectedBaseBlobSha",
+              ]
+            : ["path", "content", "candidateArtifactFingerprint", "operation"],
+        ) &&
         typeof artifact.path === "string" &&
         typeof artifact.content === "string" &&
         typeof artifact.candidateArtifactFingerprint === "string" &&
         (artifact.operation === "CREATE" ||
-          (artifact.operation === "MODIFY" && typeof artifact.expectedBaseBlobSha === "string")),
-    )
+          (artifact.operation === "MODIFY" && typeof artifact.expectedBaseBlobSha === "string"))
+      );
+    })
   );
+}
+
+function plainArray(value: unknown): value is unknown[] {
+  return Array.isArray(value) && Object.getPrototypeOf(value) === Array.prototype;
+}
+
+function plainExact(
+  value: unknown,
+  expectedKeys: readonly string[],
+): value is Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) return false;
+  const keys = Reflect.ownKeys(value);
+  if (
+    keys.length !== expectedKeys.length ||
+    keys.some((key) => typeof key !== "string" || !expectedKeys.includes(key))
+  )
+    return false;
+  return keys.every((key) => {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    return descriptor !== undefined && "value" in descriptor;
+  });
+}
+
+export function immutableRequestSnapshot(input: GitHubReviewRequest): GitHubReviewRequest {
+  const snapshot = structuredClone(input);
+  const freeze = (value: unknown): void => {
+    if (!value || typeof value !== "object" || Object.isFrozen(value)) return;
+    for (const child of Object.values(value)) freeze(child);
+    Object.freeze(value);
+  };
+  freeze(snapshot);
+  return snapshot;
 }
 
 function safePath(path: string): boolean {
@@ -140,6 +217,15 @@ function safePath(path: string): boolean {
 }
 
 export function validateRequest(input: GitHubReviewRequest, options: LiveGitHubOptions): void {
+  try {
+    validateRequestRuntime(input, options);
+  } catch (error) {
+    if (error instanceof GitHubEffectError) throw error;
+    reject("GitHub effect request is malformed");
+  }
+}
+
+function validateRequestRuntime(input: GitHubReviewRequest, options: LiveGitHubOptions): void {
   if (!hasRuntimeRequestShape(input)) reject("GitHub effect request is malformed");
   const expectedRepository = `${options.owner}/${options.repository}`;
   const expectedTarget = `${options.apiBaseUrl}/repos/${expectedRepository}/git/ref/heads/${encodeURIComponent(options.baseBranch)}#${input.baseSha}`;

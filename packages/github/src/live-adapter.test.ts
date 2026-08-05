@@ -76,7 +76,10 @@ class TrustedAuthority implements GitHubEffectAuthorityPort {
     private readonly fingerprint = request().inputFingerprint,
     private readonly state: "RESERVED" | "CONSUMED" = "RESERVED",
   ) {}
-  async verifyCurrentEffectReservation(_input: { canonicalEffectFingerprint: string }) {
+  async verifyCurrentEffectReservation(_input: {
+    canonicalEffectFingerprint: string;
+    signal: AbortSignal;
+  }) {
     this.calls.push("verify");
     return {
       reservationId: request().effectReservationId,
@@ -85,7 +88,7 @@ class TrustedAuthority implements GitHubEffectAuthorityPort {
       invokeBy: new Date(Date.now() + 60_000).toISOString(),
     };
   }
-  async consumeCurrentEffect(input: { canonicalEffectFingerprint: string }) {
+  async consumeCurrentEffect(input: { canonicalEffectFingerprint: string; signal: AbortSignal }) {
     this.calls.push("consume");
     return {
       canonicalEffectFingerprint: input.canonicalEffectFingerprint,
@@ -243,6 +246,24 @@ describe("LiveGitHubPort", () => {
     expect(transport.calls).toHaveLength(0);
   });
 
+  it("rejects oversized and cyclic runtime requests before authority or network", async () => {
+    const transport = new ScriptedTransport([]);
+    const oversized = request();
+    oversized.body.reasonEvidenceIds = Array.from(
+      { length: 201 },
+      () => "ev_0123456789abcdef01234567",
+    );
+    await expect(createPort(transport).createMigrationReview(oversized)).rejects.toMatchObject({
+      code: "INVALID_INPUT",
+    });
+    const cyclic = request() as GitHubReviewRequest & { self?: unknown };
+    cyclic.self = cyclic;
+    await expect(createPort(transport).createMigrationReview(cyclic)).rejects.toMatchObject({
+      code: "INVALID_INPUT",
+    });
+    expect(transport.calls).toHaveLength(0);
+  });
+
   it("rejects a handcrafted self-consistent PASS-shaped request before network", async () => {
     const transport = new ScriptedTransport([]);
     const input = request();
@@ -331,6 +352,69 @@ describe("LiveGitHubPort", () => {
       retry: "RETRY",
     });
     expect(Date.now() - startedAt).toBeLessThan(1_000);
+  });
+
+  it("aborts a stalled authority verification before network", async () => {
+    let aborted = false;
+    const authority: GitHubEffectAuthorityPort = {
+      verifyCurrentEffectReservation: async ({ signal }) =>
+        new Promise((_resolve, reject) => {
+          signal.addEventListener("abort", () => {
+            aborted = true;
+            reject(new Error("secret authority detail"));
+          });
+        }),
+      consumeCurrentEffect: async () => {
+        throw new Error("unexpected consume");
+      },
+    };
+    const transport = new ScriptedTransport([]);
+    const port = new LiveGitHubPort({
+      owner: "lineageguard",
+      repository: "demo",
+      baseBranch: "main",
+      apiBaseUrl: "https://api.github.com",
+      token: "test-sensitive-value",
+      timeoutMs: 100,
+      maxAttempts: 1,
+      authority,
+      transport,
+    });
+    await expect(port.createMigrationReview(request())).rejects.toMatchObject({
+      code: "AUTHORIZATION_REJECTED",
+      retry: "NEVER",
+    });
+    expect(aborted).toBe(true);
+    expect(transport.calls).toHaveLength(0);
+  });
+
+  it("uses an immutable request snapshot across authority and remote awaits", async () => {
+    const initial = request();
+    const authority: GitHubEffectAuthorityPort = {
+      verifyCurrentEffectReservation: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        return {
+          reservationId: initial.effectReservationId,
+          canonicalEffectFingerprint: initial.inputFingerprint,
+          state: "RESERVED",
+          invokeBy: new Date(Date.now() + 60_000).toISOString(),
+        };
+      },
+      consumeCurrentEffect: async ({ canonicalEffectFingerprint }) => ({
+        canonicalEffectFingerprint,
+        invokeBy: new Date(Date.now() + 60_000).toISOString(),
+        attemptFence: "fence_0123456789abcdef0123456789abcdef",
+      }),
+    };
+    const transport = new ScriptedTransport(successScript());
+    const pending = createPort(transport, authority).createMigrationReview(initial);
+    initial.title = "Attacker-mutated title";
+    const artifact = initial.artifacts[0];
+    if (artifact) artifact.content = "tampered after invocation\n";
+    await expect(pending).resolves.toMatchObject({ prNumber: 17 });
+    expect(
+      transport.calls.find((call) => call.method === "POST" && call.url.endsWith("/pulls"))?.body,
+    ).toMatchObject({ title: "Safe customer identifier migration" });
   });
 
   it("reconciles an existing exact branch and PR before creating anything", async () => {
@@ -502,6 +586,48 @@ describe("LiveGitHubPort", () => {
     expect(
       transport.calls.filter((call) => call.method === "POST" && call.url.endsWith("/git/blobs")),
     ).toHaveLength(1);
+  });
+
+  it("treats a malformed successful POST body as ambiguous and never resends", async () => {
+    const script = successScript();
+    script[5] = response(201, "malformed blob receipt");
+    const transport = new ScriptedTransport([
+      ...script.slice(0, 6),
+      response(404, fixture.notFound),
+      response(404, fixture.notFound),
+    ]);
+    await expect(createPort(transport).createMigrationReview(request())).rejects.toMatchObject({
+      code: "TRANSPORT_AMBIGUOUS",
+      retry: "RECONCILE",
+    });
+    expect(
+      transport.calls.filter((call) => call.method === "POST" && call.url.endsWith("/git/blobs")),
+    ).toHaveLength(1);
+  });
+
+  it("treats a malformed post-consume acknowledgement as ambiguous without writing", async () => {
+    const valid = request();
+    const authority: GitHubEffectAuthorityPort = {
+      verifyCurrentEffectReservation: async () => ({
+        reservationId: valid.effectReservationId,
+        canonicalEffectFingerprint: valid.inputFingerprint,
+        state: "RESERVED",
+        invokeBy: new Date(Date.now() + 60_000).toISOString(),
+      }),
+      consumeCurrentEffect: async () => null as never,
+    };
+    const transport = new ScriptedTransport([
+      ...successScript().slice(0, 5),
+      response(404, fixture.notFound),
+      response(404, fixture.notFound),
+    ]);
+    await expect(
+      createPort(transport, authority).createMigrationReview(valid),
+    ).rejects.toMatchObject({
+      code: "TRANSPORT_AMBIGUOUS",
+      retry: "RECONCILE",
+    });
+    expect(transport.calls.every((call) => call.method === "GET")).toBe(true);
   });
 
   it("reconciles first and never writes when the reservation was already consumed", async () => {

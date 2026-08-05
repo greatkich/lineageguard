@@ -56,6 +56,24 @@ describe("FetchGitHubTransport response bounds", () => {
     });
   });
 
+  it("classifies an unreadable POST response as ambiguous", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("{", { status: 201 })),
+    );
+    await expect(
+      new FetchGitHubTransport().request({
+        ...request,
+        method: "POST",
+        operation: "CREATE_BLOB",
+      }),
+    ).rejects.toMatchObject({
+      code: "TRANSPORT_AMBIGUOUS",
+      operation: "CREATE_BLOB",
+      retry: "RECONCILE",
+    });
+  });
+
   it("classifies a POST transport failure against the exact operation without leaking details", async () => {
     vi.stubGlobal(
       "fetch",

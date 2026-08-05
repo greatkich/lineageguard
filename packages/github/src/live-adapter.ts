@@ -1,4 +1,11 @@
-import { renderPullRequestBody, resolveAuthorization, validInvokeBy } from "./authorization.js";
+import {
+  githubEffectFingerprint,
+  isConsumedAuthorization,
+  renderPullRequestBody,
+  resolveAuthorization,
+  validInvokeBy,
+  withAuthorityDeadline,
+} from "./authorization.js";
 import { GitHubEffectError } from "./errors.js";
 import { sha256Buffer } from "./hash.js";
 import { FetchGitHubTransport } from "./transport.js";
@@ -11,7 +18,12 @@ import type {
   GitHubReviewRequest,
   LiveGitHubOptions,
 } from "./types.js";
-import { deterministicHead, validateOptions, validateRequest } from "./validation.js";
+import {
+  deterministicHead,
+  immutableRequestSnapshot,
+  validateOptions,
+  validateRequest,
+} from "./validation.js";
 
 type Json = Record<string, unknown>;
 
@@ -61,20 +73,21 @@ export class LiveGitHubPort implements GitHubPort<GitHubReviewRequest> {
 
   async createMigrationReview(input: GitHubReviewRequest): Promise<GitHubReviewReceipt> {
     validateRequest(input, this.#options);
-    const authorization = await resolveAuthorization(input, this.#options);
-    await this.verifyRepositoryAndBase(input);
-    const reconciled = await this.reconcile(input);
+    const boundedInput = immutableRequestSnapshot(input);
+    const authorization = await resolveAuthorization(boundedInput, this.#options);
+    await this.verifyRepositoryAndBase(boundedInput);
+    const reconciled = await this.reconcile(boundedInput);
     if (reconciled) return reconciled;
     if (authorization.state === "CONSUMED") {
       throw this.ambiguous("The authorized effect was already consumed and is not yet observable");
     }
     try {
-      return await this.create(input, authorization.canonicalEffectFingerprint);
+      return await this.create(boundedInput, authorization.canonicalEffectFingerprint);
     } catch (error) {
       const failure = this.normalizeTransportError(error, "RECONCILE", "RECONCILE");
       if (failure.retry === "NEVER") throw failure;
       for (let attempt = 1; attempt <= this.#options.maxAttempts; attempt += 1) {
-        const found = await this.reconcile(input, true);
+        const found = await this.reconcile(boundedInput, true);
         if (found) return found;
         if (attempt < this.#options.maxAttempts)
           await new Promise((resolve) => setTimeout(resolve, 1));
@@ -647,34 +660,39 @@ export class LiveGitHubPort implements GitHubPort<GitHubReviewRequest> {
           message: "Validated artifact operation or base blob does not match the exact base tree",
         });
     }
+    if (githubEffectFingerprint(input, this.#options.apiBaseUrl) !== canonicalEffectFingerprint)
+      throw new GitHubEffectError({
+        code: "AUTHORIZATION_REJECTED",
+        operation: "RECONCILE",
+        retry: "NEVER",
+        message: "Canonical GitHub effect changed after trusted verification",
+      });
     let consumed: {
       canonicalEffectFingerprint: string;
       invokeBy: string;
       attemptFence: string;
     };
     try {
-      consumed = await this.#options.authority.consumeCurrentEffect({
-        canonicalEffectFingerprint,
-      });
+      consumed = await withAuthorityDeadline(
+        (signal) =>
+          this.#options.authority.consumeCurrentEffect({ canonicalEffectFingerprint, signal }),
+        this.#options.timeoutMs,
+      );
     } catch {
       throw new GitHubEffectError({
-        code: "AUTHORIZATION_REJECTED",
+        code: "TRANSPORT_AMBIGUOUS",
         operation: "RECONCILE",
-        retry: "NEVER",
-        message: "Trusted effect reservation could not be consumed",
+        retry: "RECONCILE",
+        message: "Trusted effect reservation consumption outcome is unknown",
       });
     }
     if (
+      !isConsumedAuthorization(consumed) ||
       consumed.canonicalEffectFingerprint !== canonicalEffectFingerprint ||
       !validInvokeBy(consumed.invokeBy) ||
       !/^[A-Za-z0-9_-]{32,200}$/.test(consumed.attemptFence)
     )
-      throw new GitHubEffectError({
-        code: "AUTHORIZATION_REJECTED",
-        operation: "RECONCILE",
-        retry: "NEVER",
-        message: "Trusted effect authority consumed a different canonical effect",
-      });
+      throw this.ambiguous("Trusted effect consumption acknowledgement is malformed");
     const treeEntries: Array<Record<string, string>> = [];
     for (const artifact of input.artifacts) {
       const blob = object(
