@@ -16,8 +16,8 @@ import { createReadOnlyToolClient } from "./tool-client.js";
 const fingerprint = z.string().regex(/^[a-f0-9]{64}$/u);
 const CANONICAL_SCENARIO_MARKER = "canonical-customer-id-rename";
 const CANONICAL_REVIEWED_TAG_URN = "urn:li:tag:lineageguard-canonical.Reviewed";
-const CANONICAL_REVIEWED_TAG_DESCRIPTION =
-  "LineageGuard review status: a validated migration decision was written back through the approved effect gate.";
+const CANONICAL_REVIEWED_TAG_DESCRIPTION_PATTERN =
+  /^LineageGuard review status: a validated migration decision was written back through the approved effect gate\. \[lineageguard\.scenario=canonical-customer-id-rename;lineageguard\.ownershipNonce=[a-f0-9]{64}\]$/u;
 const identifier = z
   .string()
   .min(1)
@@ -39,6 +39,7 @@ const requestObjectSchema = z
     documentPayloadHash: fingerprint,
     expectedMetadataFingerprint: fingerprint,
     expectedMetadataVersion: z.string().min(1).max(256),
+    expectedReviewTagDefinitionFingerprint: fingerprint,
     githubPrUrl: httpsUrl,
     githubReceiptFingerprint: fingerprint,
     idempotencyKey: identifier,
@@ -94,6 +95,7 @@ export type ExactDataHubEntitySnapshot = Readonly<{
   knownTagUrns: readonly string[];
   observedAt: string;
   relevantMetadataFingerprint: string;
+  reviewTagDefinitionFingerprint?: string;
   scenarioMarker: string;
   tagUrns: readonly string[];
   urn: string;
@@ -114,6 +116,7 @@ export type DataHubEffectAuthorityBinding = Readonly<{
   effectKind: "DATAHUB_WRITEBACK";
   expectedMetadataFingerprint: string;
   expectedMetadataVersion: string;
+  expectedReviewTagDefinitionFingerprint: string;
   githubPrUrl: string;
   githubReceiptFingerprint: string;
   idempotencyKey: string;
@@ -176,6 +179,7 @@ export type DataHubWritebackReceipt = Readonly<{
   documentPayloadHash: string;
   expectedMetadataFingerprint: string;
   expectedMetadataVersion: string;
+  expectedReviewTagDefinitionFingerprint: string;
   githubPrUrl: string;
   githubReceiptFingerprint: string;
   idempotencyKey: string;
@@ -370,9 +374,13 @@ function validateSnapshot(
 
 function requireKnownReviewTag(
   snapshot: ExactDataHubEntitySnapshot,
+  request: DataHubWritebackRequest,
   payloads: DataHubWritebackPayloads,
 ): void {
-  if (!snapshot.knownTagUrns.includes(payloads.reviewStatusTagUrn)) {
+  if (
+    !snapshot.knownTagUrns.includes(payloads.reviewStatusTagUrn) ||
+    snapshot.reviewTagDefinitionFingerprint !== request.expectedReviewTagDefinitionFingerprint
+  ) {
     throw new DataHubAdapterError(
       "CONFLICT",
       "The allowlisted DataHub review-status tag is not provisioned.",
@@ -439,6 +447,7 @@ function receipt(
     documentPayloadHash: request.documentPayloadHash,
     expectedMetadataFingerprint: request.expectedMetadataFingerprint,
     expectedMetadataVersion: request.expectedMetadataVersion,
+    expectedReviewTagDefinitionFingerprint: request.expectedReviewTagDefinitionFingerprint,
     githubPrUrl: request.githubPrUrl,
     githubReceiptFingerprint: request.githubReceiptFingerprint,
     ...(authority === undefined ? {} : { invokeBy: authority.invokeBy }),
@@ -569,8 +578,14 @@ class LiveDataHubWritebackPort implements DataHubWritebackPort {
         payloads.reviewStatusTagUrn,
       );
       validateSnapshot(before, request, "before");
-      requireKnownReviewTag(before, payloads);
+      requireKnownReviewTag(before, request, payloads);
       const existing = proofState(before, payloads);
+      if (existing.tag && !existing.document) {
+        throw new DataHubAdapterError(
+          "CONFLICT",
+          "DataHub contains an impossible tag-only write-back state.",
+        );
+      }
       if (existing.document && existing.tag) {
         if (verified.state !== "CONSUMED") {
           throw new DataHubAdapterError(
@@ -880,14 +895,23 @@ export function parseOfficialWritebackEntities(
   const knownTagUrns =
     tagProperties?.name === "Reviewed" &&
     typeof tagProperties.description === "string" &&
-    tagProperties.description.startsWith(CANONICAL_REVIEWED_TAG_DESCRIPTION)
+    CANONICAL_REVIEWED_TAG_DESCRIPTION_PATTERN.test(tagProperties.description)
       ? [tagUrn]
       : [];
+  const reviewTagDefinitionFingerprint =
+    knownTagUrns.length === 1
+      ? sha256({
+          description: tagProperties?.description,
+          name: tagProperties?.name,
+          urn: tagUrn,
+        })
+      : undefined;
   return Object.freeze({
     documentProofs: Object.freeze(documentProofs.map((proof) => Object.freeze(proof))),
     knownTagUrns: Object.freeze(knownTagUrns),
     observedAt,
     relevantMetadataFingerprint: sha256(relevantMetadata),
+    ...(reviewTagDefinitionFingerprint === undefined ? {} : { reviewTagDefinitionFingerprint }),
     scenarioMarker,
     tagUrns: Object.freeze([...new Set(tagUrns)].sort()),
     urn: expectedUrn,

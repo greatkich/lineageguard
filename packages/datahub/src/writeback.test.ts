@@ -17,6 +17,7 @@ import {
 
 const hash = (value: string) => sha256(value);
 const NOW = "2026-08-05T10:00:00.000Z";
+const REVIEW_TAG_DEFINITION_FINGERPRINT = hash("review-tag-definition");
 
 function request(): DataHubWritebackRequest {
   const base = {
@@ -26,6 +27,7 @@ function request(): DataHubWritebackRequest {
     decision: "BLOCK" as const,
     expectedMetadataFingerprint: hash("metadata"),
     expectedMetadataVersion: "version-7",
+    expectedReviewTagDefinitionFingerprint: REVIEW_TAG_DEFINITION_FINGERPRINT,
     githubPrUrl: "https://github.com/example/lineageguard/pull/42",
     githubReceiptFingerprint: hash("github"),
     idempotencyKey: "effect.datahub.run-42",
@@ -53,6 +55,7 @@ function snapshot(input: Partial<ExactDataHubEntitySnapshot> = {}): ExactDataHub
     knownTagUrns: ["urn:li:tag:lineageguard-canonical.Reviewed"],
     observedAt: NOW,
     relevantMetadataFingerprint: hash("metadata"),
+    reviewTagDefinitionFingerprint: REVIEW_TAG_DEFINITION_FINGERPRINT,
     scenarioMarker: "canonical-customer-id-rename",
     tagUrns: ["urn:li:tag:existing"],
     urn: canonicalDatasetUrn,
@@ -344,6 +347,29 @@ describe("controlled DataHub write-back", () => {
     const { calls, port } = await portFor({
       authority: trusted,
       read: () => snapshot({ knownTagUrns: [] }),
+    });
+    await expect(port.write(request())).rejects.toMatchObject({ code: "CONFLICT" });
+    expect(trusted.consumeCurrentEffect).not.toHaveBeenCalled();
+    expect(calls).toEqual([]);
+  });
+
+  it("rejects a tag-only remote state before authority consumption", async () => {
+    const trusted = authority();
+    const payloads = deriveDataHubWritebackPayloads(request());
+    const { calls, port } = await portFor({
+      authority: trusted,
+      read: () => snapshot({ tagUrns: ["urn:li:tag:existing", payloads.reviewStatusTagUrn] }),
+    });
+    await expect(port.write(request())).rejects.toMatchObject({ code: "CONFLICT" });
+    expect(trusted.consumeCurrentEffect).not.toHaveBeenCalled();
+    expect(calls).toEqual([]);
+  });
+
+  it("rejects a changed Reviewed tag definition before authority consumption", async () => {
+    const trusted = authority();
+    const { calls, port } = await portFor({
+      authority: trusted,
+      read: () => snapshot({ reviewTagDefinitionFingerprint: hash("changed-tag-definition") }),
     });
     await expect(port.write(request())).rejects.toMatchObject({ code: "CONFLICT" });
     expect(trusted.consumeCurrentEffect).not.toHaveBeenCalled();

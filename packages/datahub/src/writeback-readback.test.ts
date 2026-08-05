@@ -1,14 +1,16 @@
-import { canonicalDatasetUrn } from "@lineageguard/domain";
+import { canonicalDatasetUrn, sha256 } from "@lineageguard/domain";
 import { describe, expect, it } from "vitest";
 import { parseOfficialWritebackEntities } from "./writeback.js";
 
 const documentId = "lineageguard-migration-decision_test";
 const reviewTag = "urn:li:tag:lineageguard-canonical.Reviewed";
 const now = "2026-08-05T10:00:00.000Z";
+const ownershipNonce = "d".repeat(64);
 const reviewTagEntity = {
   properties: {
     description:
-      "LineageGuard review status: a validated migration decision was written back through the approved effect gate. lineageguard:scenario:canonical-customer-id-rename",
+      "LineageGuard review status: a validated migration decision was written back through the approved effect gate. " +
+      `[lineageguard.scenario=canonical-customer-id-rename;lineageguard.ownershipNonce=${ownershipNonce}]`,
     name: "Reviewed",
   },
   urn: reviewTag,
@@ -37,6 +39,11 @@ describe("official write-back readback normalization", () => {
   it("reads the exact seeded scenario marker and provisioned tag entity", () => {
     expect(parse([dataset(), reviewTagEntity])).toMatchObject({
       knownTagUrns: [reviewTag],
+      reviewTagDefinitionFingerprint: sha256({
+        description: reviewTagEntity.properties.description,
+        name: "Reviewed",
+        urn: reviewTag,
+      }),
       scenarioMarker: "canonical-customer-id-rename",
       tagUrns: [],
       version: "7",
