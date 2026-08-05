@@ -19,6 +19,7 @@ from support import (
     WAREHOUSE_TARGET,
     RegistryCursor,
     append_build_provenance,
+    attest_test_target,
     full_target_metrics,
     provenance_values,
 )
@@ -195,7 +196,7 @@ def test_reset_verify_reseed_soft_delete_lifecycle(
     store = ReceiptStore(tmp_path / "operations.jsonl")
     _append_live_prerequisites(store, expected_graph, repository_root)
     emit_live_query_evidence(
-        catalog,
+        lambda: catalog,
         catalog,
         store,
         expected_graph,
@@ -204,10 +205,11 @@ def test_reset_verify_reseed_soft_delete_lifecycle(
         warehouse_target_fingerprint=WAREHOUSE_TARGET,
         target_attestation=ATTESTATION,
         target_fingerprint=TARGET,
+        attest_target=attest_test_target,
     )
     _append_dbt_ingest(store, expected_graph, repository_root)
     seed_metadata(
-        catalog,
+        lambda: catalog,
         catalog,
         store,
         expected_graph,
@@ -216,6 +218,7 @@ def test_reset_verify_reseed_soft_delete_lifecycle(
         warehouse_target_fingerprint=WAREHOUSE_TARGET,
         target_attestation=ATTESTATION,
         target_fingerprint=TARGET,
+        attest_target=attest_test_target,
     )
     initial = _verify(catalog, store, expected_graph, repository_root)
     assert initial[0], initial[1]
@@ -232,17 +235,18 @@ def test_reset_verify_reseed_soft_delete_lifecycle(
         target_fingerprint=TARGET,
     )
     execute_reset(
-        catalog,
+        lambda: catalog,
         catalog,
         store,
         plan,
         RegistryCursor(store.ownership_nonce),
+        attest_target=attest_test_target,
     )
     assert not set(plan.urns) & set(expected_graph.connector_dataset_urns)
     assert _verify(catalog, store, expected_graph, repository_root)[0] is False
 
     emit_live_query_evidence(
-        catalog,
+        lambda: catalog,
         catalog,
         store,
         expected_graph,
@@ -251,9 +255,10 @@ def test_reset_verify_reseed_soft_delete_lifecycle(
         warehouse_target_fingerprint=WAREHOUSE_TARGET,
         target_attestation=ATTESTATION,
         target_fingerprint=TARGET,
+        attest_target=attest_test_target,
     )
     seed_metadata(
-        catalog,
+        lambda: catalog,
         catalog,
         store,
         expected_graph,
@@ -262,6 +267,7 @@ def test_reset_verify_reseed_soft_delete_lifecycle(
         warehouse_target_fingerprint=WAREHOUSE_TARGET,
         target_attestation=ATTESTATION,
         target_fingerprint=TARGET,
+        attest_target=attest_test_target,
     )
     assert all(
         (status := catalog.get_aspect(urn, StatusClass)) is None or status.removed is False

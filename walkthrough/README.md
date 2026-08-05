@@ -50,9 +50,14 @@ Metadata mutation and connector-ingestion target only the exact canonical GMS UR
 remote DataHub targets are refused. A one-time bootstrap creates a random 256-bit live-instance ID
 in a dedicated `dataPlatformInstanceProperties` marker and binds it to ignored, owner-only `0600`
 local state. Every ingestion, mutation, reset, reconciliation, and verification reads that marker
-with `DATAHUB_READ_TOKEN` before a write or ingestion token is loaded into a transport. Missing,
-empty, substituted, or extended markers fail closed. The resulting target fingerprint is
-`sha256(canonicalGmsUrl|liveInstanceId)`; neither a URL nor a checked-in constant is an attestation.
+and DataHub's independently managed `urn:li:telemetry:clientId` with `DATAHUB_READ_TOKEN`. The
+operation repeats that read attestation inside its receipt lock before a write or ingestion token
+is loaded. Privileged credentials construct only a write emitter or narrow soft-delete adapter;
+all existence checks, aspect reads, and post-write reads continue through the read credential.
+Missing, empty, substituted, or extended markers and changed telemetry identities fail closed. The
+resulting target fingerprint is
+`sha256(canonicalGmsUrl|sha256(datahub-telemetry-client-id/v1\0clientId)|liveInstanceId)`; neither a
+URL nor a checked-in constant is an attestation.
 
 `DATAHUB_BOOTSTRAP_TOKEN` must be a short-lived, least-privilege credential limited to creating the
 dedicated target marker. It is distinct from the read, mutation, and ingestion credentials and
@@ -60,7 +65,9 @@ should be revoked or removed from the environment immediately after bootstrap. T
 refuses a target containing any canonical graph URN and never overwrites an existing conflicting
 marker. Remote PostgreSQL requires `sslmode=verify-full` and its own opt-in. DataHub read,
 bootstrap, mutation, and ingestion tokens are separate variables and must contain distinct
-non-empty values. PostgreSQL bootstrap
+non-empty values. Mutation and ingestion policies must not grant write access to either the target
+marker or `urn:li:telemetry:clientId`; the bootstrap policy may create only the marker and may not
+update it. PostgreSQL bootstrap
 admin, fixed `lineageguard_seed`, fixed `lineageguard_query`, fixed `lineageguard_ingest`, and fixed
 `lineageguard_dbt` credentials are separate; the query and ingestion LOGIN roles inherit separate
 NOLOGIN groups. The query role can select only `analytics.customer_revenue`; the ingestion role can
@@ -97,10 +104,23 @@ unset DATAHUB_BOOTSTRAP_TOKEN
 ```
 
 The command first uses the read credential to prove that the marker and every canonical URN are
-absent. Only then does it construct the bootstrap writer, create the immutable marker, and read it
-back through the separate read credential. Safe recovery from an interrupted first attempt reuses
-the protected local ID; an existing marker is accepted only when it is byte-for-byte equivalent to
-that binding and the canonical graph is still absent.
+absent and to capture DataHub's telemetry client identity. It repeats that full preflight before it
+constructs the bootstrap writer. The marker proposal uses official DataHub `CREATE` semantics
+(`insert if not exists; otherwise fail`), so a concurrent bootstrap cannot overwrite a competing
+marker. The command then reads the exact marker, telemetry identity, and every allowlisted canonical
+URN again through the separate read credential. A race that introduces a canonical entity before
+or during marker creation therefore fails closed. Safe recovery from an interrupted first attempt
+reuses the protected local ID; an existing marker is accepted only when it is byte-for-byte
+equivalent to that binding and the canonical graph is still absent.
+
+The pinned official `acryl-datahub==1.6.0.17` SDK exposes the telemetry client ID and server config,
+but no nonce-challenge or hardware/TLS-backed server identity primitive. The telemetry ID is
+independent of LineageGuard's marker and prevents replaying only that marker onto a different normal
+DataHub instance. A complete clone of DataHub's metadata store can reproduce both values. For a
+remote or adversarial deployment, privileged operations must remain disabled until DataHub is
+fronted by a separately trusted authenticated endpoint (for example, a pinned TLS identity) or an
+official challenge-capable identity API is available. The canonical loopback walkthrough does not
+claim to solve full-store-clone replay.
 
 After PostgreSQL is available, the canonical live sequence is:
 

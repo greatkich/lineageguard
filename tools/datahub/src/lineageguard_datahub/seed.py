@@ -54,6 +54,7 @@ from lineageguard_datahub.receipts import (
     ReceiptStatus,
     ReceiptStore,
 )
+from lineageguard_datahub.target_attestation import TargetAttestor, require_current_target
 from lineageguard_datahub.warehouse import SqlCursor, attest_scenario_registry
 
 ACTOR_URN = "urn:li:corpuser:lineageguard"
@@ -66,6 +67,10 @@ Aspect = TypeVar("Aspect", bound=_Aspect)
 
 class McpEmitter(Protocol):
     def emit_mcp(self, mcp: MetadataChangeProposalWrapper) -> object: ...
+
+
+class McpEmitterFactory(Protocol):
+    def __call__(self) -> McpEmitter: ...
 
 
 class EntityReader(Protocol):
@@ -366,7 +371,7 @@ def entity_has_scenario_marker(
 
 
 def seed_metadata(
-    emitter: McpEmitter,
+    emitter_factory: McpEmitterFactory,
     reader: EntityReader,
     receipt_store: ReceiptStore,
     graph: ExpectedGraph,
@@ -376,13 +381,20 @@ def seed_metadata(
     warehouse_target_fingerprint: str,
     target_attestation: str,
     target_fingerprint: str,
+    attest_target: TargetAttestor,
 ) -> SeedReceipt:
     with receipt_store.scenario_operation(graph.scenario_id, "seed"):
+        require_current_target(
+            attest_target,
+            target_attestation=target_attestation,
+            target_fingerprint=target_fingerprint,
+        )
         attest_scenario_registry(
             registry_cursor,
             ownership_nonce=receipt_store.ownership_nonce,
             warehouse_target_fingerprint=warehouse_target_fingerprint,
         )
+        emitter = emitter_factory()
         return _seed_metadata_under_lock(
             emitter,
             reader,
@@ -692,6 +704,7 @@ def reconcile_seed_metadata(
     warehouse_target_fingerprint: str,
     target_attestation: str,
     target_fingerprint: str,
+    attest_target: TargetAttestor,
 ) -> int:
     """Resolve an interrupted seed only after comparing every pending aspect to live state."""
     nonce = receipt_store.ownership_nonce
@@ -725,6 +738,11 @@ def reconcile_seed_metadata(
     with receipt_store.scenario_operation(
         graph.scenario_id, "seed-reconcile", reconciliation=True
     ) as unresolved:
+        require_current_target(
+            attest_target,
+            target_attestation=target_attestation,
+            target_fingerprint=target_fingerprint,
+        )
         attest_scenario_registry(
             registry_cursor,
             ownership_nonce=nonce,

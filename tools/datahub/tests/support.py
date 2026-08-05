@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from pathlib import Path
 
+from lineageguard_datahub.config import CANONICAL_GMS_URL
 from lineageguard_datahub.expected_graph import load_expected_graph
 from lineageguard_datahub.ingestion import (
     DBT_ARTIFACT_VERIFICATION_FINGERPRINT,
@@ -18,11 +19,26 @@ from lineageguard_datahub.ingestion import (
 from lineageguard_datahub.provenance import datahub_target_metrics, registry_binding_metrics
 from lineageguard_datahub.query_history import plan_query_execution
 from lineageguard_datahub.receipts import MetricValue, OperationReceipt, ReceiptStatus, ReceiptStore
+from lineageguard_datahub.target_attestation import (
+    TARGET_STATE_SCHEMA_VERSION,
+    TargetInstanceBinding,
+)
 
 SCENARIO = "canonical-customer-id-rename"
 WAREHOUSE_TARGET = "e" * 64
-TARGET_ATTESTATION = "canonical-local-lineageguard-v1"
-TARGET_FINGERPRINT = "f" * 64
+TARGET_ATTESTATION = "a" * 64
+TARGET_SERVER_IDENTITY = "b" * 64
+TARGET_BINDING = TargetInstanceBinding(
+    schema_version=TARGET_STATE_SCHEMA_VERSION,
+    canonical_url=CANONICAL_GMS_URL,
+    live_instance_id=TARGET_ATTESTATION,
+    server_identity=TARGET_SERVER_IDENTITY,
+)
+TARGET_FINGERPRINT = TARGET_BINDING.target_fingerprint
+
+
+def attest_test_target() -> TargetInstanceBinding:
+    return TARGET_BINDING
 
 
 class RegistryCursor:

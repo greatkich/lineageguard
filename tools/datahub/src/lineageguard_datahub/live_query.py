@@ -57,7 +57,9 @@ from lineageguard_datahub.seed import (
     SCENARIO_MARKER_VALUE,
     EntityReader,
     McpEmitter,
+    McpEmitterFactory,
 )
+from lineageguard_datahub.target_attestation import TargetAttestor, require_current_target
 from lineageguard_datahub.warehouse import SqlCursor, attest_scenario_registry
 
 
@@ -224,7 +226,7 @@ def build_live_query_plan(
 
 
 def emit_live_query_evidence(
-    emitter: McpEmitter,
+    emitter_factory: McpEmitterFactory,
     reader: LiveQueryReader,
     store: ReceiptStore,
     graph: ExpectedGraph,
@@ -234,13 +236,20 @@ def emit_live_query_evidence(
     warehouse_target_fingerprint: str,
     target_attestation: str,
     target_fingerprint: str,
+    attest_target: TargetAttestor,
 ) -> int:
     with store.scenario_operation(graph.scenario_id, "ingest-query"):
+        require_current_target(
+            attest_target,
+            target_attestation=target_attestation,
+            target_fingerprint=target_fingerprint,
+        )
         attest_scenario_registry(
             registry_cursor,
             ownership_nonce=store.ownership_nonce,
             warehouse_target_fingerprint=warehouse_target_fingerprint,
         )
+        emitter = emitter_factory()
         return _emit_live_query_evidence_under_lock(
             emitter,
             reader,
@@ -584,6 +593,7 @@ def reconcile_live_query_evidence(
     warehouse_target_fingerprint: str,
     target_attestation: str,
     target_fingerprint: str,
+    attest_target: TargetAttestor,
 ) -> int:
     """Resolve an interrupted query upsert only from exact live DataHub aspects."""
     nonce = store.ownership_nonce
@@ -651,6 +661,11 @@ def reconcile_live_query_evidence(
     with store.scenario_operation(
         graph.scenario_id, "ingest-query-reconcile", reconciliation=True
     ) as unresolved:
+        require_current_target(
+            attest_target,
+            target_attestation=target_attestation,
+            target_fingerprint=target_fingerprint,
+        )
         attest_scenario_registry(
             registry_cursor,
             ownership_nonce=nonce,

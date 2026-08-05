@@ -20,6 +20,7 @@ from support import (
     WAREHOUSE_TARGET,
     RegistryCursor,
     append_build_provenance,
+    attest_test_target,
     full_target_metrics,
 )
 
@@ -150,7 +151,7 @@ def emit_live_query_evidence(
     root: Path,
 ) -> int:
     return _emit_live_query_evidence(
-        emitter,
+        lambda: emitter,
         reader,
         store,
         graph,
@@ -159,6 +160,7 @@ def emit_live_query_evidence(
         warehouse_target_fingerprint=WAREHOUSE_TARGET,
         target_attestation=TARGET_ATTESTATION,
         target_fingerprint=TARGET_FINGERPRINT,
+        attest_target=attest_test_target,
     )
 
 
@@ -177,6 +179,7 @@ def _reconcile_live(
         warehouse_target_fingerprint=WAREHOUSE_TARGET,
         target_attestation=TARGET_ATTESTATION,
         target_fingerprint=TARGET_FINGERPRINT,
+        attest_target=attest_test_target,
     )
 
 

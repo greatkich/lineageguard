@@ -32,6 +32,7 @@ from support import (
     RegistryCursor,
     append_build_provenance,
     append_ingestion_receipts,
+    attest_test_target,
 )
 
 from lineageguard_datahub.models import ExpectedGraph
@@ -63,7 +64,7 @@ def seed_metadata(
 ) -> SeedReceipt:
     _add_ingestion_prerequisites(store, root)
     return _seed_metadata(
-        emitter,
+        lambda: emitter,
         reader,
         store,
         graph,
@@ -72,6 +73,7 @@ def seed_metadata(
         warehouse_target_fingerprint=WAREHOUSE_TARGET,
         target_attestation=TARGET_ATTESTATION,
         target_fingerprint=TARGET_FINGERPRINT,
+        attest_target=attest_test_target,
     )
 
 
@@ -171,7 +173,7 @@ def test_metadata_seed_rejects_missing_ingestion_prerequisites(
     store = ReceiptStore(tmp_path / "operations.jsonl")
     with pytest.raises(ValueError, match="INGEST_PREREQUISITE_MISSING"):
         _seed_metadata(
-            RecordingEmitter(catalog),
+            lambda: RecordingEmitter(catalog),
             catalog,
             store,
             expected_graph,
@@ -180,6 +182,7 @@ def test_metadata_seed_rejects_missing_ingestion_prerequisites(
             warehouse_target_fingerprint=WAREHOUSE_TARGET,
             target_attestation=TARGET_ATTESTATION,
             target_fingerprint=TARGET_FINGERPRINT,
+            attest_target=attest_test_target,
         )
 
 
@@ -217,6 +220,7 @@ def test_partial_failure_is_durable_and_retry_reconciles_exact_successes(
         warehouse_target_fingerprint=WAREHOUSE_TARGET,
         target_attestation=TARGET_ATTESTATION,
         target_fingerprint=TARGET_FINGERPRINT,
+        attest_target=attest_test_target,
     )
     assert reconciled == len(build_seed_plan(expected_graph, repository_root)) - 4
     retry = seed_metadata(
@@ -317,6 +321,7 @@ def test_public_marker_without_creation_proof_cannot_authorize_reconciliation(
         warehouse_target_fingerprint=WAREHOUSE_TARGET,
         target_attestation=TARGET_ATTESTATION,
         target_fingerprint=TARGET_FINGERPRINT,
+        attest_target=attest_test_target,
     )
     assert not any(
         item.operation_kind == "entity" and item.entity_urn == first.proposal.entityUrn

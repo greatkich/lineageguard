@@ -11,6 +11,7 @@ from support import (
     TARGET_FINGERPRINT,
     WAREHOUSE_TARGET,
     RegistryCursor,
+    attest_test_target,
     full_target_metrics,
 )
 
@@ -164,13 +165,43 @@ def test_reset_uses_receipts_markers_and_recovers_partial_failure(
     catalog = CatalogDeleter(aspects, fail_at=2)
     assert not set(plan.urns) & set(expected_graph.connector_dataset_urns)
     with pytest.raises(RuntimeError, match="injected"):
-        execute_reset(catalog, catalog, store, plan, RegistryCursor(store.ownership_nonce))
+        execute_reset(
+            lambda: catalog,
+            catalog,
+            store,
+            plan,
+            RegistryCursor(store.ownership_nonce),
+            attest_target=attest_test_target,
+        )
     assert len(catalog.deleted) == 2
     catalog.fail_at = None
     with pytest.raises(ValueError, match="SCENARIO_RECONCILIATION_REQUIRED"):
-        execute_reset(catalog, catalog, store, plan, RegistryCursor(store.ownership_nonce))
-    assert reconcile_reset(catalog, store, plan, RegistryCursor(store.ownership_nonce)) == 1
-    receipt = execute_reset(catalog, catalog, store, plan, RegistryCursor(store.ownership_nonce))
+        execute_reset(
+            lambda: catalog,
+            catalog,
+            store,
+            plan,
+            RegistryCursor(store.ownership_nonce),
+            attest_target=attest_test_target,
+        )
+    assert (
+        reconcile_reset(
+            catalog,
+            store,
+            plan,
+            RegistryCursor(store.ownership_nonce),
+            attest_target=attest_test_target,
+        )
+        == 1
+    )
+    receipt = execute_reset(
+        lambda: catalog,
+        catalog,
+        store,
+        plan,
+        RegistryCursor(store.ownership_nonce),
+        attest_target=attest_test_target,
+    )
     assert len(receipt.deleted_urns) == len(plan.urns) - 2
     assert set(urn for urn, _ in catalog.deleted) == set(plan.urns)
     assert all(hard is False for _, hard in catalog.deleted)
@@ -219,8 +250,31 @@ def test_reset_reconciliation_does_not_repeat_an_applied_delete(
     )
     catalog = CatalogDeleter(aspects, fail_after_at=0)
     with pytest.raises(RuntimeError, match="ambiguous-after-apply"):
-        execute_reset(catalog, catalog, store, plan, RegistryCursor(store.ownership_nonce))
+        execute_reset(
+            lambda: catalog,
+            catalog,
+            store,
+            plan,
+            RegistryCursor(store.ownership_nonce),
+            attest_target=attest_test_target,
+        )
     catalog.fail_after_at = None
-    assert reconcile_reset(catalog, store, plan, RegistryCursor(store.ownership_nonce)) == 1
-    execute_reset(catalog, catalog, store, plan, RegistryCursor(store.ownership_nonce))
+    assert (
+        reconcile_reset(
+            catalog,
+            store,
+            plan,
+            RegistryCursor(store.ownership_nonce),
+            attest_target=attest_test_target,
+        )
+        == 1
+    )
+    execute_reset(
+        lambda: catalog,
+        catalog,
+        store,
+        plan,
+        RegistryCursor(store.ownership_nonce),
+        attest_target=attest_test_target,
+    )
     assert [urn for urn, _ in catalog.deleted].count(plan.urns[0]) == 1

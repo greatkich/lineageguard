@@ -17,6 +17,7 @@ from lineageguard_datahub.seed import (
     build_seed_plan,
     entity_has_scenario_marker,
 )
+from lineageguard_datahub.target_attestation import TargetAttestor, require_current_target
 from lineageguard_datahub.warehouse import SqlCursor, attest_scenario_registry
 
 
@@ -26,6 +27,10 @@ class ResetPolicyError(ValueError):
 
 class EntityDeleter(Protocol):
     def delete_entity(self, urn: str, hard: bool = False) -> None: ...
+
+
+class EntityDeleterFactory(Protocol):
+    def __call__(self) -> EntityDeleter: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -170,18 +175,26 @@ def _entity_type_from_urn(urn: str) -> str:
 
 
 def execute_reset(
-    deleter: EntityDeleter,
+    deleter_factory: EntityDeleterFactory,
     reader: EntityReader,
     receipt_store: ReceiptStore,
     plan: ResetPlan,
     registry_cursor: SqlCursor,
+    *,
+    attest_target: TargetAttestor,
 ) -> ResetReceipt:
     with receipt_store.scenario_operation(plan.scenario_id, "reset"):
+        require_current_target(
+            attest_target,
+            target_attestation=plan.target_attestation,
+            target_fingerprint=plan.target_fingerprint,
+        )
         attest_scenario_registry(
             registry_cursor,
             ownership_nonce=receipt_store.ownership_nonce,
             warehouse_target_fingerprint=plan.warehouse_target_fingerprint,
         )
+        deleter = deleter_factory()
         return _execute_reset_under_lock(deleter, reader, receipt_store, plan)
 
 
@@ -289,6 +302,8 @@ def reconcile_reset(
     receipt_store: ReceiptStore,
     plan: ResetPlan,
     registry_cursor: SqlCursor,
+    *,
+    attest_target: TargetAttestor,
 ) -> int:
     """Resolve an interrupted soft delete only from the exact live Status and owner marker."""
     reconciled = 0
@@ -296,6 +311,11 @@ def reconcile_reset(
     with receipt_store.scenario_operation(
         plan.scenario_id, "reset-reconcile", reconciliation=True
     ) as unresolved:
+        require_current_target(
+            attest_target,
+            target_attestation=plan.target_attestation,
+            target_fingerprint=plan.target_fingerprint,
+        )
         attest_scenario_registry(
             registry_cursor,
             ownership_nonce=receipt_store.ownership_nonce,
