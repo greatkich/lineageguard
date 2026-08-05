@@ -28,7 +28,19 @@ const httpsUrl = z
   .string()
   .url()
   .max(2_048)
-  .refine((value) => new URL(value).protocol === "https:");
+  .refine((value) => {
+    const url = new URL(value);
+    return (
+      url.protocol === "https:" &&
+      url.hostname === "github.com" &&
+      url.port === "" &&
+      url.username === "" &&
+      url.password === "" &&
+      url.search === "" &&
+      url.hash === "" &&
+      /^\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/pull\/[1-9][0-9]*$/u.test(url.pathname)
+    );
+  });
 
 const requestObjectSchema = z
   .object({

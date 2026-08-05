@@ -716,6 +716,24 @@ describe("controlled DataHub write-back", () => {
     expect(calls).toEqual([]);
   });
 
+  it.each([
+    "https://ghp_secret@github.com/example/lineageguard/pull/42",
+    "https://github.com/example/lineageguard/pull/42?token=secret",
+    "https://github.com/example/lineageguard/pull/42#secret",
+    "https://github.example.test/example/lineageguard/pull/42",
+    "https://github.com/example/lineageguard/issues/42",
+  ])("rejects unsafe or non-PR GitHub review URL %s before authority", async (githubPrUrl) => {
+    const trusted = authority();
+    const read = vi.fn(() => snapshot());
+    const { calls, port } = await portFor({ authority: trusted, read });
+    await expect(port.write({ ...request(), githubPrUrl })).rejects.toMatchObject({
+      code: "CONFIGURATION",
+    });
+    expect(trusted.verifyCurrentEffectReservation).not.toHaveBeenCalled();
+    expect(read).not.toHaveBeenCalled();
+    expect(calls).toEqual([]);
+  });
+
   it("rejects a forged caller authority field before any read or mutation", async () => {
     const trusted = authority();
     const read = vi.fn(() => snapshot());
