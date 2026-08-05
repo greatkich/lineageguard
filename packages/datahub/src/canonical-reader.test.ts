@@ -378,6 +378,91 @@ describe("canonical official MCP reader", () => {
     ]);
   });
 
+  it("rejects an exact source duplicated across search pages", async () => {
+    const invoke = queuedInvoker([
+      {
+        tool: "search",
+        payload: {
+          count: 1,
+          searchResults: [{ entity: { urn: sourceUrn } }],
+          start: 0,
+          total: 2,
+        },
+      },
+      {
+        tool: "search",
+        payload: {
+          count: 1,
+          searchResults: [{ entity: { urn: sourceUrn } }],
+          start: 1,
+          total: 2,
+        },
+      },
+    ]);
+
+    await expect(collectCanonicalObservations({ invoke }, targets)).rejects.toMatchObject({
+      code: "AMBIGUOUS",
+      invocationId: "inv_page_2",
+      tool: "search",
+    });
+    expect(invoke).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    [2, 3],
+    [3, 2],
+  ])("rejects a search total that changes from %i to %i", async (firstTotal, secondTotal) => {
+    const invoke = queuedInvoker([
+      {
+        tool: "search",
+        payload: {
+          count: 1,
+          searchResults: [{ entity: { urn: `${sourceUrn}.unrelated` } }],
+          start: 0,
+          total: firstTotal,
+        },
+      },
+      {
+        tool: "search",
+        payload: {
+          count: 1,
+          searchResults: [{ entity: { urn: sourceUrn } }],
+          start: 1,
+          total: secondTotal,
+        },
+      },
+    ]);
+
+    await expect(collectCanonicalObservations({ invoke }, targets)).rejects.toMatchObject({
+      code: "SCHEMA_DRIFT",
+      invocationId: "inv_page_2",
+      tool: "search",
+    });
+  });
+
+  it("rejects a page larger than the requested 50 items", async () => {
+    const invoke = queuedInvoker([
+      {
+        tool: "search",
+        payload: {
+          count: 51,
+          searchResults: Array.from({ length: 51 }, (_, index) => ({
+            entity: { urn: `urn:li:dataset:oversized-${index}` },
+          })),
+          start: 0,
+          total: 51,
+        },
+      },
+    ]);
+
+    await expect(collectCanonicalObservations({ invoke }, targets)).rejects.toMatchObject({
+      code: "PAGINATION_LIMIT",
+      invocationId: "inv_page_1",
+      tool: "search",
+    });
+    expect(invoke).toHaveBeenCalledTimes(1);
+  });
+
   it("finds the uniquely matched field on a later schema page", async () => {
     const base = canonicalRawResponses();
     const schemaPage = base[1];
@@ -446,6 +531,93 @@ describe("canonical official MCP reader", () => {
       ["list_schema_fields", expect.objectContaining({ limit: 50, offset: 1 })],
       ["list_schema_fields", expect.objectContaining({ limit: 50, offset: 2 })],
     ]);
+  });
+
+  it("rejects schema totalFields drift on the current invocation", async () => {
+    const base = canonicalRawResponses();
+    const invoke = queuedInvoker([
+      base[0] as CanonicalRawResponse,
+      {
+        tool: "list_schema_fields",
+        payload: {
+          fields: [{ fieldPath: "other_field", nativeDataType: "text", nullable: true }],
+          matchingCount: 1,
+          offset: 0,
+          remainingCount: 1,
+          returned: 1,
+          totalFields: 2,
+          urn: sourceUrn,
+        },
+      },
+      {
+        tool: "list_schema_fields",
+        payload: {
+          fields: [{ fieldPath: "customer_id", nativeDataType: "bigint", nullable: false }],
+          matchingCount: 1,
+          offset: 1,
+          remainingCount: 1,
+          returned: 1,
+          totalFields: 3,
+          urn: sourceUrn,
+        },
+      },
+    ]);
+
+    await expect(collectCanonicalObservations({ invoke }, targets)).rejects.toMatchObject({
+      code: "SCHEMA_DRIFT",
+      invocationId: "inv_page_3",
+      tool: "list_schema_fields",
+    });
+  });
+
+  it("rejects schema remainingCount that contradicts totalFields", async () => {
+    const base = canonicalRawResponses();
+    const invoke = queuedInvoker([
+      base[0] as CanonicalRawResponse,
+      {
+        tool: "list_schema_fields",
+        payload: {
+          fields: [{ fieldPath: "customer_id", nativeDataType: "bigint", nullable: false }],
+          matchingCount: 1,
+          offset: 0,
+          remainingCount: 0,
+          returned: 1,
+          totalFields: 2,
+          urn: sourceUrn,
+        },
+      },
+    ]);
+
+    await expect(collectCanonicalObservations({ invoke }, targets)).rejects.toMatchObject({
+      code: "MALFORMED_RESPONSE",
+      invocationId: "inv_page_2",
+      tool: "list_schema_fields",
+    });
+  });
+
+  it("rejects a schema page that does not echo the requested offset", async () => {
+    const base = canonicalRawResponses();
+    const invoke = queuedInvoker([
+      base[0] as CanonicalRawResponse,
+      {
+        tool: "list_schema_fields",
+        payload: {
+          fields: [{ fieldPath: "customer_id", nativeDataType: "bigint", nullable: false }],
+          matchingCount: 1,
+          offset: 1,
+          remainingCount: 0,
+          returned: 1,
+          totalFields: 2,
+          urn: sourceUrn,
+        },
+      },
+    ]);
+
+    await expect(collectCanonicalObservations({ invoke }, targets)).rejects.toMatchObject({
+      code: "CURSOR_CYCLE",
+      invocationId: "inv_page_2",
+      tool: "list_schema_fields",
+    });
   });
 
   it("collects all bounded lineage and query pages while retaining each proof page", async () => {
@@ -550,10 +722,184 @@ describe("canonical official MCP reader", () => {
     expect(invoke.mock.calls.filter(([tool]) => tool === "get_dataset_queries")).toHaveLength(2);
   });
 
+  it("rejects lineage totals that change between pages", async () => {
+    const base = canonicalRawResponses();
+    const candidates = [stagingUrn, revenueUrn, fraudFeaturesUrn].map((urn, index) => ({
+      degree: index === 0 ? 1 : 2,
+      entity: { type: "DATASET", urn },
+      lineageColumns: ["customer_id"],
+    }));
+    const invoke = queuedInvoker([
+      ...base.slice(0, 2),
+      {
+        tool: "get_lineage",
+        payload: {
+          downstreams: {
+            hasMore: true,
+            offset: 0,
+            returned: 2,
+            searchResults: candidates.slice(0, 2),
+            start: 0,
+            total: 3,
+          },
+        },
+      },
+      {
+        tool: "get_lineage",
+        payload: {
+          downstreams: {
+            hasMore: true,
+            offset: 2,
+            returned: 1,
+            searchResults: candidates.slice(2),
+            start: 2,
+            total: 4,
+          },
+        },
+      },
+    ]);
+
+    await expect(collectCanonicalObservations({ invoke }, targets)).rejects.toMatchObject({
+      code: "SCHEMA_DRIFT",
+      invocationId: "inv_page_4",
+      tool: "get_lineage",
+    });
+  });
+
+  it.each([
+    [false, 3, [stagingUrn, revenueUrn]],
+    [true, 3, [stagingUrn, revenueUrn, fraudFeaturesUrn]],
+  ])(
+    "rejects lineage hasMore=%s when total=%i contradicts termination",
+    async (hasMore, total, urns) => {
+      const base = canonicalRawResponses();
+      const invoke = queuedInvoker([
+        ...base.slice(0, 2),
+        {
+          tool: "get_lineage",
+          payload: {
+            downstreams: {
+              hasMore,
+              offset: 0,
+              returned: urns.length,
+              searchResults: urns.map((urn, index) => ({
+                degree: index === 0 ? 1 : 2,
+                entity: { type: "DATASET", urn },
+                lineageColumns: ["customer_id"],
+              })),
+              start: 0,
+              total,
+            },
+          },
+        },
+      ]);
+
+      await expect(collectCanonicalObservations({ invoke }, targets)).rejects.toMatchObject({
+        code: "MALFORMED_RESPONSE",
+        invocationId: "inv_page_3",
+        tool: "get_lineage",
+      });
+    },
+  );
+
+  it.each([
+    [undefined, undefined],
+    [0, 1],
+  ])(
+    "rejects lineage offset/start pair %s/%s that does not identify the requested page",
+    async (offset, start) => {
+      const base = canonicalRawResponses();
+      const invoke = queuedInvoker([
+        ...base.slice(0, 2),
+        {
+          tool: "get_lineage",
+          payload: {
+            downstreams: {
+              hasMore: false,
+              ...(offset === undefined ? {} : { offset }),
+              returned: 3,
+              searchResults: [stagingUrn, revenueUrn, fraudFeaturesUrn].map((urn, index) => ({
+                degree: index === 0 ? 1 : 2,
+                entity: { type: "DATASET", urn },
+                lineageColumns: ["customer_id"],
+              })),
+              ...(start === undefined ? {} : { start }),
+              total: 3,
+            },
+          },
+        },
+      ]);
+
+      await expect(collectCanonicalObservations({ invoke }, targets)).rejects.toMatchObject({
+        code: offset === undefined ? "MALFORMED_RESPONSE" : "CURSOR_CYCLE",
+        invocationId: "inv_page_3",
+        tool: "get_lineage",
+      });
+    },
+  );
+
+  it("rejects query totals that change between pages", async () => {
+    const base = canonicalRawResponses();
+    const queryPage = base[7];
+    if (queryPage === undefined || !isRecord(queryPage.payload)) {
+      throw new Error("expected query fixture");
+    }
+    const invoke = queuedInvoker([
+      ...base.slice(0, 7),
+      {
+        tool: "get_dataset_queries",
+        payload: {
+          ...queryPage.payload,
+          queries: [
+            {
+              ...(Array.isArray(queryPage.payload.queries) ? queryPage.payload.queries[0] : {}),
+              urn: "urn:li:query:unrelated",
+            },
+          ],
+          start: 0,
+          total: 2,
+        },
+      },
+      {
+        ...queryPage,
+        payload: { ...queryPage.payload, start: 1, total: 3 },
+      },
+    ]);
+
+    await expect(collectCanonicalObservations({ invoke }, targets)).rejects.toMatchObject({
+      code: "SCHEMA_DRIFT",
+      invocationId: "inv_page_9",
+      tool: "get_dataset_queries",
+    });
+  });
+
+  it("rejects a query page that does not echo the requested start", async () => {
+    const base = canonicalRawResponses();
+    const queryPage = base[7];
+    if (queryPage === undefined || !isRecord(queryPage.payload)) {
+      throw new Error("expected query fixture");
+    }
+    const invoke = queuedInvoker([
+      ...base.slice(0, 7),
+      {
+        ...queryPage,
+        payload: { ...queryPage.payload, start: 1, total: 2 },
+      },
+    ]);
+
+    await expect(collectCanonicalObservations({ invoke }, targets)).rejects.toMatchObject({
+      code: "CURSOR_CYCLE",
+      invocationId: "inv_page_8",
+      tool: "get_dataset_queries",
+    });
+  });
+
   it("rejects a paged response that repeats its offset", async () => {
-    const invoke = vi.fn(
-      async (tool: ReadToolName): Promise<RawToolInvocation> => ({
-        invocationId: "inv_cycle",
+    let page = 0;
+    const invoke = vi.fn(async (tool: ReadToolName): Promise<RawToolInvocation> => {
+      page += 1;
+      return {
+        invocationId: `inv_cycle_${page}`,
         payload: {
           count: 1,
           searchResults: [{ entity: { urn: `${sourceUrn}.unrelated` } }],
@@ -563,15 +909,31 @@ describe("canonical official MCP reader", () => {
         responseFingerprint: "a".repeat(64),
         retrievedAt: "2026-08-04T08:00:00.000Z",
         tool,
-      }),
-    );
+      };
+    });
 
     await expect(collectCanonicalObservations({ invoke }, targets)).rejects.toMatchObject({
       code: "CURSOR_CYCLE",
-      invocationId: "inv_cycle",
+      invocationId: "inv_cycle_2",
       tool: "search",
     });
     expect(invoke).toHaveBeenCalledTimes(2);
+  });
+
+  it("binds a stalled continuation failure to the page invocation", async () => {
+    const invoke = queuedInvoker([
+      {
+        tool: "search",
+        payload: { count: 0, searchResults: [], start: 0, total: 1 },
+      },
+    ]);
+
+    await expect(collectCanonicalObservations({ invoke }, targets)).rejects.toMatchObject({
+      code: "CURSOR_CYCLE",
+      invocationId: "inv_page_1",
+      tool: "search",
+    });
+    expect(invoke).toHaveBeenCalledTimes(1);
   });
 
   it("fails closed when official search pagination exceeds four pages", async () => {

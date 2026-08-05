@@ -34,4 +34,12 @@ describe("bounded DataHub pagination", () => {
       collectBoundedPages(async () => ({ items: [], nextOffset: 1 })),
     ).rejects.toMatchObject({ code: "CURSOR_CYCLE" });
   });
+
+  it("rejects a page larger than the requested page size", async () => {
+    await expect(
+      collectBoundedPages(async (_offset, pageSize) => ({
+        items: Array.from({ length: pageSize + 1 }, (_, index) => index),
+      })),
+    ).rejects.toMatchObject({ code: "PAGINATION_LIMIT" });
+  });
 });

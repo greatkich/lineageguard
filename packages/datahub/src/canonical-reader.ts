@@ -207,6 +207,21 @@ function pageInvocation<TPage, TItem>(
   return invocation;
 }
 
+function stablePageTotal(
+  expected: number | undefined,
+  actual: number,
+  observation: OfficialObservation<unknown>,
+  subject: string,
+): number {
+  if (expected !== undefined && actual !== expected) {
+    throw new DataHubAdapterError("SCHEMA_DRIFT", `DataHub ${subject} changed during pagination.`, {
+      invocationId: observation.invocation.invocationId,
+      tool: observation.invocation.tool,
+    });
+  }
+  return expected ?? actual;
+}
+
 async function collectResolutionSearch(
   invoker: CanonicalToolInvoker,
   targets: CanonicalCollectionTargets,
@@ -216,6 +231,7 @@ async function collectResolutionSearch(
     proof: OfficialObservation<OfficialSearchPage>;
   }>
 > {
+  let resultTotal: number | undefined;
   const paged = await collectObservedPages("search", async (offset, pageSize) => {
     const observation = await observe(
       invoker,
@@ -238,10 +254,16 @@ async function collectResolutionSearch(
         },
       );
     }
+    resultTotal = stablePageTotal(
+      resultTotal,
+      observation.data.total,
+      observation,
+      "search result total",
+    );
     const nextOffset = observation.data.start + observation.data.count;
     return {
       items: observation.data.searchResults,
-      ...(nextOffset >= observation.data.total ? {} : { nextOffset }),
+      ...(nextOffset >= resultTotal ? {} : { nextOffset }),
       observation,
     };
   });
@@ -264,6 +286,7 @@ async function collectSchemaFields(
   }>
 > {
   let globalMatchingCount: number | undefined;
+  let totalFields: number | undefined;
   const paged = await collectObservedPages("list_schema_fields", async (offset, pageSize) => {
     const observation = await observe(
       invoker,
@@ -296,6 +319,12 @@ async function collectSchemaFields(
         },
       );
     }
+    totalFields = stablePageTotal(
+      totalFields,
+      observation.data.totalFields,
+      observation,
+      "schema field total",
+    );
     const matchingCount = observation.data.matchingCount;
     if (matchingCount === null || matchingCount === undefined) {
       throw new DataHubAdapterError(
@@ -347,6 +376,7 @@ async function collectLineageDiscovery(
     pages: readonly OfficialObservation<OfficialLineagePage>[];
   }>
 > {
+  let resultTotal: number | undefined;
   const paged = await collectObservedPages<OfficialLineagePage, LineageResult>(
     "get_lineage",
     async (offset, pageSize) => {
@@ -374,8 +404,20 @@ async function collectLineageDiscovery(
           },
         );
       }
-      const actualOffset = downstreams.offset ?? downstreams.start ?? offset;
-      if (actualOffset !== offset) {
+      if (downstreams.offset === undefined && downstreams.start === undefined) {
+        throw new DataHubAdapterError(
+          "MALFORMED_RESPONSE",
+          "DataHub lineage pagination omitted its page offset.",
+          {
+            invocationId: observation.invocation.invocationId,
+            tool: observation.invocation.tool,
+          },
+        );
+      }
+      if (
+        (downstreams.offset !== undefined && downstreams.offset !== offset) ||
+        (downstreams.start !== undefined && downstreams.start !== offset)
+      ) {
         throw new DataHubAdapterError(
           "CURSOR_CYCLE",
           "DataHub pagination did not return the requested offset.",
@@ -385,8 +427,24 @@ async function collectLineageDiscovery(
           },
         );
       }
-      const nextOffset = actualOffset + downstreams.searchResults.length;
-      const hasMore = downstreams.hasMore === true || nextOffset < downstreams.total;
+      resultTotal = stablePageTotal(
+        resultTotal,
+        downstreams.total,
+        observation,
+        "lineage result total",
+      );
+      const nextOffset = offset + downstreams.searchResults.length;
+      const hasMore = nextOffset < resultTotal;
+      if (downstreams.hasMore !== undefined && downstreams.hasMore !== hasMore) {
+        throw new DataHubAdapterError(
+          "MALFORMED_RESPONSE",
+          "DataHub lineage continuation flag contradicted its result total.",
+          {
+            invocationId: observation.invocation.invocationId,
+            tool: observation.invocation.tool,
+          },
+        );
+      }
       return {
         items: downstreams.searchResults,
         ...(hasMore ? { nextOffset } : {}),
@@ -431,6 +489,7 @@ async function collectQueryDiscovery(
     proof: OfficialObservation<OfficialQueryPage>;
   }>
 > {
+  let resultTotal: number | undefined;
   const paged = await collectObservedPages("get_dataset_queries", async (offset, pageSize) => {
     const observation = await observe(
       invoker,
@@ -454,10 +513,16 @@ async function collectQueryDiscovery(
         },
       );
     }
+    resultTotal = stablePageTotal(
+      resultTotal,
+      observation.data.total,
+      observation,
+      "query result total",
+    );
     const nextOffset = observation.data.start + observation.data.count;
     return {
       items: observation.data.queries,
-      ...(nextOffset >= observation.data.total ? {} : { nextOffset }),
+      ...(nextOffset >= resultTotal ? {} : { nextOffset }),
       observation,
     };
   });

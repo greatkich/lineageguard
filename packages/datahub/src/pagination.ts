@@ -26,6 +26,12 @@ export async function collectBoundedPages<T>(
         "DataHub pagination returned an invalid item collection.",
       );
     }
+    if (page.items.length > PAGE_SIZE) {
+      throw new DataHubAdapterError(
+        "PAGINATION_LIMIT",
+        "DataHub pagination exceeded the requested page size.",
+      );
+    }
 
     if (collected.length + page.items.length > MAX_ITEMS) {
       throw new DataHubAdapterError(
