@@ -353,6 +353,26 @@ describe("controlled DataHub write-back", () => {
     expect(calls).toEqual([]);
   });
 
+  it.each([
+    "/migration/rollback.sql",
+    "../secrets.txt",
+    "migration/../secrets.txt",
+    "migration\\rollback.sql",
+    "[rollback](https://example.test)",
+    "Authorization:Bearer-secret",
+    "migration//rollback.sql",
+  ])("rejects unsafe rollback artifact reference %s before authority", async (rollbackRef) => {
+    const trusted = authority();
+    const read = vi.fn(() => snapshot());
+    const { calls, port } = await portFor({ authority: trusted, read });
+    await expect(port.write({ ...request(), rollbackRef })).rejects.toMatchObject({
+      code: "CONFIGURATION",
+    });
+    expect(trusted.verifyCurrentEffectReservation).not.toHaveBeenCalled();
+    expect(read).not.toHaveBeenCalled();
+    expect(calls).toEqual([]);
+  });
+
   it("rejects a tag-only remote state before authority consumption", async () => {
     const trusted = authority();
     const payloads = deriveDataHubWritebackPayloads(request());

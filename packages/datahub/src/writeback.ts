@@ -23,6 +23,17 @@ const identifier = z
   .min(1)
   .max(128)
   .regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]*$/u);
+const repositoryArtifactPath = z
+  .string()
+  .min(1)
+  .max(512)
+  .regex(/^[A-Za-z0-9][A-Za-z0-9._/-]*$/u)
+  .refine(
+    (value) =>
+      !value.endsWith("/") &&
+      !value.includes("//") &&
+      value.split("/").every((segment) => segment !== "." && segment !== ".."),
+  );
 const urn = z.string().startsWith("urn:li:").max(4_096);
 const httpsUrl = z
   .string()
@@ -57,7 +68,7 @@ const requestObjectSchema = z
     idempotencyKey: identifier,
     intentId: identifier,
     reasonEvidenceIds: z.array(identifier).min(1).max(64),
-    rollbackRef: z.string().min(1).max(512),
+    rollbackRef: repositoryArtifactPath,
     runId: identifier,
     scenarioMarker: z.string().min(1).max(256),
     sourceCollectionFingerprint: fingerprint,
