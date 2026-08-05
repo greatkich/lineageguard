@@ -82,7 +82,13 @@ function domainFailureCode(
 ): ImpactCollectionFailureReport["failures"][number]["code"] | undefined {
   if (code === "TOOL_FAILURE") return "UNAVAILABLE";
   if (code === "TOOL_POLICY_VIOLATION") return "POLICY_VIOLATION";
-  if (code === "CONFIGURATION" || code === "REPLAY_INVALID") return undefined;
+  if (
+    code === "AUTHORITY_INVALID" ||
+    code === "CONFIGURATION" ||
+    code === "CONFLICT" ||
+    code === "REPLAY_INVALID"
+  )
+    return undefined;
   return code;
 }
 

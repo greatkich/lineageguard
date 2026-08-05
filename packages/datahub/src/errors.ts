@@ -1,6 +1,8 @@
 export type DataHubAdapterErrorCode =
   | "AMBIGUOUS"
+  | "AUTHORITY_INVALID"
   | "CONFIGURATION"
+  | "CONFLICT"
   | "CURSOR_CYCLE"
   | "MALFORMED_RESPONSE"
   | "NOT_FOUND"
