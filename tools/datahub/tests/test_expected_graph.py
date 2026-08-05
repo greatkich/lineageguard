@@ -34,6 +34,16 @@ def test_expected_graph_has_one_source_and_four_impact_cards(expected_graph: Exp
     }
 
 
+def test_reviewed_tag_is_managed_but_unassigned_before_writeback(
+    expected_graph: ExpectedGraph,
+) -> None:
+    reviewed = next(tag for tag in expected_graph.tags if tag.logical_key == "reviewed")
+    assert reviewed.urn == "urn:li:tag:lineageguard-canonical.Reviewed"
+    assert reviewed.display_name == "Reviewed"
+    assert "approved effect gate" in reviewed.description
+    assert all(reviewed.urn not in node.tag_urns for node in expected_graph.nodes)
+
+
 def test_manifest_urns_match_official_datahub_builders(expected_graph: ExpectedGraph) -> None:
     nodes = {node.logical_key: node for node in expected_graph.nodes}
     assert nodes["commerce.orders"].urn == make_dataset_urn_with_platform_instance(

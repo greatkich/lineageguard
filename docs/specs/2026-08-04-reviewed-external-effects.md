@@ -80,7 +80,9 @@ After validation and GitHub receipt binding, it may:
 1. re-read the exact affected entity and verify the scenario marker and expected current version;
 2. save a concise migration decision document containing the decision, reason/evidence IDs, validated
    artifact fingerprint, GitHub review link, and rollback reference;
-3. add a namespaced LineageGuard review-status tag without removing existing metadata;
+3. add the immutable namespaced `urn:li:tag:lineageguard-canonical.Reviewed` status tag without
+   removing existing metadata; the canonical seed provisions this tag entity but never pre-attaches
+   it to the source dataset, so the assignment is visible proof of the gated write-back;
 4. re-read the entity and prove both writes before returning a normalized receipt.
 
 It may not mutate lineage, schema, ownership, glossary, lifecycle, assertions, or unrelated entities.

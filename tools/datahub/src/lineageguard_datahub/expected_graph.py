@@ -101,6 +101,7 @@ CANONICAL_NON_DATASET_URNS = {
     CANONICAL_LIVE_QUERY_URN,
     "urn:li:tag:lineageguard-canonical.Critical",
     "urn:li:tag:lineageguard-canonical.Production",
+    "urn:li:tag:lineageguard-canonical.Reviewed",
 }
 CANONICAL_OWNER_SPECS = frozenset(
     {
@@ -114,8 +115,25 @@ CANONICAL_OWNER_SPECS = frozenset(
 )
 CANONICAL_TAG_SPECS = frozenset(
     {
-        ("critical", "urn:li:tag:lineageguard-canonical.Critical", "Critical"),
-        ("production", "urn:li:tag:lineageguard-canonical.Production", "Production"),
+        (
+            "critical",
+            "urn:li:tag:lineageguard-canonical.Critical",
+            "Critical",
+            "LineageGuard critical asset classification.",
+        ),
+        (
+            "production",
+            "urn:li:tag:lineageguard-canonical.Production",
+            "Production",
+            "LineageGuard production asset classification.",
+        ),
+        (
+            "reviewed",
+            "urn:li:tag:lineageguard-canonical.Reviewed",
+            "Reviewed",
+            "LineageGuard review status: a validated migration decision was written back "
+            "through the approved effect gate.",
+        ),
     }
 )
 CANONICAL_NODE_SEMANTICS = frozenset(
@@ -256,11 +274,12 @@ def _owner(raw: dict[str, Any]) -> Owner:
 
 
 def _tag(raw: dict[str, Any]) -> Tag:
-    _exact_keys(raw, {"logicalKey", "urn", "displayName"}, "tag")
+    _exact_keys(raw, {"logicalKey", "urn", "displayName", "description"}, "tag")
     return Tag(
         logical_key=_string(raw["logicalKey"], "tag.logicalKey"),
         urn=_string(raw["urn"], "tag.urn"),
         display_name=_string(raw["displayName"], "tag.displayName"),
+        description=_string(raw["description"], "tag.description"),
     )
 
 
@@ -467,7 +486,9 @@ def _validate_canonical_allowlist(graph: ExpectedGraph) -> None:
     )
     if owner_specs != CANONICAL_OWNER_SPECS:
         raise GraphContractError("canonical owner logical/name mapping mismatch")
-    tag_specs = frozenset((tag.logical_key, tag.urn, tag.display_name) for tag in graph.tags)
+    tag_specs = frozenset(
+        (tag.logical_key, tag.urn, tag.display_name, tag.description) for tag in graph.tags
+    )
     if tag_specs != CANONICAL_TAG_SPECS:
         raise GraphContractError("canonical tag logical/name mapping mismatch")
     node_semantics = frozenset(
@@ -570,7 +591,7 @@ def graph_fingerprint(graph: ExpectedGraph) -> str:
             for owner in sorted(graph.owners, key=lambda item: item.logical_key)
         ),
         "tags": tuple(
-            (tag.logical_key, tag.urn, tag.display_name)
+            (tag.logical_key, tag.urn, tag.display_name, tag.description)
             for tag in sorted(graph.tags, key=lambda item: item.logical_key)
         ),
         "nodeSemantics": tuple(

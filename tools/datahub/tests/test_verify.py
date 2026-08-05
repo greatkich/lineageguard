@@ -443,6 +443,15 @@ def test_missing_receipts_cannot_report_live_success(expected_graph: ExpectedGra
     }
 
 
+def test_prewrite_expected_graph_requires_reviewed_entity_but_no_assignment(
+    expected_graph: ExpectedGraph,
+) -> None:
+    reviewed = "urn:li:tag:lineageguard-canonical.Reviewed"
+    observed = expected_observation(expected_graph)
+    assert reviewed in observed.entity_urns
+    assert all(tag_urn != reviewed for _, tag_urn in observed.tags)
+
+
 @pytest.mark.parametrize(
     ("mutation", "expected_code"),
     [

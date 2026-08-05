@@ -162,6 +162,7 @@ def test_reset_uses_receipts_markers_and_recovers_partial_failure(
         target_attestation=TARGET_ATTESTATION,
         target_fingerprint=TARGET_FINGERPRINT,
     )
+    assert "urn:li:tag:lineageguard-canonical.Reviewed" in plan.urns
     catalog = CatalogDeleter(aspects, fail_at=2)
     assert not set(plan.urns) & set(expected_graph.connector_dataset_urns)
     with pytest.raises(RuntimeError, match="injected"):

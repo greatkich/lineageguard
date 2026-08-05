@@ -26,12 +26,20 @@
     {
       "logicalKey": "critical",
       "urn": "urn:li:tag:lineageguard-canonical.Critical",
-      "displayName": "Critical"
+      "displayName": "Critical",
+      "description": "LineageGuard critical asset classification."
     },
     {
       "logicalKey": "production",
       "urn": "urn:li:tag:lineageguard-canonical.Production",
-      "displayName": "Production"
+      "displayName": "Production",
+      "description": "LineageGuard production asset classification."
+    },
+    {
+      "logicalKey": "reviewed",
+      "urn": "urn:li:tag:lineageguard-canonical.Reviewed",
+      "displayName": "Reviewed",
+      "description": "LineageGuard review status: a validated migration decision was written back through the approved effect gate."
     }
   ],
   "nodes": [
@@ -82,7 +90,10 @@
       "name": "Finance Revenue Dashboard",
       "ownerUrns": ["urn:li:corpGroup:lineageguard-canonical.finance-analytics"],
       "ownershipType": "BUSINESS_OWNER",
-      "tagUrns": ["urn:li:tag:lineageguard-canonical.Critical", "urn:li:tag:lineageguard-canonical.Production"],
+      "tagUrns": [
+        "urn:li:tag:lineageguard-canonical.Critical",
+        "urn:li:tag:lineageguard-canonical.Production"
+      ],
       "schemaFields": []
     },
     {
@@ -92,7 +103,10 @@
       "name": "Fraud Model v3",
       "ownerUrns": ["urn:li:corpGroup:lineageguard-canonical.risk-ml"],
       "ownershipType": "TECHNICAL_OWNER",
-      "tagUrns": ["urn:li:tag:lineageguard-canonical.Critical", "urn:li:tag:lineageguard-canonical.Production"],
+      "tagUrns": [
+        "urn:li:tag:lineageguard-canonical.Critical",
+        "urn:li:tag:lineageguard-canonical.Production"
+      ],
       "schemaFields": []
     }
   ],
@@ -167,8 +181,5 @@
     "fraud.model-v3",
     "query.finance-monthly-close"
   ],
-  "lineageIntermediates": [
-    "analytics.stg_orders",
-    "fraud.customer_features"
-  ]
+  "lineageIntermediates": ["analytics.stg_orders", "fraud.customer_features"]
 }

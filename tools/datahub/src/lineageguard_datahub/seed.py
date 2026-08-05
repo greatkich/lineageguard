@@ -269,10 +269,7 @@ def build_seed_plan(
                 "tag",
                 TagPropertiesClass(
                     name=tag.display_name,
-                    description=(
-                        f"LineageGuard {tag.display_name.lower()} asset classification. "
-                        f"{_marker_text(ownership_nonce)}"
-                    ),
+                    description=f"{tag.description} {_marker_text(ownership_nonce)}",
                 ),
             )
         )

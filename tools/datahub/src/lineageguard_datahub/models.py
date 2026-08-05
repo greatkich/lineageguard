@@ -41,6 +41,7 @@ class Tag:
     logical_key: str
     urn: str
     display_name: str
+    description: str
 
 
 @dataclass(frozen=True, slots=True)

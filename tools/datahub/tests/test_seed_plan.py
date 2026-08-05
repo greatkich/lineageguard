@@ -22,6 +22,7 @@ from datahub.metadata.schema_classes import (
     SchemaMetadataClass,
     StatusClass,
     TagKeyClass,
+    TagPropertiesClass,
     UpstreamClass,
     UpstreamLineageClass,
 )
@@ -244,6 +245,23 @@ def test_plan_contains_query_governance_and_each_lineage_target(
     }
     for downstream_urn in dataset_downstreams:
         assert f"lineage:{downstream_urn}" in logical_keys
+
+
+def test_seed_provisions_reviewed_tag_without_assigning_it(
+    expected_graph: ExpectedGraph, repository_root: Path
+) -> None:
+    plan = {
+        item.logical_key: item.proposal.aspect
+        for item in build_seed_plan(expected_graph, repository_root)
+    }
+    reviewed = plan["reviewed:properties"]
+    assert isinstance(reviewed, TagPropertiesClass)
+    assert reviewed.name == "Reviewed"
+    assert "approved effect gate" in (reviewed.description or "")
+    assert all(
+        "urn:li:tag:lineageguard-canonical.Reviewed" not in node.tag_urns
+        for node in expected_graph.nodes
+    )
 
 
 def test_seed_compiles_exact_official_ownership_types(
