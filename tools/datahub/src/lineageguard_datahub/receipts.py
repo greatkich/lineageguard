@@ -99,9 +99,7 @@ class ResolvedOperationReceipt:
     receipt: OperationReceipt
 
 
-def receipt_append_index(
-    receipts: tuple[OperationReceipt, ...], target: OperationReceipt
-) -> int:
+def receipt_append_index(receipts: tuple[OperationReceipt, ...], target: OperationReceipt) -> int:
     for index in range(len(receipts) - 1, -1, -1):
         if receipts[index] is target:
             return index
