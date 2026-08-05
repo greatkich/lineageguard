@@ -8,6 +8,9 @@ const runId = /^run_[a-f0-9]{24}$/;
 const name = /^[A-Za-z0-9_.-]+$/;
 const branch = /^[A-Za-z0-9._/-]+$/;
 const evidenceId = /^ev_[a-f0-9]{24}$/;
+const opaqueReservation = /^[A-Za-z0-9_-]{32,200}$/;
+const opaqueReservationToken = /^[A-Za-z0-9_-]{43,512}$/;
+const idempotencyKey = /^[A-Za-z0-9:._/-]{16,240}$/;
 
 function reject(
   message: string,
@@ -17,7 +20,17 @@ function reject(
 }
 
 export function validateOptions(options: LiveGitHubOptions): void {
-  if (!name.test(options.owner) || !name.test(options.repository))
+  if (
+    !options ||
+    typeof options !== "object" ||
+    typeof options.owner !== "string" ||
+    typeof options.repository !== "string" ||
+    typeof options.baseBranch !== "string" ||
+    typeof options.apiBaseUrl !== "string" ||
+    typeof options.token !== "string" ||
+    !name.test(options.owner) ||
+    !name.test(options.repository)
+  )
     reject("invalid repository allowlist");
   if (
     !branch.test(options.baseBranch) ||
@@ -35,6 +48,80 @@ export function validateOptions(options: LiveGitHubOptions): void {
   )
     reject("timeout must be between 100 and 30000 ms");
   if (![1, 2, 3].includes(options.maxAttempts)) reject("max attempts must be between 1 and 3");
+  if (
+    !options.authority ||
+    typeof options.authority.resolveCurrentEffect !== "function" ||
+    typeof options.authority.consumeCurrentEffect !== "function"
+  )
+    reject("trusted effect authority is required", "POLICY_REJECTED");
+}
+
+function hasRuntimeRequestShape(input: GitHubReviewRequest): boolean {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return false;
+  const strings = [
+    input.effectReservationId,
+    input.effectReservationToken,
+    input.runId,
+    input.effectKind,
+    input.target,
+    input.idempotencyKey,
+    input.intentFingerprint,
+    input.inputFingerprint,
+    input.repository,
+    input.baseBranch,
+    input.baseSha,
+    input.candidateFingerprint,
+    input.artifactSetFingerprint,
+    input.validationReceiptFingerprint,
+    input.approvalFingerprint,
+    input.title,
+  ];
+  if (strings.some((value) => typeof value !== "string")) return false;
+  if (!input.body || typeof input.body !== "object" || Array.isArray(input.body)) return false;
+  if (
+    typeof input.body.summary !== "string" ||
+    !Array.isArray(input.body.reasonEvidenceIds) ||
+    !Array.isArray(input.body.rolloutSteps) ||
+    !Array.isArray(input.body.rollbackSteps) ||
+    [...input.body.reasonEvidenceIds, ...input.body.rolloutSteps, ...input.body.rollbackSteps].some(
+      (value) => typeof value !== "string",
+    )
+  )
+    return false;
+  if (
+    !input.validation ||
+    typeof input.validation !== "object" ||
+    Array.isArray(input.validation) ||
+    typeof input.validation.runId !== "string" ||
+    typeof input.validation.candidateFingerprint !== "string" ||
+    typeof input.validation.artifactSetFingerprint !== "string" ||
+    typeof input.validation.receiptFingerprint !== "string" ||
+    !Array.isArray(input.validation.artifacts) ||
+    input.validation.artifacts.some(
+      (artifact) =>
+        !artifact ||
+        typeof artifact !== "object" ||
+        Array.isArray(artifact) ||
+        typeof artifact.path !== "string" ||
+        typeof artifact.candidateArtifactFingerprint !== "string" ||
+        typeof artifact.materializedSha256 !== "string",
+    )
+  )
+    return false;
+  return (
+    Array.isArray(input.artifacts) &&
+    input.artifacts.every(
+      (artifact) =>
+        artifact &&
+        typeof artifact === "object" &&
+        !Array.isArray(artifact) &&
+        typeof artifact.path === "string" &&
+        typeof artifact.content === "string" &&
+        typeof artifact.candidateArtifactFingerprint === "string" &&
+        (artifact.operation === "CREATE" ||
+          (artifact.operation === "MODIFY" && typeof artifact.expectedBaseBlobSha === "string")),
+    )
+  );
 }
 
 function safePath(path: string): boolean {
@@ -55,8 +142,9 @@ function safePath(path: string): boolean {
 }
 
 export function validateRequest(input: GitHubReviewRequest, options: LiveGitHubOptions): void {
+  if (!hasRuntimeRequestShape(input)) reject("GitHub effect request is malformed");
   const expectedRepository = `${options.owner}/${options.repository}`;
-  const expectedTarget = `github:${expectedRepository}:${options.baseBranch}`;
+  const expectedTarget = `${options.apiBaseUrl}/repos/${expectedRepository}/git/ref/heads/${encodeURIComponent(options.baseBranch)}#${input.baseSha}`;
   if (
     input.repository !== expectedRepository ||
     input.baseBranch !== options.baseBranch ||
@@ -70,16 +158,23 @@ export function validateRequest(input: GitHubReviewRequest, options: LiveGitHubO
   }
   if (!runId.test(input.runId) || !gitSha.test(input.baseSha))
     reject("invalid run or base commit identity");
+  if (
+    !opaqueReservation.test(input.effectReservationId) ||
+    !opaqueReservationToken.test(input.effectReservationToken) ||
+    !idempotencyKey.test(input.idempotencyKey)
+  )
+    reject("invalid effect reservation or idempotency identity");
   for (const value of [
     input.inputFingerprint,
+    input.intentFingerprint,
     input.candidateFingerprint,
     input.artifactSetFingerprint,
     input.validationReceiptFingerprint,
+    input.approvalFingerprint,
   ]) {
     if (!fingerprint.test(value)) reject("invalid effect fingerprint");
   }
   if (
-    input.validation.status !== "PASS" ||
     input.validation.runId !== input.runId ||
     input.validation.candidateFingerprint !== input.candidateFingerprint ||
     input.validation.artifactSetFingerprint !== input.artifactSetFingerprint ||
@@ -134,7 +229,7 @@ export function validateRequest(input: GitHubReviewRequest, options: LiveGitHubO
       Buffer.byteLength(artifact.content, "utf8") > 100_000 ||
       !fingerprint.test(artifact.candidateArtifactFingerprint) ||
       (artifact.operation !== "CREATE" && artifact.operation !== "MODIFY") ||
-      (artifact.operation === "MODIFY" && artifact.expectedBaseSha !== input.baseSha) ||
+      (artifact.operation === "MODIFY" && !gitSha.test(artifact.expectedBaseBlobSha)) ||
       seen.has(artifact.path)
     )
       reject("artifact input is invalid");

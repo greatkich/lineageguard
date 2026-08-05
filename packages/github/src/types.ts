@@ -13,6 +13,7 @@ export type GitHubRetry = "NEVER" | "RETRY" | "RECONCILE";
 
 export interface GitHubHttpRequest {
   method: "GET" | "POST";
+  operation: GitHubOperation;
   url: string;
   headers: Readonly<Record<string, string>>;
   body?: unknown;
@@ -44,11 +45,10 @@ interface GitHubArtifactBase {
 
 export type GitHubArtifact =
   | (GitHubArtifactBase & { operation: "CREATE" })
-  | (GitHubArtifactBase & { operation: "MODIFY"; expectedBaseSha: string });
+  | (GitHubArtifactBase & { operation: "MODIFY"; expectedBaseBlobSha: string });
 
 export interface GitHubValidationBinding {
   runId: string;
-  status: "PASS";
   candidateFingerprint: string;
   artifactSetFingerprint: string;
   receiptFingerprint: string;
@@ -56,9 +56,13 @@ export interface GitHubValidationBinding {
 }
 
 export interface GitHubReviewRequest {
+  effectReservationId: string;
+  effectReservationToken: string;
   runId: string;
   effectKind: "GITHUB_WRITE";
   target: string;
+  idempotencyKey: string;
+  intentFingerprint: string;
   inputFingerprint: string;
   repository: string;
   baseBranch: string;
@@ -66,6 +70,7 @@ export interface GitHubReviewRequest {
   candidateFingerprint: string;
   artifactSetFingerprint: string;
   validationReceiptFingerprint: string;
+  approvalFingerprint: string;
   validation: GitHubValidationBinding;
   artifacts: GitHubArtifact[];
   title: string;
@@ -77,17 +82,70 @@ export interface GitHubReviewRequest {
   };
 }
 
-export interface GitHubReplayRequest {
+export interface CanonicalGitHubEffect {
+  schemaVersion: 1;
+  reservationId: string;
   runId: string;
-  inputFingerprint: string;
+  effectKind: "GITHUB_WRITE";
+  apiBaseUrl: "https://api.github.com";
+  repository: string;
+  baseBranch: string;
+  baseSha: string;
+  headBranch: string;
+  target: string;
+  idempotencyKey: string;
+  intentFingerprint: string;
   candidateFingerprint: string;
   artifactSetFingerprint: string;
   validationReceiptFingerprint: string;
+  approvalFingerprint: string;
+  artifacts: readonly {
+    path: string;
+    operation: "CREATE" | "MODIFY";
+    expectedBaseBlobSha: string | null;
+    candidateArtifactFingerprint: string;
+    materializedSha256: string;
+  }[];
+  pullRequest: { title: string; body: string };
+}
+
+export interface GitHubEffectAuthorization {
+  reservationId: string;
+  canonicalEffectFingerprint: string;
+  state: "RESERVED" | "CONSUMED";
+}
+
+export interface GitHubEffectReservationClaim {
+  reservationId: string;
+  reservationToken: string;
+  runId: string;
+  effectKind: "GITHUB_WRITE";
+  target: string;
+  idempotencyKey: string;
+  intentFingerprint: string;
+  inputFingerprint: string;
+  validationReceiptFingerprint: string;
+  approvalFingerprint: string;
+}
+
+export interface GitHubEffectAuthorityPort {
+  resolveCurrentEffect(input: GitHubEffectReservationClaim): Promise<GitHubEffectAuthorization>;
+  consumeCurrentEffect(
+    input: GitHubEffectReservationClaim & {
+      canonicalEffectFingerprint: string;
+    },
+  ): Promise<{
+    canonicalEffectFingerprint: string;
+    invokeBy: string;
+    attemptFence: string;
+  }>;
 }
 
 export interface GitHubReviewReceipt {
   schemaVersion: 1;
   mode: "LIVE" | "REPLAY";
+  effectKind: "GITHUB_WRITE";
+  target: string;
   repository: string;
   baseBranch: string;
   baseSha: string;
@@ -101,11 +159,14 @@ export interface GitHubReviewReceipt {
   candidateFingerprint: string;
   artifactSetFingerprint: string;
   validationReceiptFingerprint: string;
+  approvalFingerprint: string;
+  intentFingerprint: string;
+  idempotencyKey: string;
   inputFingerprint: string;
   reconciled: boolean;
 }
 
-export interface GitHubPort<TRequest = GitHubReviewRequest | GitHubReplayRequest> {
+export interface GitHubPort<TRequest = GitHubReviewRequest> {
   createMigrationReview(input: TRequest): Promise<GitHubReviewReceipt>;
 }
 
@@ -117,5 +178,6 @@ export interface LiveGitHubOptions {
   token: string;
   timeoutMs: number;
   maxAttempts: 1 | 2 | 3;
+  authority: GitHubEffectAuthorityPort;
   transport?: GitHubHttpTransport;
 }

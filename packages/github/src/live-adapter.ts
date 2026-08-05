@@ -1,3 +1,4 @@
+import { renderPullRequestBody, reservationClaim, resolveAuthorization } from "./authorization.js";
 import { GitHubEffectError } from "./errors.js";
 import { sha256Buffer } from "./hash.js";
 import { FetchGitHubTransport } from "./transport.js";
@@ -20,7 +21,9 @@ function object(value: unknown): Json | undefined {
     : undefined;
 }
 function text(value: unknown): string | undefined {
-  return typeof value === "string" ? value : undefined;
+  return typeof value === "string" && Buffer.byteLength(value, "utf8") <= 200_000
+    ? value
+    : undefined;
 }
 function integer(value: unknown): number | undefined {
   return Number.isSafeInteger(value) && (value as number) > 0 ? (value as number) : undefined;
@@ -36,11 +39,12 @@ interface TreeEntry {
 
 function decodedBase64(value: unknown): Buffer | undefined {
   const encoded = text(value);
-  if (!encoded) return undefined;
+  if (!encoded || encoded.length > 133_336) return undefined;
   const compact = encoded.replace(/\r?\n/g, "");
   if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(compact))
     return undefined;
   const decoded = Buffer.from(compact, "base64");
+  if (decoded.byteLength > 100_000) return undefined;
   if (decoded.toString("base64") !== compact) return undefined;
   return decoded;
 }
@@ -57,31 +61,35 @@ export class LiveGitHubPort implements GitHubPort<GitHubReviewRequest> {
 
   async createMigrationReview(input: GitHubReviewRequest): Promise<GitHubReviewReceipt> {
     validateRequest(input, this.#options);
+    const authorization = await resolveAuthorization(input, this.#options);
     await this.verifyRepositoryAndBase(input);
     const reconciled = await this.reconcile(input);
     if (reconciled) return reconciled;
-    let last: GitHubEffectError | undefined;
-    for (let attempt = 1; attempt <= this.#options.maxAttempts; attempt += 1) {
-      try {
-        return await this.create(input);
-      } catch (error) {
-        const failure = this.normalizeTransportError(error, "RECONCILE", "RECONCILE");
-        if (failure.retry === "NEVER") throw failure;
-        last = failure;
-        const found = await this.reconcile(input);
-        if (found) return found;
-        if (attempt === this.#options.maxAttempts) throw failure;
-      }
+    if (authorization.state === "CONSUMED") {
+      throw this.ambiguous("The authorized effect was already consumed and is not yet observable");
     }
-    throw (
-      last ??
-      new GitHubEffectError({
-        code: "REMOTE_FAILURE",
-        operation: "RECONCILE",
-        retry: "NEVER",
-        message: "GitHub effect failed",
-      })
-    );
+    try {
+      return await this.create(input, authorization.canonicalEffectFingerprint);
+    } catch (error) {
+      const failure = this.normalizeTransportError(error, "RECONCILE", "RECONCILE");
+      if (failure.retry === "NEVER") throw failure;
+      for (let attempt = 1; attempt <= this.#options.maxAttempts; attempt += 1) {
+        const found = await this.reconcile(input, true);
+        if (found) return found;
+        if (attempt < this.#options.maxAttempts)
+          await new Promise((resolve) => setTimeout(resolve, 1));
+      }
+      throw this.ambiguous("GitHub write outcome remains unknown after bounded reconciliation");
+    }
+  }
+
+  private ambiguous(message: string): GitHubEffectError {
+    return new GitHubEffectError({
+      code: "TRANSPORT_AMBIGUOUS",
+      operation: "RECONCILE",
+      retry: "RECONCILE",
+      message,
+    });
   }
 
   private endpoint(path: string): string {
@@ -101,6 +109,7 @@ export class LiveGitHubPort implements GitHubPort<GitHubReviewRequest> {
       try {
         const response = await this.invokeTransport({
           method,
+          operation,
           url: this.endpoint(path),
           headers: {
             accept: "application/vnd.github+json",
@@ -280,30 +289,11 @@ export class LiveGitHubPort implements GitHubPort<GitHubReviewRequest> {
     }
   }
 
-  private marker(input: GitHubReviewRequest): string {
-    return `lineageguard-effect:${input.inputFingerprint}`;
-  }
   private commitMessage(input: GitHubReviewRequest): string {
-    return `LineageGuard migration for ${input.runId}\n\nLineageGuard-Effect: ${input.inputFingerprint}`;
+    return `LineageGuard migration for ${input.runId}\n\nLineageGuard-Effect: ${input.intentFingerprint}`;
   }
   private pullBody(input: GitHubReviewRequest): string {
-    return [
-      `<!-- ${this.marker(input)} -->`,
-      input.body.summary,
-      "",
-      `Candidate: ${input.candidateFingerprint}`,
-      `Validated artifacts: ${input.artifactSetFingerprint}`,
-      `Validation receipt: ${input.validationReceiptFingerprint}`,
-      "",
-      "Evidence",
-      ...input.body.reasonEvidenceIds.map((id) => `- ${id}`),
-      "",
-      "Rollout",
-      ...input.body.rolloutSteps.map((step) => `- ${step}`),
-      "",
-      "Rollback",
-      ...input.body.rollbackSteps.map((step) => `- ${step}`),
-    ].join("\n");
+    return renderPullRequestBody(input);
   }
 
   private async readTree(treeSha: string): Promise<Map<string, TreeEntry>> {
@@ -311,7 +301,12 @@ export class LiveGitHubPort implements GitHubPort<GitHubReviewRequest> {
       (await this.call("GET", `/git/trees/${treeSha}?recursive=1`, "RECONCILE")).body,
     );
     const entries = Array.isArray(response?.tree) ? response.tree : undefined;
-    if (text(response?.sha) !== treeSha || response?.truncated !== false || !entries) {
+    if (
+      text(response?.sha) !== treeSha ||
+      response?.truncated !== false ||
+      !entries ||
+      entries.length > 20_000
+    ) {
       throw new GitHubEffectError({
         code: "REMOTE_CONFLICT",
         operation: "RECONCILE",
@@ -326,7 +321,17 @@ export class LiveGitHubPort implements GitHubPort<GitHubReviewRequest> {
       const mode = text(entry?.mode);
       const type = text(entry?.type);
       const sha = text(entry?.sha);
-      if (!path || !mode || !type || !sha || !gitObjectId.test(sha) || result.has(path)) {
+      if (
+        !path ||
+        path.length > 240 ||
+        !mode ||
+        mode.length > 12 ||
+        !type ||
+        type.length > 16 ||
+        !sha ||
+        !gitObjectId.test(sha) ||
+        result.has(path)
+      ) {
         throw new GitHubEffectError({
           code: "REMOTE_CONFLICT",
           operation: "RECONCILE",
@@ -439,7 +444,7 @@ export class LiveGitHubPort implements GitHubPort<GitHubReviewRequest> {
     const head = deterministicHead(input.runId);
     const query = `?state=all&head=${encodeURIComponent(`${this.#options.owner}:${head}`)}&base=${encodeURIComponent(input.baseBranch)}&per_page=2`;
     const response = await this.call("GET", `/pulls${query}`, "RECONCILE");
-    if (!Array.isArray(response.body))
+    if (!Array.isArray(response.body) || response.body.length > 2)
       throw new GitHubEffectError({
         code: "REMOTE_FAILURE",
         operation: "RECONCILE",
@@ -491,6 +496,8 @@ export class LiveGitHubPort implements GitHubPort<GitHubReviewRequest> {
     return {
       schemaVersion: 1,
       mode: "LIVE",
+      effectKind: input.effectKind,
+      target: input.target,
       repository: input.repository,
       baseBranch: input.baseBranch,
       baseSha: input.baseSha,
@@ -504,12 +511,18 @@ export class LiveGitHubPort implements GitHubPort<GitHubReviewRequest> {
       candidateFingerprint: input.candidateFingerprint,
       artifactSetFingerprint: input.artifactSetFingerprint,
       validationReceiptFingerprint: input.validationReceiptFingerprint,
+      approvalFingerprint: input.approvalFingerprint,
+      intentFingerprint: input.intentFingerprint,
+      idempotencyKey: input.idempotencyKey,
       inputFingerprint: input.inputFingerprint,
       reconciled,
     };
   }
 
-  private async reconcile(input: GitHubReviewRequest): Promise<GitHubReviewReceipt | undefined> {
+  private async reconcile(
+    input: GitHubReviewRequest,
+    allowIncomplete = false,
+  ): Promise<GitHubReviewReceipt | undefined> {
     const ref = await this.getHead(input);
     if (!ref) return undefined;
     const refObject = object(ref.object);
@@ -552,7 +565,10 @@ export class LiveGitHubPort implements GitHubPort<GitHubReviewRequest> {
         retry: "NEVER",
         message: "More than one pull request exists for the deterministic branch",
       });
-    if (pulls.length === 0) return this.createPull(input, headSha, true);
+    if (pulls.length === 0) {
+      if (allowIncomplete) return undefined;
+      throw this.ambiguous("Authorized branch exists but pull request is not observable");
+    }
     const pull = object(pulls[0]);
     if (!pull)
       throw new GitHubEffectError({
@@ -564,7 +580,10 @@ export class LiveGitHubPort implements GitHubPort<GitHubReviewRequest> {
     return this.receipt(input, pull, headSha, true);
   }
 
-  private async create(input: GitHubReviewRequest): Promise<GitHubReviewReceipt> {
+  private async create(
+    input: GitHubReviewRequest,
+    canonicalEffectFingerprint: string,
+  ): Promise<GitHubReviewReceipt> {
     const baseCommit = object(
       (await this.call("GET", `/git/commits/${input.baseSha}`, "READ_BASE_COMMIT")).body,
     );
@@ -580,32 +599,89 @@ export class LiveGitHubPort implements GitHubPort<GitHubReviewRequest> {
       (await this.call("GET", `/git/trees/${baseTree}?recursive=1`, "READ_BASE_COMMIT")).body,
     );
     const baseEntries = Array.isArray(baseTreeResponse?.tree) ? baseTreeResponse.tree : [];
-    if (text(baseTreeResponse?.sha) !== baseTree || baseTreeResponse?.truncated !== false)
+    if (
+      text(baseTreeResponse?.sha) !== baseTree ||
+      baseTreeResponse?.truncated !== false ||
+      baseEntries.length > 20_000
+    )
       throw new GitHubEffectError({
         code: "REMOTE_FAILURE",
         operation: "READ_BASE_COMMIT",
         retry: "NEVER",
         message: "Base tree cannot be checked completely",
       });
-    const basePaths = new Map(
-      baseEntries.map((entry) => {
-        const item = object(entry);
-        return [text(item?.path), text(item?.type)] as const;
-      }),
-    );
-    const treeEntries: Array<Record<string, string>> = [];
-    for (const artifact of input.artifacts) {
-      const existingType = basePaths.get(artifact.path);
+    const basePaths = new Map<string, { type: string; sha: string }>();
+    for (const entry of baseEntries) {
+      const item = object(entry);
+      const path = text(item?.path);
+      const type = text(item?.type);
+      const sha = text(item?.sha);
       if (
-        (artifact.operation === "CREATE" && existingType !== undefined) ||
-        (artifact.operation === "MODIFY" && existingType !== "blob")
+        !path ||
+        path.length > 240 ||
+        !type ||
+        type.length > 16 ||
+        !sha ||
+        !gitObjectId.test(sha) ||
+        basePaths.has(path)
+      )
+        throw new GitHubEffectError({
+          code: "REMOTE_FAILURE",
+          operation: "READ_BASE_COMMIT",
+          retry: "NEVER",
+          message: "Base tree contains malformed or duplicate entries",
+        });
+      basePaths.set(path, { type, sha });
+    }
+    for (const artifact of input.artifacts) {
+      const existing = basePaths.get(artifact.path);
+      if (
+        (artifact.operation === "CREATE" && existing !== undefined) ||
+        (artifact.operation === "MODIFY" &&
+          (existing?.type !== "blob" || existing.sha !== artifact.expectedBaseBlobSha))
       )
         throw new GitHubEffectError({
           code: "REMOTE_CONFLICT",
           operation: "READ_BASE_COMMIT",
           retry: "NEVER",
-          message: "Validated artifact operation does not match the base tree",
+          message: "Validated artifact operation or base blob does not match the exact base tree",
         });
+    }
+    let consumed: {
+      canonicalEffectFingerprint: string;
+      invokeBy: string;
+      attemptFence: string;
+    };
+    try {
+      consumed = await this.#options.authority.consumeCurrentEffect({
+        ...reservationClaim(input),
+        canonicalEffectFingerprint,
+      });
+    } catch {
+      throw new GitHubEffectError({
+        code: "AUTHORIZATION_REJECTED",
+        operation: "RECONCILE",
+        retry: "NEVER",
+        message: "Trusted effect reservation could not be consumed",
+      });
+    }
+    const invokeBy = Date.parse(consumed.invokeBy);
+    if (
+      consumed.canonicalEffectFingerprint !== canonicalEffectFingerprint ||
+      !Number.isFinite(invokeBy) ||
+      new Date(invokeBy).toISOString() !== consumed.invokeBy ||
+      invokeBy < Date.now() ||
+      invokeBy > Date.now() + 300_000 ||
+      !/^[A-Za-z0-9_-]{32,200}$/.test(consumed.attemptFence)
+    )
+      throw new GitHubEffectError({
+        code: "AUTHORIZATION_REJECTED",
+        operation: "RECONCILE",
+        retry: "NEVER",
+        message: "Trusted effect authority consumed a different canonical effect",
+      });
+    const treeEntries: Array<Record<string, string>> = [];
+    for (const artifact of input.artifacts) {
       const blob = object(
         (
           await this.call("POST", "/git/blobs", "CREATE_BLOB", {

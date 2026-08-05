@@ -3,6 +3,7 @@ import type { GitHubOperation, GitHubRetry } from "./types.js";
 export type GitHubEffectErrorCode =
   | "INVALID_INPUT"
   | "POLICY_REJECTED"
+  | "AUTHORIZATION_REJECTED"
   | "VALIDATION_BINDING_MISMATCH"
   | "PERMISSION_DENIED"
   | "NOT_FOUND"

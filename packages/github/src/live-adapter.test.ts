@@ -1,11 +1,14 @@
 import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import {
+  type GitHubEffectAuthorityPort,
   GitHubEffectError,
+  type GitHubEffectReservationClaim,
   type GitHubHttpRequest,
   type GitHubHttpResponse,
   type GitHubHttpTransport,
   type GitHubReviewRequest,
+  githubEffectFingerprint,
   LiveGitHubPort,
   sha256Bytes,
 } from "./index.js";
@@ -19,23 +22,27 @@ const sha = (character: string) => character.repeat(40);
 
 function request(): GitHubReviewRequest {
   const content = "select customer_id as buyer_id\n";
-  return {
+  const input: GitHubReviewRequest = {
+    effectReservationId: "reservation_0123456789abcdef0123456789abcdef",
+    effectReservationToken: "token_0123456789abcdef0123456789abcdef0123456789abcdef",
     runId: "run_0123456789abcdef01234567",
     effectKind: "GITHUB_WRITE",
-    target: "github:lineageguard/demo:main",
-    inputFingerprint: hex("1"),
+    target: `https://api.github.com/repos/lineageguard/demo/git/ref/heads/main#${sha("a")}`,
+    idempotencyKey: "github:run_0123456789abcdef01234567:review",
+    intentFingerprint: hex("1"),
+    inputFingerprint: hex("0"),
     repository: "lineageguard/demo",
     baseBranch: "main",
     baseSha: sha("a"),
     candidateFingerprint: hex("2"),
     artifactSetFingerprint: hex("3"),
     validationReceiptFingerprint: hex("4"),
+    approvalFingerprint: hex("6"),
     validation: {
       runId: "run_0123456789abcdef01234567",
       candidateFingerprint: hex("2"),
       artifactSetFingerprint: hex("3"),
       receiptFingerprint: hex("4"),
-      status: "PASS",
       artifacts: [
         {
           path: "walkthrough/models/orders.sql",
@@ -50,7 +57,7 @@ function request(): GitHubReviewRequest {
         content,
         candidateArtifactFingerprint: hex("5"),
         operation: "MODIFY",
-        expectedBaseSha: sha("a"),
+        expectedBaseBlobSha: sha("9"),
       },
     ],
     title: "Safe customer identifier migration",
@@ -61,6 +68,34 @@ function request(): GitHubReviewRequest {
       rollbackSteps: ["Run the validated rollback artifact"],
     },
   };
+  input.inputFingerprint = githubEffectFingerprint(input);
+  return input;
+}
+
+class TrustedAuthority implements GitHubEffectAuthorityPort {
+  readonly calls: string[] = [];
+  constructor(
+    private readonly fingerprint = request().inputFingerprint,
+    private readonly state: "RESERVED" | "CONSUMED" = "RESERVED",
+  ) {}
+  async resolveCurrentEffect(input: GitHubEffectReservationClaim) {
+    this.calls.push("resolve");
+    return {
+      reservationId: input.reservationId,
+      canonicalEffectFingerprint: this.fingerprint,
+      state: this.state,
+    };
+  }
+  async consumeCurrentEffect(
+    input: GitHubEffectReservationClaim & { canonicalEffectFingerprint: string },
+  ) {
+    this.calls.push("consume");
+    return {
+      canonicalEffectFingerprint: input.canonicalEffectFingerprint,
+      invokeBy: new Date(Date.now() + 60_000).toISOString(),
+      attemptFence: "fence_0123456789abcdef0123456789abcdef",
+    };
+  }
 }
 
 class ScriptedTransport implements GitHubHttpTransport {
@@ -81,7 +116,10 @@ const response = (status: number, body: unknown): GitHubHttpResponse => ({
   body,
 });
 
-function createPort(transport: GitHubHttpTransport) {
+function createPort(
+  transport: GitHubHttpTransport,
+  authority: GitHubEffectAuthorityPort = new TrustedAuthority(),
+) {
   return new LiveGitHubPort({
     owner: "lineageguard",
     repository: "demo",
@@ -90,6 +128,7 @@ function createPort(transport: GitHubHttpTransport) {
     token: "test-sensitive-value",
     timeoutMs: 2_000,
     maxAttempts: 2,
+    authority,
     transport,
   });
 }
@@ -144,7 +183,7 @@ describe("LiveGitHubPort", () => {
       candidateFingerprint: hex("2"),
       artifactSetFingerprint: hex("3"),
       validationReceiptFingerprint: hex("4"),
-      inputFingerprint: hex("1"),
+      inputFingerprint: request().inputFingerprint,
     });
     expect(transport.calls.map(({ method, url }) => `${method} ${url}`)).toEqual([
       "GET https://api.github.com/repos/lineageguard/demo",
@@ -197,6 +236,58 @@ describe("LiveGitHubPort", () => {
     expect(transport.calls).toHaveLength(0);
   });
 
+  it("rejects a malformed runtime request with a classified error before network", async () => {
+    const transport = new ScriptedTransport([]);
+    const malformed = { ...request(), body: null } as unknown as GitHubReviewRequest;
+    await expect(createPort(transport).createMigrationReview(malformed)).rejects.toMatchObject({
+      code: "INVALID_INPUT",
+      retry: "NEVER",
+    });
+    expect(transport.calls).toHaveLength(0);
+  });
+
+  it("rejects a handcrafted self-consistent PASS-shaped request before network", async () => {
+    const transport = new ScriptedTransport([]);
+    const input = request();
+    input.approvalFingerprint = hex("f");
+    input.inputFingerprint = githubEffectFingerprint(input);
+    await expect(createPort(transport).createMigrationReview(input)).rejects.toMatchObject({
+      code: "AUTHORIZATION_REJECTED",
+      retry: "NEVER",
+    });
+    expect(transport.calls).toHaveLength(0);
+  });
+
+  it("does not consume authority or write when the exact base blob differs", async () => {
+    const authority = new TrustedAuthority();
+    const changedTree = {
+      ...(fixture.baseTree as Record<string, unknown>),
+      tree: [
+        {
+          path: "walkthrough/models/orders.sql",
+          mode: "100644",
+          type: "blob",
+          sha: sha("8"),
+        },
+      ],
+    };
+    const transport = new ScriptedTransport([
+      response(200, fixture.repository),
+      response(200, fixture.baseRef),
+      response(404, fixture.notFound),
+      response(200, fixture.baseCommit),
+      response(200, changedTree),
+    ]);
+    await expect(
+      createPort(transport, authority).createMigrationReview(request()),
+    ).rejects.toMatchObject({
+      code: "REMOTE_CONFLICT",
+      retry: "NEVER",
+    });
+    expect(authority.calls).toEqual(["resolve"]);
+    expect(transport.calls.every((call) => call.method === "GET")).toBe(true);
+  });
+
   it("rejects redirects without following them", async () => {
     const transport = new ScriptedTransport([response(302, { location: "https://evil.invalid" })]);
     await expect(createPort(transport).createMigrationReview(request())).rejects.toMatchObject({
@@ -234,6 +325,7 @@ describe("LiveGitHubPort", () => {
       token: "test-sensitive-value",
       timeoutMs: 100,
       maxAttempts: 1,
+      authority: new TrustedAuthority(),
       transport,
     });
     const startedAt = Date.now();
@@ -284,6 +376,20 @@ describe("LiveGitHubPort", () => {
     await expect(createPort(transport).createMigrationReview(request())).rejects.toMatchObject({
       code: "REMOTE_CONFLICT",
       operation: "RECONCILE",
+      retry: "NEVER",
+    });
+    expect(transport.calls.every((call) => call.method === "GET")).toBe(true);
+  });
+
+  it("rejects an oversized base64 blob before decoding it", async () => {
+    const oversizedBlob = {
+      ...(fixture.headBlob as Record<string, unknown>),
+      size: 100_001,
+      content: "A".repeat(133_340),
+    };
+    const transport = new ScriptedTransport(reconcileScript({ headBlob: oversizedBlob }));
+    await expect(createPort(transport).createMigrationReview(request())).rejects.toMatchObject({
+      code: "REMOTE_CONFLICT",
       retry: "NEVER",
     });
     expect(transport.calls.every((call) => call.method === "GET")).toBe(true);
@@ -353,6 +459,69 @@ describe("LiveGitHubPort", () => {
     expect(
       transport.calls.filter((call) => call.method === "POST" && call.url.endsWith("/pulls")),
     ).toHaveLength(1);
+  });
+
+  it("polls for a delayed PR after an ambiguous POST and never sends it again", async () => {
+    const ambiguous = new GitHubEffectError({
+      code: "TRANSPORT_AMBIGUOUS",
+      operation: "CREATE_PULL_REQUEST",
+      retry: "RECONCILE",
+      message: "response status is unknown",
+    });
+    const script = successScript();
+    script[10] = ambiguous;
+    const transport = new ScriptedTransport([
+      ...script,
+      ...reconcileScript({ pulls: fixture.noPulls }).slice(2),
+      ...reconcileScript().slice(2),
+    ]);
+    await expect(createPort(transport).createMigrationReview(request())).resolves.toMatchObject({
+      reconciled: true,
+      prNumber: 17,
+    });
+    expect(
+      transport.calls.filter((call) => call.method === "POST" && call.url.endsWith("/pulls")),
+    ).toHaveLength(1);
+  });
+
+  it("never resends an ambiguous blob POST and returns durable ambiguity", async () => {
+    const ambiguous = new GitHubEffectError({
+      code: "TRANSPORT_AMBIGUOUS",
+      operation: "CREATE_BLOB",
+      retry: "RECONCILE",
+      message: "response status is unknown",
+    });
+    const script = successScript();
+    script[5] = ambiguous;
+    const transport = new ScriptedTransport([
+      ...script.slice(0, 6),
+      response(404, fixture.notFound),
+      response(404, fixture.notFound),
+    ]);
+    await expect(createPort(transport).createMigrationReview(request())).rejects.toMatchObject({
+      code: "TRANSPORT_AMBIGUOUS",
+      retry: "RECONCILE",
+    });
+    expect(
+      transport.calls.filter((call) => call.method === "POST" && call.url.endsWith("/git/blobs")),
+    ).toHaveLength(1);
+  });
+
+  it("reconciles first and never writes when the reservation was already consumed", async () => {
+    const authority = new TrustedAuthority(request().inputFingerprint, "CONSUMED");
+    const transport = new ScriptedTransport([
+      response(200, fixture.repository),
+      response(200, fixture.baseRef),
+      response(404, fixture.notFound),
+    ]);
+    await expect(
+      createPort(transport, authority).createMigrationReview(request()),
+    ).rejects.toMatchObject({
+      code: "TRANSPORT_AMBIGUOUS",
+      retry: "RECONCILE",
+    });
+    expect(transport.calls.every((call) => call.method === "GET")).toBe(true);
+    expect(authority.calls).toEqual(["resolve"]);
   });
 
   it("fails closed when an ambiguous branch creation resolves to an altered remote tree", async () => {

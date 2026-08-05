@@ -23,9 +23,27 @@ skip validation, merge code, or turn a failed run into success.
 - The final run cannot reach `COMPLETED` without successful GitHub and DataHub receipts matching the
   validated candidate fingerprint.
 
+### Trusted reservation handoff
+
+An adapter request is never its own validation or approval authority. The durable run store mints a
+one-time opaque reservation token, retains only its hash, and binds it to the exact run, effect kind,
+target, idempotency key, intent, input, validation-receipt, and approval fingerprints. The GitHub
+adapter resolves that complete claim before network access. After read-only preflight fixes the exact
+base commit and base blob identities, it recomputes the canonical GitHub effect fingerprint and
+atomically consumes the reservation immediately before the first write. Consume returns a bounded
+`invokeBy` deadline and attempt fence. A missing, forged, expired, reused, or differently bound token
+fails before mutation.
+
+The canonical GitHub payload binds the exact `https://api.github.com` host, owner/repository, base
+branch and SHA, deterministic head branch, every artifact path and `CREATE | MODIFY` operation,
+expected base blob SHA for modifications, materialized SHA-256, exact pull-request title/body, and all
+intent, candidate, artifact-set, validation, and approval fingerprints.
+
 ## GitHub boundary
 
-`@lineageguard/github` exposes a narrow `GitHubPort` with live and replay implementations.
+`@lineageguard/github` exposes a narrow live `GitHubPort`. Replay remains unavailable from the
+production package root until the repository contains an authenticated, verified live receipt
+fixture; an internal parser may stage its bounded target-binding checks without establishing trust.
 
 The live P0 adapter may:
 
@@ -62,6 +80,10 @@ The target URN must equal the run's resolved canonical source URN and pass the i
 
 - Transport ambiguity triggers remote reconciliation by deterministic branch/PR marker or DataHub
   document/tag marker before retry.
+- A GitHub POST is sent at most once. After any POST timeout, transport error, or ambiguous response,
+  the adapter performs bounded read-only reconciliation and never resends that POST. If exact
+  branch/tree/commit/PR state cannot be proven, the durable outcome remains `TRANSPORT_AMBIGUOUS`.
+  A resumed consumed reservation reconciles first and cannot initiate another POST.
 - Permission, target, policy, approval, or fingerprint mismatch fails closed and is not retried.
 - Partial GitHub or DataHub work remains visible in the effect intent with a bounded recovery state.
 - A GitHub failure maps to `FAILED_GITHUB`; a write-back failure maps to `FAILED_WRITEBACK`.
