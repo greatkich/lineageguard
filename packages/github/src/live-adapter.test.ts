@@ -70,6 +70,24 @@ function request(): GitHubReviewRequest {
   return input;
 }
 
+function createExistingPathRequest(): GitHubReviewRequest {
+  const input = request();
+  const artifact = input.artifacts[0];
+  const observation = input.validation.artifacts[0];
+  if (!artifact || !observation) throw new Error("test fixture is missing its artifact");
+  input.artifacts = [
+    {
+      path: artifact.path,
+      content: artifact.content,
+      candidateArtifactFingerprint: artifact.candidateArtifactFingerprint,
+      operation: "CREATE",
+    },
+  ];
+  input.validation = { ...input.validation, artifacts: [{ ...observation }] };
+  input.inputFingerprint = githubEffectFingerprint(input);
+  return input;
+}
+
 class TrustedAuthority implements GitHubEffectAuthorityPort {
   readonly calls: string[] = [];
   constructor(
@@ -312,6 +330,38 @@ describe("LiveGitHubPort", () => {
     expect(transport.calls.every((call) => call.method === "GET")).toBe(true);
   });
 
+  it.each([
+    [
+      "CREATE with a missing tree that could hide an existing path",
+      createExistingPathRequest,
+      { sha: sha("b"), truncated: false },
+    ],
+    [
+      "MODIFY with a non-array tree",
+      request,
+      { sha: sha("b"), truncated: false, tree: { hidden: fixture.baseTree } },
+    ],
+  ])("rejects malformed base-tree preflight for %s", async (_name, makeRequest, treeBody) => {
+    const input = makeRequest();
+    const authority = new TrustedAuthority(input.inputFingerprint);
+    const transport = new ScriptedTransport([
+      response(200, fixture.repository),
+      response(200, fixture.baseRef),
+      response(404, fixture.notFound),
+      response(200, fixture.baseCommit),
+      response(200, treeBody),
+    ]);
+    await expect(
+      createPort(transport, authority).createMigrationReview(input),
+    ).rejects.toMatchObject({
+      code: "REMOTE_FAILURE",
+      operation: "READ_BASE_COMMIT",
+      retry: "NEVER",
+    });
+    expect(authority.calls).toEqual(["verify"]);
+    expect(transport.calls.every((call) => call.method === "GET")).toBe(true);
+  });
+
   it("rejects redirects without following them", async () => {
     const transport = new ScriptedTransport([response(302, { location: "https://evil.invalid" })]);
     await expect(createPort(transport).createMigrationReview(request())).rejects.toMatchObject({
@@ -477,6 +527,20 @@ describe("LiveGitHubPort", () => {
     const transport = new ScriptedTransport(reconcileScript({ headBlob: oversizedBlob }));
     await expect(createPort(transport).createMigrationReview(request())).rejects.toMatchObject({
       code: "REMOTE_CONFLICT",
+      retry: "NEVER",
+    });
+    expect(transport.calls.every((call) => call.method === "GET")).toBe(true);
+  });
+
+  it("uses the same strict parser for recursive reconciliation tree envelopes", async () => {
+    const malformedHeadTree = {
+      ...(fixture.headTree as Record<string, unknown>),
+      unexpected: "untrusted extra field",
+    };
+    const transport = new ScriptedTransport(reconcileScript({ headTree: malformedHeadTree }));
+    await expect(createPort(transport).createMigrationReview(request())).rejects.toMatchObject({
+      code: "REMOTE_CONFLICT",
+      operation: "RECONCILE",
       retry: "NEVER",
     });
     expect(transport.calls.every((call) => call.method === "GET")).toBe(true);

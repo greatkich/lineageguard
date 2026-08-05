@@ -49,6 +49,106 @@ interface TreeEntry {
   sha: string;
 }
 
+function strictRecord(
+  value: unknown,
+  requiredKeys: readonly string[],
+  allowedKeys: readonly string[],
+): Json | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) return undefined;
+  const keys = Reflect.ownKeys(value);
+  if (
+    keys.some((key) => typeof key !== "string" || !allowedKeys.includes(key)) ||
+    requiredKeys.some((key) => !keys.includes(key))
+  )
+    return undefined;
+  for (const key of keys) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (!descriptor || !("value" in descriptor)) return undefined;
+  }
+  return value as Json;
+}
+
+function strictArray(value: unknown, maxLength: number): unknown[] | undefined {
+  if (
+    !Array.isArray(value) ||
+    Object.getPrototypeOf(value) !== Array.prototype ||
+    value.length > maxLength
+  )
+    return undefined;
+  const keys = Reflect.ownKeys(value);
+  if (keys.length !== value.length + 1 || keys[keys.length - 1] !== "length") return undefined;
+  for (let index = 0; index < value.length; index += 1) {
+    if (keys[index] !== String(index)) return undefined;
+    const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+    if (!descriptor || !("value" in descriptor)) return undefined;
+  }
+  return value;
+}
+
+function parseTreeResponse(
+  body: unknown,
+  expectedSha: string,
+  operation: "READ_BASE_COMMIT" | "RECONCILE",
+): Map<string, TreeEntry> {
+  const failure = (message: string): never => {
+    throw new GitHubEffectError({
+      code: operation === "RECONCILE" ? "REMOTE_CONFLICT" : "REMOTE_FAILURE",
+      operation,
+      retry: "NEVER",
+      message,
+    });
+  };
+  const response = strictRecord(
+    body,
+    ["sha", "truncated", "tree"],
+    ["sha", "url", "truncated", "tree"],
+  );
+  const entries = strictArray(response?.tree, 20_000);
+  if (
+    !response ||
+    text(response.sha) !== expectedSha ||
+    response.truncated !== false ||
+    !entries ||
+    (response.url !== undefined &&
+      (typeof response.url !== "string" || response.url.length > 1_000))
+  )
+    return failure("Remote commit tree envelope is malformed or incomplete");
+  const result = new Map<string, TreeEntry>();
+  const seen = new Set<string>();
+  for (const raw of entries) {
+    const entry = strictRecord(
+      raw,
+      ["path", "mode", "type", "sha"],
+      ["path", "mode", "type", "sha", "size", "url"],
+    );
+    const path = text(entry?.path);
+    const mode = text(entry?.mode);
+    const type = text(entry?.type);
+    const sha = text(entry?.sha);
+    if (
+      !entry ||
+      !path ||
+      path.length > 240 ||
+      !mode ||
+      mode.length > 12 ||
+      !type ||
+      !["blob", "tree", "commit"].includes(type) ||
+      !sha ||
+      !gitObjectId.test(sha) ||
+      seen.has(path) ||
+      (entry.size !== undefined &&
+        (!Number.isSafeInteger(entry.size) || (entry.size as number) < 0)) ||
+      (entry.url !== undefined && (typeof entry.url !== "string" || entry.url.length > 1_000))
+    )
+      return failure("Remote commit tree contains malformed or duplicate entries");
+    seen.add(path);
+    if (type !== "tree") result.set(path, { path, mode, type, sha });
+  }
+  return result;
+}
+
 function decodedBase64(value: unknown): Buffer | undefined {
   const encoded = text(value);
   if (!encoded || encoded.length > 133_336) return undefined;
@@ -310,51 +410,8 @@ export class LiveGitHubPort implements GitHubPort<GitHubReviewRequest> {
   }
 
   private async readTree(treeSha: string): Promise<Map<string, TreeEntry>> {
-    const response = object(
-      (await this.call("GET", `/git/trees/${treeSha}?recursive=1`, "RECONCILE")).body,
-    );
-    const entries = Array.isArray(response?.tree) ? response.tree : undefined;
-    if (
-      text(response?.sha) !== treeSha ||
-      response?.truncated !== false ||
-      !entries ||
-      entries.length > 20_000
-    ) {
-      throw new GitHubEffectError({
-        code: "REMOTE_CONFLICT",
-        operation: "RECONCILE",
-        retry: "NEVER",
-        message: "Remote commit tree cannot be reconciled completely",
-      });
-    }
-    const result = new Map<string, TreeEntry>();
-    for (const raw of entries) {
-      const entry = object(raw);
-      const path = text(entry?.path);
-      const mode = text(entry?.mode);
-      const type = text(entry?.type);
-      const sha = text(entry?.sha);
-      if (
-        !path ||
-        path.length > 240 ||
-        !mode ||
-        mode.length > 12 ||
-        !type ||
-        type.length > 16 ||
-        !sha ||
-        !gitObjectId.test(sha) ||
-        result.has(path)
-      ) {
-        throw new GitHubEffectError({
-          code: "REMOTE_CONFLICT",
-          operation: "RECONCILE",
-          retry: "NEVER",
-          message: "Remote commit tree contains malformed or duplicate entries",
-        });
-      }
-      if (type !== "tree") result.set(path, { path, mode, type, sha });
-    }
-    return result;
+    const response = await this.call("GET", `/git/trees/${treeSha}?recursive=1`, "RECONCILE");
+    return parseTreeResponse(response.body, treeSha, "RECONCILE");
   }
 
   private async verifyReconciledArtifacts(
@@ -608,44 +665,12 @@ export class LiveGitHubPort implements GitHubPort<GitHubReviewRequest> {
         retry: "NEVER",
         message: "Validated base commit is unavailable",
       });
-    const baseTreeResponse = object(
-      (await this.call("GET", `/git/trees/${baseTree}?recursive=1`, "READ_BASE_COMMIT")).body,
+    const baseTreeResponse = await this.call(
+      "GET",
+      `/git/trees/${baseTree}?recursive=1`,
+      "READ_BASE_COMMIT",
     );
-    const baseEntries = Array.isArray(baseTreeResponse?.tree) ? baseTreeResponse.tree : [];
-    if (
-      text(baseTreeResponse?.sha) !== baseTree ||
-      baseTreeResponse?.truncated !== false ||
-      baseEntries.length > 20_000
-    )
-      throw new GitHubEffectError({
-        code: "REMOTE_FAILURE",
-        operation: "READ_BASE_COMMIT",
-        retry: "NEVER",
-        message: "Base tree cannot be checked completely",
-      });
-    const basePaths = new Map<string, { type: string; sha: string }>();
-    for (const entry of baseEntries) {
-      const item = object(entry);
-      const path = text(item?.path);
-      const type = text(item?.type);
-      const sha = text(item?.sha);
-      if (
-        !path ||
-        path.length > 240 ||
-        !type ||
-        type.length > 16 ||
-        !sha ||
-        !gitObjectId.test(sha) ||
-        basePaths.has(path)
-      )
-        throw new GitHubEffectError({
-          code: "REMOTE_FAILURE",
-          operation: "READ_BASE_COMMIT",
-          retry: "NEVER",
-          message: "Base tree contains malformed or duplicate entries",
-        });
-      basePaths.set(path, { type, sha });
-    }
+    const basePaths = parseTreeResponse(baseTreeResponse.body, baseTree, "READ_BASE_COMMIT");
     for (const artifact of input.artifacts) {
       const existing = basePaths.get(artifact.path);
       if (
