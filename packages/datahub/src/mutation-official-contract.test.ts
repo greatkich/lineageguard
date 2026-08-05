@@ -1,5 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
+import { createMutationToolClient, officialMutationInputSchemas } from "./mutation-tool-client.js";
+import type { ToolSession } from "./tool-client.js";
 
 async function fixture(name: string): Promise<unknown> {
   return JSON.parse(
@@ -26,5 +28,32 @@ describe("sanitized official DataHub MCP v0.6.0 mutation envelopes", () => {
         success: true,
       },
     });
+  });
+
+  it.each([
+    [
+      "save_document" as const,
+      "save-document-result",
+      { urn: "urn:li:document:lineageguard-migration-decision_example" },
+    ],
+    ["add_tags" as const, "add-tags-result", {}],
+  ])("passes %s fixture through the production parser", async (tool, name, arguments_) => {
+    const raw = await fixture(name);
+    const session: ToolSession = {
+      async callTool() {
+        return raw;
+      },
+      async close() {},
+      async listTools() {
+        return {
+          tools: [
+            { inputSchema: officialMutationInputSchemas.save_document, name: "save_document" },
+            { inputSchema: officialMutationInputSchemas.add_tags, name: "add_tags" },
+          ],
+        };
+      },
+    };
+    const client = await createMutationToolClient(session);
+    await expect(client.invoke(tool, arguments_)).resolves.toMatchObject({ tool });
   });
 });

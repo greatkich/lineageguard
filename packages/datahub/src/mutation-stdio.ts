@@ -218,6 +218,7 @@ function defaultFactory(launch: OfficialMutationSdkLaunch): OfficialMutationSdkC
                     : { readOnlyHint: tool.annotations.readOnlyHint }),
                 },
               }),
+          inputSchema: tool.inputSchema,
           name: tool.name,
         })),
       };

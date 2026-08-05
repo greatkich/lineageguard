@@ -18,6 +18,7 @@ export type DiscoveredTool = Readonly<{
     destructiveHint?: boolean;
     readOnlyHint?: boolean;
   }>;
+  inputSchema?: unknown;
   name: string;
 }>;
 

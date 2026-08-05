@@ -1,20 +1,88 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { DataHubAdapterError } from "./errors.js";
 import { createMutationToolClient, type MutationToolName } from "./mutation-tool-client.js";
 import type { ToolSession } from "./tool-client.js";
 
+const nullableString = { anyOf: [{ type: "string" }, { type: "null" }], default: null };
+const nullableStringArray = {
+  anyOf: [{ items: { type: "string" }, type: "array" }, { type: "null" }],
+  default: null,
+};
+const inputSchemas = {
+  add_tags: {
+    additionalProperties: false,
+    properties: {
+      column_paths: {
+        anyOf: [
+          {
+            items: { anyOf: [{ type: "string" }, { type: "null" }] },
+            type: "array",
+          },
+          { type: "null" },
+        ],
+        default: null,
+      },
+      entity_urns: { items: { type: "string" }, type: "array" },
+      tag_urns: { items: { type: "string" }, type: "array" },
+    },
+    required: ["tag_urns", "entity_urns"],
+    type: "object",
+  },
+  save_document: {
+    additionalProperties: false,
+    properties: {
+      content: { type: "string" },
+      document_type: {
+        enum: [
+          "Insight",
+          "Decision",
+          "FAQ",
+          "Analysis",
+          "Summary",
+          "Recommendation",
+          "Note",
+          "Context",
+        ],
+        type: "string",
+      },
+      related_assets: nullableStringArray,
+      related_documents: nullableStringArray,
+      topics: nullableStringArray,
+      title: { type: "string" },
+      urn: nullableString,
+    },
+    required: ["document_type", "title", "content"],
+    type: "object",
+  },
+} as const;
+
+function declaration(name: "save_document" | "add_tags") {
+  return { inputSchema: inputSchemas[name], name };
+}
+
 function session(overrides: Partial<ToolSession> = {}): ToolSession {
   return {
-    async callTool() {
-      return { structuredContent: { success: true } };
+    async callTool(name, arguments_) {
+      return name === "save_document"
+        ? {
+            structuredContent: {
+              author: null,
+              message: "Successfully created document: test",
+              success: true,
+              urn: arguments_.urn,
+            },
+          }
+        : {
+            structuredContent: {
+              message: "Successfully added 1 tag(s) to 1 entit(ies)",
+              success: true,
+            },
+          };
     },
     async close() {},
     async listTools() {
       return {
-        tools: ["save_document", "add_tags", "remove_tags"].map((name) => ({
-          annotations: { destructiveHint: true, readOnlyHint: false },
-          name,
-        })),
+        tools: [declaration("save_document"), declaration("add_tags"), { name: "remove_tags" }],
       };
     },
     ...overrides,
@@ -26,13 +94,20 @@ describe("DataHub mutation tool client", () => {
     const called: string[] = [];
     const client = await createMutationToolClient(
       session({
-        async callTool(name) {
+        async callTool(name, arguments_) {
           called.push(name);
-          return { structuredContent: { success: true } };
+          return {
+            structuredContent: {
+              author: null,
+              message: "Successfully created document: test",
+              success: true,
+              urn: arguments_.urn,
+            },
+          };
         },
       }),
     );
-    await client.invoke("save_document", {});
+    await client.invoke("save_document", { urn: "urn:li:document:test" });
     await expect(client.invoke("remove_tags" as MutationToolName, {})).rejects.toMatchObject({
       code: "TOOL_POLICY_VIOLATION",
     });
@@ -48,13 +123,7 @@ describe("DataHub mutation tool client", () => {
         session({
           async listTools() {
             return {
-              tools: [
-                { ...(annotations === undefined ? {} : { annotations }), name: "save_document" },
-                {
-                  annotations: { destructiveHint: true, readOnlyHint: false },
-                  name: "add_tags",
-                },
-              ],
+              tools: [{ ...declaration("save_document"), annotations }, declaration("add_tags")],
             };
           },
         }),
@@ -66,7 +135,7 @@ describe("DataHub mutation tool client", () => {
     const client = await createMutationToolClient(
       session({
         async listTools() {
-          return { tools: [{ name: "save_document" }, { name: "add_tags" }] };
+          return { tools: [declaration("save_document"), declaration("add_tags")] };
         },
       }),
     );
@@ -79,10 +148,11 @@ describe("DataHub mutation tool client", () => {
         session({
           async listTools() {
             return {
-              tools: ["save_document", "save_document", "add_tags"].map((name) => ({
-                annotations: { destructiveHint: true, readOnlyHint: false },
-                name,
-              })),
+              tools: [
+                declaration("save_document"),
+                declaration("save_document"),
+                declaration("add_tags"),
+              ],
             };
           },
         }),
@@ -93,18 +163,37 @@ describe("DataHub mutation tool client", () => {
         session({
           async listTools() {
             return {
-              tools: [
-                {
-                  annotations: { destructiveHint: true, readOnlyHint: false },
-                  name: "save_document",
-                },
-              ],
+              tools: [declaration("save_document")],
             };
           },
         }),
       ),
     ).rejects.toMatchObject({ code: "TOOL_MISSING" });
   });
+
+  it.each(["discovery", "schema"])(
+    "closes the mutation session once on %s rejection",
+    async (failure) => {
+      const close = vi.fn(async () => {});
+      const failing = session({
+        close,
+        async listTools() {
+          if (failure === "discovery") throw new Error("provider secret");
+          return {
+            tools: [
+              {
+                inputSchema: { ...inputSchemas.save_document, additionalProperties: true },
+                name: "save_document",
+              },
+              declaration("add_tags"),
+            ],
+          };
+        },
+      });
+      await expect(createMutationToolClient(failing)).rejects.toBeInstanceOf(DataHubAdapterError);
+      expect(close).toHaveBeenCalledTimes(1);
+    },
+  );
 
   it("enforces response limits without retaining provider secrets", async () => {
     const secret = "datahub-super-secret-token";

@@ -6,6 +6,9 @@ This document records the primary sources used for the initial product, architec
 
 - DataHub open-source repository: https://github.com/datahub-project/datahub
 - Official DataHub MCP Server: https://github.com/acryldata/mcp-server-datahub
+- DataHub write-back contract is pinned to official MCP Server tag `v0.6.0` (commit
+  `9a6946daa7d30eb481c82dd8ee5e15ae6526a3c9`) for the exact `save_document` and `add_tags`
+  declarations and response projections recorded in package fixtures.
 - DataHub MCP documentation: https://docs.datahub.com/docs/features/feature-guides/mcp
 - Official DataHub skills for agents, vendored from immutable commit `f22f93074cf265ba6f9401947404f090c2584d9d` under Apache-2.0: https://github.com/datahub-project/datahub-skills/tree/f22f93074cf265ba6f9401947404f090c2584d9d
 - Vendored skill provenance, complete manifest policy, local security divergence, and update procedure: `docs/THIRD_PARTY_SKILLS.md`
