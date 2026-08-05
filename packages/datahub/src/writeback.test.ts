@@ -46,6 +46,7 @@ function request(): DataHubWritebackRequest {
 function snapshot(input: Partial<ExactDataHubEntitySnapshot> = {}): ExactDataHubEntitySnapshot {
   return {
     documentProofs: [],
+    knownTagUrns: ["urn:li:tag:lineageguard.review-status.blocked"],
     observedAt: NOW,
     relevantMetadataFingerprint: hash("metadata"),
     scenarioMarker: "lineageguard-canonical-v1",
@@ -154,13 +155,14 @@ describe("controlled DataHub write-back", () => {
     expect(calls).toEqual(["save_document", "add_tags"]);
     expect(argumentsByTool.get("save_document")).toEqual({
       content: payloads.document.content,
-      id: payloads.document.id,
-      related_entities: [canonicalDatasetUrn],
+      document_type: "Decision",
+      related_assets: [canonicalDatasetUrn],
       title: payloads.document.title,
+      urn: `urn:li:document:${payloads.document.id}`,
     });
     expect(argumentsByTool.get("add_tags")).toEqual({
+      entity_urns: [canonicalDatasetUrn],
       tag_urns: [payloads.reviewStatusTagUrn],
-      urn: canonicalDatasetUrn,
     });
     expect(trusted.consumeCurrentEffect).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -214,6 +216,17 @@ describe("controlled DataHub write-back", () => {
     const { port } = await portFor({ enabled: false, read });
     await expect(port.write(request())).rejects.toThrow("DataHub mutation is disabled");
     expect(read).not.toHaveBeenCalled();
+  });
+
+  it("fails before authority consumption when the namespaced review tag is not provisioned", async () => {
+    const trusted = authority();
+    const { calls, port } = await portFor({
+      authority: trusted,
+      read: () => snapshot({ knownTagUrns: [] }),
+    });
+    await expect(port.write(request())).rejects.toMatchObject({ code: "CONFLICT" });
+    expect(trusted.consumeCurrentEffect).not.toHaveBeenCalled();
+    expect(calls).toEqual([]);
   });
 
   it("rejects missing, forged, expired, or consumed authority before invoking mutation tools", async () => {
@@ -334,7 +347,9 @@ describe("controlled DataHub write-back", () => {
     expect(trusted.verifyCurrentEffectReservation).toHaveBeenCalledTimes(1);
   });
 
-  it("never mutates again while reconciling a persisted CONSUMED effect", async () => {
+  it("reconciles then completes missing writes under a still-current persisted CONSUMED fence", async () => {
+    const writeRequest = request();
+    const payloads = deriveDataHubWritebackPayloads(writeRequest);
     const trusted = authority();
     trusted.verifyCurrentEffectReservation.mockResolvedValue({
       consumedAt: NOW,
@@ -343,13 +358,42 @@ describe("controlled DataHub write-back", () => {
       reservationId: "reservation-42",
       state: "CONSUMED",
     });
-    const { calls, port } = await portFor({ authority: trusted, read: () => snapshot() });
-    await expect(port.write(request())).resolves.toMatchObject({
-      status: "AMBIGUOUS",
-      workerFailureState: "FAILED_WRITEBACK",
+    let document = false;
+    let tag = false;
+    const { calls, port } = await portFor({
+      authority: trusted,
+      onCall(name) {
+        if (name === "save_document") document = true;
+        if (name === "add_tags") tag = true;
+      },
+      read: () =>
+        snapshot({
+          documentProofs: document ? [proofFor(writeRequest)] : [],
+          tagUrns: tag
+            ? ["urn:li:tag:existing", payloads.reviewStatusTagUrn]
+            : ["urn:li:tag:existing"],
+        }),
     });
-    expect(calls).toEqual([]);
+    await expect(port.write(writeRequest)).resolves.toMatchObject({
+      status: "SUCCEEDED",
+      workerFailureState: "NONE",
+    });
+    expect(calls).toEqual(["save_document", "add_tags"]);
     expect(trusted.consumeCurrentEffect).not.toHaveBeenCalled();
+  });
+
+  it("does not mutate a partial CONSUMED effect after its invoke fence expires", async () => {
+    const trusted = authority();
+    trusted.verifyCurrentEffectReservation.mockResolvedValue({
+      consumedAt: NOW,
+      fencing: 7,
+      invokeBy: "2026-08-05T09:59:59.000Z",
+      reservationId: "reservation-42",
+      state: "CONSUMED",
+    });
+    const { calls, port } = await portFor({ authority: trusted, read: () => snapshot() });
+    await expect(port.write(request())).resolves.toMatchObject({ status: "AMBIGUOUS" });
+    expect(calls).toEqual([]);
   });
 
   it("fails closed when readback drops a prior tag", async () => {

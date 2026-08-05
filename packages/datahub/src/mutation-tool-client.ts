@@ -127,8 +127,8 @@ export class MutationToolClient {
       }
       found.set(name, declaration);
       if (
-        declaration.annotations?.readOnlyHint !== false ||
-        declaration.annotations.destructiveHint !== true
+        declaration.annotations?.readOnlyHint === true ||
+        declaration.annotations?.destructiveHint === false
       ) {
         throw declarationFailure(name);
       }

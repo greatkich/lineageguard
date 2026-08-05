@@ -1,6 +1,6 @@
 {
   "structuredContent": {
     "success": true,
-    "urn": "urn:li:dataset:(urn:li:dataPlatform:postgres,example.orders,PROD)"
+    "message": "Successfully added 1 tag(s) to 1 entity(ies)"
   }
 }

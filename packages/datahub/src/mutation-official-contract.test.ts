@@ -8,7 +8,23 @@ async function fixture(name: string): Promise<unknown> {
 }
 
 describe("sanitized official DataHub MCP v0.6.0 mutation envelopes", () => {
-  it.each(["save-document-result", "add-tags-result"])("records %s", async (name) => {
-    expect(await fixture(name)).toMatchObject({ structuredContent: { success: true } });
+  it("records the exact save_document success projection", async () => {
+    expect(await fixture("save-document-result")).toEqual({
+      structuredContent: {
+        author: null,
+        message: "Successfully created document: LineageGuard migration decision",
+        success: true,
+        urn: "urn:li:document:lineageguard-migration-decision_example",
+      },
+    });
+  });
+
+  it("records the exact add_tags success projection", async () => {
+    expect(await fixture("add-tags-result")).toEqual({
+      structuredContent: {
+        message: "Successfully added 1 tag(s) to 1 entity(ies)",
+        success: true,
+      },
+    });
   });
 });

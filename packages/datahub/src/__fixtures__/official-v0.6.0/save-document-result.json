@@ -1,6 +1,8 @@
 {
   "structuredContent": {
     "success": true,
-    "document_id": "lineageguard-migration-decision_example"
+    "urn": "urn:li:document:lineageguard-migration-decision_example",
+    "message": "Successfully created document: LineageGuard migration decision",
+    "author": null
   }
 }

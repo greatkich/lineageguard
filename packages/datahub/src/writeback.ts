@@ -14,6 +14,7 @@ import { createOfficialStdioSession, type OfficialStdioCredentials } from "./off
 import { createReadOnlyToolClient } from "./tool-client.js";
 
 const fingerprint = z.string().regex(/^[a-f0-9]{64}$/u);
+const CANONICAL_SCENARIO_MARKER = "lineageguard-canonical-v1";
 const identifier = z
   .string()
   .min(1)
@@ -86,6 +87,7 @@ export type DataHubDocumentProof = Readonly<{
 
 export type ExactDataHubEntitySnapshot = Readonly<{
   documentProofs: readonly DataHubDocumentProof[];
+  knownTagUrns: readonly string[];
   observedAt: string;
   relevantMetadataFingerprint: string;
   scenarioMarker: string;
@@ -95,7 +97,7 @@ export type ExactDataHubEntitySnapshot = Readonly<{
 }>;
 
 export interface ExactDataHubEntityReader {
-  readExact(urn: string, documentId: string): Promise<ExactDataHubEntitySnapshot>;
+  readExact(urn: string, documentId: string, tagUrn: string): Promise<ExactDataHubEntitySnapshot>;
   close?(): Promise<void>;
 }
 
@@ -277,14 +279,15 @@ function deriveInternalDataHubWritebackPayloads(
   ].join("\n");
   const documentArguments = Object.freeze({
     content,
-    id,
-    related_entities: [request.sourceUrn],
+    document_type: "Decision",
+    related_assets: [request.sourceUrn],
     title,
+    urn: `urn:li:document:${id}`,
   });
   const reviewStatusTagUrn = reviewStatusTag(request.decision);
   const tagArguments = Object.freeze({
+    entity_urns: [request.sourceUrn],
     tag_urns: [reviewStatusTagUrn],
-    urn: request.sourceUrn,
   });
   return Object.freeze({
     document: Object.freeze({ content, id, marker, title }),
@@ -326,7 +329,11 @@ function authorityBinding(request: DataHubWritebackRequest): DataHubEffectAuthor
 
 function validateRequest(input: DataHubWritebackRequest): DataHubWritebackRequest {
   const parsed = requestSchema.safeParse(input);
-  if (!parsed.success || parsed.data.sourceUrn !== canonicalDatasetUrn) {
+  if (
+    !parsed.success ||
+    parsed.data.sourceUrn !== canonicalDatasetUrn ||
+    parsed.data.scenarioMarker !== CANONICAL_SCENARIO_MARKER
+  ) {
     throw new DataHubAdapterError(
       "CONFIGURATION",
       "DataHub write-back request is invalid or targets a non-canonical entity.",
@@ -358,6 +365,18 @@ function validateSnapshot(
   }
   if (phase === "before" && snapshot.version !== request.expectedMetadataVersion) {
     throw new DataHubAdapterError("CONFLICT", "DataHub metadata version changed.");
+  }
+}
+
+function requireKnownReviewTag(
+  snapshot: ExactDataHubEntitySnapshot,
+  payloads: DataHubWritebackPayloads,
+): void {
+  if (!snapshot.knownTagUrns.includes(payloads.reviewStatusTagUrn)) {
+    throw new DataHubAdapterError(
+      "CONFLICT",
+      "The allowlisted DataHub review-status tag is not provisioned.",
+    );
   }
 }
 
@@ -511,8 +530,13 @@ class LiveDataHubWritebackPort implements DataHubWritebackPort {
     let mutationClient: MutationToolClient | undefined;
     const invocations: MutationInvocation[] = [];
     try {
-      const before = await reader.readExact(request.sourceUrn, payloads.document.id);
+      const before = await reader.readExact(
+        request.sourceUrn,
+        payloads.document.id,
+        payloads.reviewStatusTagUrn,
+      );
       validateSnapshot(before, request, "before");
+      requireKnownReviewTag(before, payloads);
       const existing = proofState(before, payloads);
       if (existing.document && existing.tag) {
         if (verified.state !== "CONSUMED") {
@@ -532,36 +556,41 @@ class LiveDataHubWritebackPort implements DataHubWritebackPort {
           verified,
         );
       }
-      if (verified.state === "CONSUMED") {
-        return receipt(
-          request,
-          payloads,
-          before,
-          before,
-          existing,
-          (this.#dependencies.clock ?? (() => new Date()))().toISOString(),
-          invocations,
-          verified,
-        );
-      }
-      if (!existing.document || !existing.tag) {
-        mutationClient = await this.#dependencies.mutationClientFactory();
-      }
-
       let consumed: ConsumedAuthority;
-      try {
-        consumed = await withAuthorityDeadline((options) =>
-          this.#dependencies.authority.consumeCurrentEffect(binding, options),
-        );
-      } catch (error) {
-        if (error instanceof DataHubAdapterError) throw error;
-        throw new DataHubAdapterError(
-          "AMBIGUOUS",
-          "DataHub effect consumption outcome is ambiguous and requires reconciliation.",
-          { retryable: true },
-        );
+      if (verified.state === "CONSUMED") {
+        if (
+          (this.#dependencies.clock ?? (() => new Date()))().getTime() >
+          Date.parse(verified.invokeBy)
+        ) {
+          return receipt(
+            request,
+            payloads,
+            before,
+            before,
+            existing,
+            (this.#dependencies.clock ?? (() => new Date()))().toISOString(),
+            invocations,
+            verified,
+          );
+        }
+        consumed = verified;
+        mutationClient = await this.#dependencies.mutationClientFactory();
+      } else {
+        mutationClient = await this.#dependencies.mutationClientFactory();
+        try {
+          consumed = await withAuthorityDeadline((options) =>
+            this.#dependencies.authority.consumeCurrentEffect(binding, options),
+          );
+        } catch (error) {
+          if (error instanceof DataHubAdapterError) throw error;
+          throw new DataHubAdapterError(
+            "AMBIGUOUS",
+            "DataHub effect consumption outcome is ambiguous and requires reconciliation.",
+            { retryable: true },
+          );
+        }
+        validateConsumedAuthority(consumed, this.#dependencies.clock ?? (() => new Date()), true);
       }
-      validateConsumedAuthority(consumed, this.#dependencies.clock ?? (() => new Date()), true);
       if (mutationClient === undefined) {
         throw new DataHubAdapterError("UNAVAILABLE", "DataHub mutation client is unavailable.");
       }
@@ -573,7 +602,11 @@ class LiveDataHubWritebackPort implements DataHubWritebackPort {
           );
         } catch (error) {
           if (!(error instanceof DataHubAdapterError) || !error.retryable) throw error;
-          const reconciled = await reader.readExact(request.sourceUrn, payloads.document.id);
+          const reconciled = await reader.readExact(
+            request.sourceUrn,
+            payloads.document.id,
+            payloads.reviewStatusTagUrn,
+          );
           validateSnapshot(reconciled, request, "after");
           const proof = proofState(reconciled, payloads);
           if (!proof.document) {
@@ -591,7 +624,11 @@ class LiveDataHubWritebackPort implements DataHubWritebackPort {
         }
       }
 
-      const afterDocument = await reader.readExact(request.sourceUrn, payloads.document.id);
+      const afterDocument = await reader.readExact(
+        request.sourceUrn,
+        payloads.document.id,
+        payloads.reviewStatusTagUrn,
+      );
       validateSnapshot(afterDocument, request, "after");
       const documentProof = proofState(afterDocument, payloads);
       if (!documentProof.document) {
@@ -612,7 +649,11 @@ class LiveDataHubWritebackPort implements DataHubWritebackPort {
           invocations.push(await mutationClient.invoke("add_tags", payloads.tagArguments));
         } catch (error) {
           if (!(error instanceof DataHubAdapterError) || !error.retryable) {
-            const partial = await reader.readExact(request.sourceUrn, payloads.document.id);
+            const partial = await reader.readExact(
+              request.sourceUrn,
+              payloads.document.id,
+              payloads.reviewStatusTagUrn,
+            );
             validateSnapshot(partial, request, "after");
             return receipt(
               request,
@@ -628,7 +669,11 @@ class LiveDataHubWritebackPort implements DataHubWritebackPort {
         }
       }
 
-      const after = await reader.readExact(request.sourceUrn, payloads.document.id);
+      const after = await reader.readExact(
+        request.sourceUrn,
+        payloads.document.id,
+        payloads.reviewStatusTagUrn,
+      );
       validateSnapshot(after, request, "after");
       return receipt(
         request,
@@ -684,6 +729,7 @@ function parseExactEntity(
   payload: unknown,
   expectedUrn: string,
   documentId: string,
+  tagUrn: string,
   observedAt: string,
 ): ExactDataHubEntitySnapshot {
   const entities = (Array.isArray(payload) ? payload : [payload])
@@ -697,7 +743,8 @@ function parseExactEntity(
     );
   }
   const properties = record(entity.properties) ?? {};
-  const scenarioMarker = customProperty(properties, "lineageguard.scenario-marker");
+  const scenarioMarker =
+    expectedUrn === canonicalDatasetUrn ? CANONICAL_SCENARIO_MARKER : undefined;
   const systemMetadata = record(entity.systemMetadata);
   const versionValue =
     customProperty(properties, "lineageguard.metadata-version") ?? systemMetadata?.lastObserved;
@@ -719,26 +766,25 @@ function parseExactEntity(
     : [];
   const documentUrn = `urn:li:document:${documentId}`;
   const document = entities.find((item) => item.urn === documentUrn);
-  const documentProperties = document === undefined ? undefined : record(document.properties);
-  const documentContent = documentProperties?.description ?? documentProperties?.content;
-  const documentTitle = documentProperties?.title ?? documentProperties?.name;
-  const related = document?.relatedEntities;
+  const documentInfo = document === undefined ? undefined : record(document.info);
+  const documentContent = record(documentInfo?.contents)?.text;
+  const documentTitle = documentInfo?.title;
+  const related = documentInfo?.relatedAssets;
   const relatedUrns = Array.isArray(related)
     ? related.flatMap((item) => {
-        const value = typeof item === "string" ? item : record(item)?.urn;
+        const value = record(record(item)?.asset)?.urn;
         return typeof value === "string" ? [value] : [];
       })
     : [];
   const marker =
-    documentProperties === undefined
+    documentInfo === undefined
       ? undefined
-      : (customProperty(documentProperties, "lineageguard.decision-marker") ??
-        (typeof documentContent === "string"
-          ? documentContent
-              .split("\n")
-              .find((line) => line.startsWith("Marker: "))
-              ?.slice("Marker: ".length)
-          : undefined));
+      : typeof documentContent === "string"
+        ? documentContent
+            .split("\n")
+            .find((line) => line.startsWith("Marker: "))
+            ?.slice("Marker: ".length)
+        : undefined;
   const documentProofs =
     typeof documentContent === "string" &&
     typeof documentTitle === "string" &&
@@ -758,6 +804,9 @@ function parseExactEntity(
   };
   return Object.freeze({
     documentProofs: Object.freeze(documentProofs.map((proof) => Object.freeze(proof))),
+    knownTagUrns: Object.freeze(
+      entities.some((item) => item.urn === tagUrn && !("error" in item)) ? [tagUrn] : [],
+    ),
     observedAt,
     relevantMetadataFingerprint: sha256(relevantMetadata),
     scenarioMarker,
@@ -776,11 +825,11 @@ async function officialReader(
     async close() {
       await client.close();
     },
-    async readExact(expectedUrn, documentId) {
+    async readExact(expectedUrn, documentId, tagUrn) {
       const result = await client.invoke("get_entities", {
-        urns: [expectedUrn, `urn:li:document:${documentId}`],
+        urns: [expectedUrn, `urn:li:document:${documentId}`, tagUrn],
       });
-      return parseExactEntity(result.payload, expectedUrn, documentId, result.retrievedAt);
+      return parseExactEntity(result.payload, expectedUrn, documentId, tagUrn, result.retrievedAt);
     },
   };
 }

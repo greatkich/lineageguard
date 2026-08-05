@@ -42,7 +42,6 @@ describe("DataHub mutation tool client", () => {
   it.each([
     [{ destructiveHint: false, readOnlyHint: false }],
     [{ destructiveHint: true, readOnlyHint: true }],
-    [undefined],
   ])("requires explicit mutation semantics %#", async (annotations) => {
     await expect(
       createMutationToolClient(
@@ -61,6 +60,17 @@ describe("DataHub mutation tool client", () => {
         }),
       ),
     ).rejects.toMatchObject({ code: "TOOL_POLICY_VIOLATION" });
+  });
+
+  it("accepts the pinned official declarations that omit annotations", async () => {
+    const client = await createMutationToolClient(
+      session({
+        async listTools() {
+          return { tools: [{ name: "save_document" }, { name: "add_tags" }] };
+        },
+      }),
+    );
+    await expect(client.invoke("add_tags", {})).resolves.toMatchObject({ tool: "add_tags" });
   });
 
   it("rejects duplicate declarations and missing required tools", async () => {
