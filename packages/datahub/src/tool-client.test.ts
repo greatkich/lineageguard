@@ -73,6 +73,47 @@ describe("read-only DataHub MCP tool policy", () => {
     await expect(result).rejects.toThrow(expectedMessage);
   });
 
+  it.each([false, true])(
+    "rejects duplicate required declarations with destructive entry last=%s",
+    async (destructiveLast) => {
+      const readOnly = tool("search", { destructiveHint: false, readOnlyHint: true });
+      const destructive = tool("search", { destructiveHint: true, readOnlyHint: false });
+      const transport = session({
+        listTools: vi.fn(async () => ({
+          tools: [
+            ...(destructiveLast ? [readOnly, destructive] : [destructive, readOnly]),
+            ...requiredReadToolNames.slice(1).map((name) => tool(name)),
+          ],
+        })),
+      });
+
+      const result = createReadOnlyToolClient(transport);
+
+      await expect(result).rejects.toMatchObject({
+        code: "TOOL_POLICY_VIOLATION",
+        tool: "search",
+      });
+      await expect(result).rejects.toThrow("declared more than once");
+    },
+  );
+
+  it("rejects duplicate read-only declarations", async () => {
+    const transport = session({
+      listTools: vi.fn(async () => ({
+        tools: [
+          tool("search"),
+          tool("search"),
+          ...requiredReadToolNames.slice(1).map((name) => tool(name)),
+        ],
+      })),
+    });
+
+    await expect(createReadOnlyToolClient(transport)).rejects.toMatchObject({
+      code: "TOOL_POLICY_VIOLATION",
+      tool: "search",
+    });
+  });
+
   it("rejects a mutation name before transport invocation", async () => {
     const transport = session();
     const client = await createReadOnlyToolClient(transport);

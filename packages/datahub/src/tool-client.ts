@@ -176,7 +176,30 @@ export class ReadOnlyToolClient {
       });
     }
 
-    const byName = new Map(discovered.tools.map((tool) => [tool.name, tool]));
+    const byName = new Map<ReadToolName, DiscoveredTool>();
+    let duplicateName: ReadToolName | undefined;
+    let semanticsFailure: DataHubAdapterError | undefined;
+    for (const declaration of discovered.tools) {
+      if (!requiredToolSet.has(declaration.name)) continue;
+      const name = declaration.name as ReadToolName;
+      if (byName.has(name)) duplicateName ??= name;
+      else byName.set(name, declaration);
+
+      if (declaration.annotations?.destructiveHint === true) {
+        semanticsFailure ??= policyFailure(name, true);
+      } else if (declaration.annotations?.readOnlyHint !== true) {
+        semanticsFailure ??= policyFailure(name, false);
+      }
+    }
+    if (duplicateName !== undefined) {
+      throw new DataHubAdapterError(
+        "TOOL_POLICY_VIOLATION",
+        `Required DataHub tool ${duplicateName} was declared more than once.`,
+        { tool: duplicateName },
+      );
+    }
+    if (semanticsFailure !== undefined) throw semanticsFailure;
+
     for (const name of requiredReadToolNames) {
       const required = byName.get(name);
       if (required === undefined) {
@@ -186,8 +209,6 @@ export class ReadOnlyToolClient {
           { tool: name },
         );
       }
-      if (required.annotations?.destructiveHint === true) throw policyFailure(name, true);
-      if (required.annotations?.readOnlyHint !== true) throw policyFailure(name, false);
     }
 
     return new ReadOnlyToolClient(session, dependencies);
