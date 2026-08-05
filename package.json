@@ -1,0 +1,30 @@
+{
+  "name": "lineageguard",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.20.0",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "scripts": {
+    "env:check": "bash scripts/check-environment.sh",
+    "format": "biome format --write .",
+    "format:check": "biome format .",
+    "lint": "biome lint .",
+    "typecheck": "pnpm -r --if-present typecheck",
+    "test": "vitest run --workspace vitest.workspace.ts",
+    "build": "pnpm -r --if-present build",
+    "test:e2e": "playwright test",
+    "browser:install": "playwright install chromium",
+    "demo:verify": "node scripts/demo-verify.mjs --foundation-only",
+    "boundaries:check": "node scripts/check-boundaries.mjs",
+    "db:test:up": "docker compose -f compose.yaml up -d --wait app-postgres validation-postgres"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.6",
+    "@playwright/test": "1.62.1",
+    "typescript": "6.0.3",
+    "vitest": "4.1.10",
+    "yaml": "2.9.0"
+  }
+}
