@@ -1,6 +1,9 @@
-import { basename, isAbsolute } from "node:path";
+import { basename, dirname, isAbsolute, parse, resolve } from "node:path";
 import { Client } from "@modelcontextprotocol/client";
-import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import {
+  DEFAULT_INHERITED_ENV_VARS,
+  StdioClientTransport,
+} from "@modelcontextprotocol/client/stdio";
 import { z } from "zod";
 import { DataHubAdapterError } from "./errors.js";
 import type { DiscoveredTool, ToolCallOptions, ToolSession } from "./tool-client.js";
@@ -27,6 +30,7 @@ const credentialsSchema = z
           return codePoint >= 32 && codePoint !== 127;
         }),
       ),
+    uvCacheDir: z.string().min(1).max(1_024),
     uvxPath: z.string().min(1).max(1_024),
   })
   .strict();
@@ -85,6 +89,13 @@ function safeCredentials(input: unknown): OfficialStdioCredentials {
   ) {
     throw new DataHubAdapterError("CONFIGURATION", "DataHub MCP command path is invalid.");
   }
+  if (
+    !isAbsolute(parsed.data.uvCacheDir) ||
+    resolve(parsed.data.uvCacheDir) !== parsed.data.uvCacheDir ||
+    parse(parsed.data.uvCacheDir).root === parsed.data.uvCacheDir
+  ) {
+    throw new DataHubAdapterError("CONFIGURATION", "DataHub MCP cache path is invalid.");
+  }
 
   let url: URL;
   try {
@@ -101,6 +112,31 @@ function safeCredentials(input: unknown): OfficialStdioCredentials {
   }
 
   return parsed.data;
+}
+
+function controlledProcessEnvironment(
+  credentials: OfficialStdioCredentials,
+): Readonly<Record<string, string>> {
+  return Object.freeze({
+    ...Object.fromEntries(DEFAULT_INHERITED_ENV_VARS.map((name) => [name, ""])),
+    DATAHUB_GMS_TOKEN: credentials.readToken,
+    DATAHUB_GMS_URL: credentials.dataHubGmsUrl,
+    DATAHUB_MCP_DOCUMENT_TOOLS_DISABLED: "true",
+    DATA_QUALITY_TOOLS_ENABLED: "false",
+    HOME: credentials.uvCacheDir,
+    LOGNAME: "lineageguard",
+    NO_COLOR: "1",
+    PATH: dirname(credentials.uvxPath),
+    SAVE_DOCUMENT_TOOL_ENABLED: "false",
+    SEMANTIC_SEARCH_ENABLED: "false",
+    SHELL: "",
+    TERM: "dumb",
+    TOOLS_IS_MUTATION_ENABLED: "false",
+    TOOLS_IS_USER_ENABLED: "false",
+    USER: "lineageguard",
+    UV_CACHE_DIR: credentials.uvCacheDir,
+    UV_NO_CONFIG: "1",
+  });
 }
 
 function launchFor(credentials: OfficialStdioCredentials): OfficialSdkLaunch {
@@ -127,21 +163,20 @@ function launchFor(credentials: OfficialStdioCredentials): OfficialSdkLaunch {
         officialDataHubMcpServer.transport,
       ]),
       command: credentials.uvxPath,
-      env: Object.freeze({
-        DATAHUB_GMS_TOKEN: credentials.readToken,
-        DATAHUB_GMS_URL: credentials.dataHubGmsUrl,
-        DATAHUB_MCP_DOCUMENT_TOOLS_DISABLED: "true",
-        DATA_QUALITY_TOOLS_ENABLED: "false",
-        NO_COLOR: "1",
-        SAVE_DOCUMENT_TOOL_ENABLED: "false",
-        SEMANTIC_SEARCH_ENABLED: "false",
-        TOOLS_IS_MUTATION_ENABLED: "false",
-        TOOLS_IS_USER_ENABLED: "false",
-        UV_NO_CONFIG: "1",
-      }),
+      env: controlledProcessEnvironment(credentials),
       maxBufferSize: 300_000,
       stderr: "ignore",
     }),
+  });
+}
+
+export function createOfficialSdkTransport(launch: OfficialSdkLaunch): StdioClientTransport {
+  return new StdioClientTransport({
+    args: [...launch.process.args],
+    command: launch.process.command,
+    env: { ...launch.process.env },
+    maxBufferSize: launch.process.maxBufferSize,
+    stderr: launch.process.stderr,
   });
 }
 
@@ -155,13 +190,7 @@ function defaultFactory(launch: OfficialSdkLaunch): OfficialSdkConnection {
       versionNegotiation: { mode: "legacy" },
     },
   );
-  const transport = new StdioClientTransport({
-    args: [...launch.process.args],
-    command: launch.process.command,
-    env: { ...launch.process.env },
-    maxBufferSize: launch.process.maxBufferSize,
-    stderr: launch.process.stderr,
-  });
+  const transport = createOfficialSdkTransport(launch);
 
   return {
     async callTool(input, options) {
