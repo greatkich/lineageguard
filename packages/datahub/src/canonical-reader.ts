@@ -404,6 +404,19 @@ async function collectLineageDiscovery(
           },
         );
       }
+      if (
+        downstreams.truncatedDueToTokenBudget === true ||
+        downstreams.searchResults.some((result) => result.truncatedChildren === true)
+      ) {
+        throw new DataHubAdapterError(
+          "PAGINATION_LIMIT",
+          "DataHub lineage response was explicitly truncated.",
+          {
+            invocationId: observation.invocation.invocationId,
+            tool: observation.invocation.tool,
+          },
+        );
+      }
       if (downstreams.offset === undefined && downstreams.start === undefined) {
         throw new DataHubAdapterError(
           "MALFORMED_RESPONSE",

@@ -766,6 +766,43 @@ describe("canonical official MCP reader", () => {
     });
   });
 
+  it.each(["budget", "children"])(
+    "rejects explicit lineage %s truncation even when canonical consumers are present",
+    async (truncation) => {
+      const base = canonicalRawResponses();
+      const candidates = [stagingUrn, revenueUrn, fraudFeaturesUrn].map((urn, index) => ({
+        degree: index === 0 ? 1 : 2,
+        entity: { type: "DATASET", urn },
+        lineageColumns: ["customer_id"],
+        ...(truncation === "children" && index === 1 ? { truncatedChildren: true } : {}),
+      }));
+      const invoke = queuedInvoker([
+        ...base.slice(0, 2),
+        {
+          tool: "get_lineage",
+          payload: {
+            downstreams: {
+              hasMore: false,
+              offset: 0,
+              returned: 3,
+              searchResults: candidates,
+              start: 0,
+              total: 3,
+              ...(truncation === "budget" ? { truncatedDueToTokenBudget: true } : {}),
+            },
+          },
+        },
+      ]);
+
+      await expect(collectCanonicalObservations({ invoke }, targets)).rejects.toMatchObject({
+        code: "PAGINATION_LIMIT",
+        invocationId: "inv_page_3",
+        tool: "get_lineage",
+      });
+      expect(invoke).toHaveBeenCalledTimes(3);
+    },
+  );
+
   it.each([
     [false, 3, [stagingUrn, revenueUrn]],
     [true, 3, [stagingUrn, revenueUrn, fraudFeaturesUrn]],
