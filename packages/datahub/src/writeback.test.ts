@@ -365,6 +365,18 @@ describe("controlled DataHub write-back", () => {
     expect(calls).toEqual([]);
   });
 
+  it("rejects a document-only remote state under an unconsumed reservation", async () => {
+    const trusted = authority();
+    const writeRequest = request();
+    const { calls, port } = await portFor({
+      authority: trusted,
+      read: () => snapshot({ documentProofs: [proofFor(writeRequest)] }),
+    });
+    await expect(port.write(writeRequest)).rejects.toMatchObject({ code: "CONFLICT" });
+    expect(trusted.consumeCurrentEffect).not.toHaveBeenCalled();
+    expect(calls).toEqual([]);
+  });
+
   it("rejects a changed Reviewed tag definition before authority consumption", async () => {
     const trusted = authority();
     const { calls, port } = await portFor({
@@ -539,6 +551,37 @@ describe("controlled DataHub write-back", () => {
     expect(trusted.consumeCurrentEffect).not.toHaveBeenCalled();
   });
 
+  it("completes document-only state only under a still-current persisted CONSUMED fence", async () => {
+    const writeRequest = request();
+    const payloads = deriveDataHubWritebackPayloads(writeRequest);
+    const trusted = authority();
+    trusted.verifyCurrentEffectReservation.mockResolvedValue({
+      attemptFence: "attempt-fence-7",
+      attemptId: "attempt-7",
+      canonicalEffectFingerprint: dataHubWritebackBindingFingerprint(writeRequest),
+      invokeBy: "2026-08-05T10:01:00.000Z",
+      reservationId: "reservation-42",
+      state: "CONSUMED",
+    });
+    let tag = false;
+    const { calls, port } = await portFor({
+      authority: trusted,
+      onCall(name) {
+        if (name === "add_tags") tag = true;
+      },
+      read: () =>
+        snapshot({
+          documentProofs: [proofFor(writeRequest)],
+          tagUrns: tag
+            ? ["urn:li:tag:existing", payloads.reviewStatusTagUrn]
+            : ["urn:li:tag:existing"],
+        }),
+    });
+    await expect(port.write(writeRequest)).resolves.toMatchObject({ status: "SUCCEEDED" });
+    expect(calls).toEqual(["add_tags"]);
+    expect(trusted.consumeCurrentEffect).not.toHaveBeenCalled();
+  });
+
   it("does not mutate a partial CONSUMED effect after its invoke fence expires", async () => {
     const writeRequest = request();
     const trusted = authority();
@@ -632,6 +675,27 @@ describe("controlled DataHub write-back", () => {
         return snapshot({
           documentProofs: document ? [proofFor(writeRequest)] : [],
           relevantMetadataFingerprint: reads > 1 ? hash("drifted") : hash("metadata"),
+        });
+      },
+    });
+    await expect(port.write(writeRequest)).rejects.toMatchObject({ code: "CONFLICT" });
+    expect(calls).toEqual(["save_document"]);
+  });
+
+  it("fails closed when the Reviewed tag definition changes after mutation", async () => {
+    const writeRequest = request();
+    let document = false;
+    let reads = 0;
+    const { calls, port } = await portFor({
+      onCall(name) {
+        if (name === "save_document") document = true;
+      },
+      read: () => {
+        reads += 1;
+        return snapshot({
+          documentProofs: document ? [proofFor(writeRequest)] : [],
+          reviewTagDefinitionFingerprint:
+            reads > 1 ? hash("replaced-tag-definition") : REVIEW_TAG_DEFINITION_FINGERPRINT,
         });
       },
     });

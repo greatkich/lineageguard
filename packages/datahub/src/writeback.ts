@@ -367,24 +367,17 @@ function validateSnapshot(
   if (snapshot.relevantMetadataFingerprint !== request.expectedMetadataFingerprint) {
     throw new DataHubAdapterError("CONFLICT", "DataHub relevant metadata changed.");
   }
-  if (phase === "before" && snapshot.version !== request.expectedMetadataVersion) {
-    throw new DataHubAdapterError("CONFLICT", "DataHub metadata version changed.");
-  }
-}
-
-function requireKnownReviewTag(
-  snapshot: ExactDataHubEntitySnapshot,
-  request: DataHubWritebackRequest,
-  payloads: DataHubWritebackPayloads,
-): void {
   if (
-    !snapshot.knownTagUrns.includes(payloads.reviewStatusTagUrn) ||
+    !snapshot.knownTagUrns.includes(CANONICAL_REVIEWED_TAG_URN) ||
     snapshot.reviewTagDefinitionFingerprint !== request.expectedReviewTagDefinitionFingerprint
   ) {
     throw new DataHubAdapterError(
       "CONFLICT",
-      "The allowlisted DataHub review-status tag is not provisioned.",
+      "The allowlisted DataHub Reviewed tag definition changed.",
     );
+  }
+  if (phase === "before" && snapshot.version !== request.expectedMetadataVersion) {
+    throw new DataHubAdapterError("CONFLICT", "DataHub metadata version changed.");
   }
 }
 
@@ -578,12 +571,17 @@ class LiveDataHubWritebackPort implements DataHubWritebackPort {
         payloads.reviewStatusTagUrn,
       );
       validateSnapshot(before, request, "before");
-      requireKnownReviewTag(before, request, payloads);
       const existing = proofState(before, payloads);
       if (existing.tag && !existing.document) {
         throw new DataHubAdapterError(
           "CONFLICT",
           "DataHub contains an impossible tag-only write-back state.",
+        );
+      }
+      if (verified.state === "RESERVED" && (existing.document || existing.tag)) {
+        throw new DataHubAdapterError(
+          "CONFLICT",
+          "DataHub contains write-back state without a consumed local effect.",
         );
       }
       if (existing.document && existing.tag) {
