@@ -99,6 +99,15 @@ class ResolvedOperationReceipt:
     receipt: OperationReceipt
 
 
+def receipt_append_index(
+    receipts: tuple[OperationReceipt, ...], target: OperationReceipt
+) -> int:
+    for index in range(len(receipts) - 1, -1, -1):
+        if receipts[index] is target:
+            return index
+    raise ValueError("RECEIPT_NOT_FROM_SEQUENCE")
+
+
 def resolve_latest_exact_operation(
     receipts: tuple[OperationReceipt, ...],
     identity: ExactOperationIdentity,

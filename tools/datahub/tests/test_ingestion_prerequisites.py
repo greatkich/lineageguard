@@ -24,7 +24,9 @@ from lineageguard_datahub.ingestion import (
     CANONICAL_DBT_NODES,
     CANONICAL_DBT_RELATIONS,
     DBT_ARTIFACT_PATHS,
+    DBT_ARTIFACT_VERIFICATION_FINGERPRINT,
     DBT_BUILD_COMMAND_FINGERPRINT,
+    DBT_DOCS_COMMAND_FINGERPRINT,
     DBT_PROJECT_FILE_DIGESTS,
     RECIPE_DIGESTS,
     build_ingestion_plan,
@@ -190,6 +192,67 @@ def test_later_failed_warehouse_or_dbt_attempt_invalidates_old_provenance(
     )
     assert "DBT_BUILD_RECEIPT_NOT_CURRENT" in ingestion_prerequisite_failures(
         (*valid, dbt_retry), **kwargs
+    )
+
+
+def test_failed_exact_build_cannot_be_hidden_by_later_docs_and_artifact(
+    repository_root: Path, tmp_path: Path
+) -> None:
+    store = ReceiptStore(tmp_path / "operations.jsonl")
+    append_build_provenance(store, repository_root)
+    append_ingestion_receipts(store, repository_root)
+    valid = store.read_all()
+    project, artifacts, snapshot = provenance_values(repository_root)
+    kwargs = {
+        "scenario_id": SCENARIO,
+        "ownership_nonce": store.ownership_nonce,
+        "warehouse_target_fingerprint": WAREHOUSE_TARGET,
+        "target_attestation": TARGET_ATTESTATION,
+        "target_fingerprint": TARGET_FINGERPRINT,
+        "dbt_project_sha256": project,
+        "artifact_metrics": artifacts,
+        "snapshot_fingerprint": snapshot,
+        "query_fingerprint": canonical_query_fingerprint(repository_root),
+    }
+    build_index = next(
+        index
+        for index, receipt in enumerate(valid)
+        if receipt.operation_kind == "dbt-build" and receipt.aspect_name == "build"
+    )
+    failed_build = replace(valid[build_index], status=ReceiptStatus.FAILURE, detail_code="EXIT_1")
+    hidden_failure = (*valid[: build_index + 1], failed_build, *valid[build_index + 1 :])
+    assert any(
+        item.startswith("DBT_COMMAND_RECEIPT_NOT_CURRENT:build")
+        for item in ingestion_prerequisite_failures(hidden_failure, **kwargs)
+    )
+
+    docs_index = next(
+        index
+        for index, receipt in enumerate(valid)
+        if receipt.idempotency_key == DBT_DOCS_COMMAND_FINGERPRINT
+    )
+    artifact_index = next(
+        index
+        for index, receipt in enumerate(valid)
+        if receipt.idempotency_key == DBT_ARTIFACT_VERIFICATION_FINGERPRINT
+    )
+    reordered = list(valid)
+    reordered[build_index], reordered[docs_index] = reordered[docs_index], reordered[build_index]
+    assert "DBT_COMMAND_ORDER_INVALID" in ingestion_prerequisite_failures(
+        tuple(reordered), **kwargs
+    )
+    stale_docs = list(valid)
+    stale_docs[docs_index] = replace(stale_docs[docs_index], proposal_hash="0" * 64)
+    assert any(
+        item.startswith("DBT_COMMAND_RECEIPT_NOT_CURRENT:docs-generate")
+        for item in ingestion_prerequisite_failures(tuple(stale_docs), **kwargs)
+    )
+    stale_artifact = list(valid)
+    stale_artifact[artifact_index] = replace(
+        stale_artifact[artifact_index], idempotency_key="9" * 64
+    )
+    assert "DBT_BUILD_RECEIPT_REQUIRED" in ingestion_prerequisite_failures(
+        tuple(stale_artifact), **kwargs
     )
 
 

@@ -25,6 +25,7 @@ from lineageguard_datahub.receipts import (
     OperationReceipt,
     ReceiptStatus,
     ResolvedOperationReceipt,
+    receipt_append_index,
     resolve_latest_exact_operation,
 )
 
@@ -422,75 +423,25 @@ def ingestion_prerequisite_failures(
             ownership_nonce=ownership_nonce,
             warehouse_target_fingerprint=warehouse_target_fingerprint,
         )
-        warehouse_index = receipts.index(warehouse)
+        warehouse_index = receipt_append_index(receipts, warehouse)
     except ValueError as error:
         failures.append(str(error))
         warehouse_index = -1
-    dbt_records = [
-        (index, receipt)
-        for index, receipt in enumerate(receipts)
-        if receipt.scenario_id == scenario_id and receipt.operation_kind == "dbt-build"
-    ]
-    dbt_candidates = [
-        (index, receipt)
-        for index, receipt in dbt_records
-        if receipt.aspect_name == "artifact-set"
-        and receipt.status is ReceiptStatus.SUCCESS
-        and receipt.detail_code == "DBT_ARTIFACTS_VERIFIED"
-    ]
     dbt_index = -1
-    if not dbt_candidates:
-        failures.append("DBT_BUILD_RECEIPT_REQUIRED")
-    else:
-        dbt_index, dbt_receipt = dbt_candidates[-1]
-        if dbt_records[-1][0] != dbt_index:
-            failures.append("DBT_BUILD_RECEIPT_NOT_CURRENT")
-        expected_dbt_metrics = dict(artifact_metrics) | {
-            "dbtProjectFingerprint": dbt_project_sha256,
-        }
-        if (
-            not receipt_has_registry_binding(
-                dbt_receipt,
-                ownership_nonce=ownership_nonce,
-                warehouse_target_fingerprint=warehouse_target_fingerprint,
-            )
-            or any(
-                dbt_receipt.metrics.get(key) != value for key, value in expected_dbt_metrics.items()
-            )
-            or dbt_receipt.idempotency_key != DBT_ARTIFACT_VERIFICATION_FINGERPRINT
-            or dbt_receipt.proposal_hash != dbt_project_sha256
-        ):
-            failures.append("DBT_BUILD_RECEIPT_BINDING_MISMATCH")
-        command_indexes: dict[str, int] = {}
-        for aspect, digest in (
-            ("build", DBT_BUILD_COMMAND_FINGERPRINT),
-            ("docs-generate", DBT_DOCS_COMMAND_FINGERPRINT),
-        ):
-            candidates = [
-                (index, receipt)
-                for index, receipt in enumerate(receipts[:dbt_index])
-                if receipt.scenario_id == scenario_id
-                and receipt.operation_kind == "dbt-build"
-                and receipt.aspect_name == aspect
-                and receipt.idempotency_key == digest
-                and receipt.proposal_hash == dbt_project_sha256
-                and receipt.status is ReceiptStatus.SUCCESS
-                and receipt.detail_code == "DBT_COMMAND_SUCCEEDED"
-                and receipt_has_registry_binding(
-                    receipt,
-                    ownership_nonce=ownership_nonce,
-                    warehouse_target_fingerprint=warehouse_target_fingerprint,
-                )
-            ]
-            if not candidates:
-                failures.append(f"DBT_COMMAND_RECEIPT_REQUIRED:{aspect}")
-            else:
-                command_indexes[aspect] = candidates[-1][0]
-        if (
-            set(command_indexes) == {"build", "docs-generate"}
-            and command_indexes["build"] >= command_indexes["docs-generate"]
-        ):
-            failures.append("DBT_COMMAND_ORDER_INVALID")
+    try:
+        dbt_operation = require_dbt_build_provenance(
+            receipts,
+            scenario_id=scenario_id,
+            ownership_nonce=ownership_nonce,
+            warehouse_target_fingerprint=warehouse_target_fingerprint,
+            dbt_project_sha256=dbt_project_sha256,
+            artifact_metrics=artifact_metrics,
+        )
+        dbt_index = dbt_operation.index
+    except ValueError as error:
+        failure = str(error)
+        if failure not in failures:
+            failures.append(failure)
     query_index = -1
     try:
         query_operation = resolve_latest_exact_operation(
@@ -678,7 +629,9 @@ def require_dbt_build_provenance(
                 error_prefix="DBT_COMMAND_RECEIPT",
             )
         except ValueError as error:
-            raise ValueError(f"DBT_COMMAND_RECEIPT_REQUIRED:{aspect}") from error
+            if str(error).endswith("_MISSING"):
+                raise ValueError(f"DBT_COMMAND_RECEIPT_REQUIRED:{aspect}") from error
+            raise ValueError(f"DBT_COMMAND_RECEIPT_NOT_CURRENT:{aspect}") from error
         if command.index >= artifact_index or not receipt_has_registry_binding(
             command.receipt,
             ownership_nonce=ownership_nonce,
@@ -694,7 +647,7 @@ def require_dbt_build_provenance(
         ownership_nonce=ownership_nonce,
         warehouse_target_fingerprint=warehouse_target_fingerprint,
     )
-    if receipts.index(warehouse) >= indexes["build"]:
+    if receipt_append_index(receipts, warehouse) >= indexes["build"]:
         raise ValueError("DBT_WAREHOUSE_ORDER_INVALID")
     return artifact
 

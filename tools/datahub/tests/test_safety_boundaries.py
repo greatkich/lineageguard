@@ -19,6 +19,7 @@ from lineageguard_datahub.receipts import (
     OperationReceipt,
     ReceiptStatus,
     ReceiptStore,
+    receipt_append_index,
     resolve_latest_exact_operation,
 )
 from lineageguard_datahub.warehouse import (
@@ -143,6 +144,7 @@ def test_exact_operation_resolver_uses_append_order_not_any_historical_success()
         error_prefix="QUERY_RECEIPT",
     )
     assert resolved.index == 2
+    assert receipt_append_index((success, failure, success), resolved.receipt) == 2
 
 
 def test_only_ambiguous_read_modify_write_failures_require_live_reconciliation(

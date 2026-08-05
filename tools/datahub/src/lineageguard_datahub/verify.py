@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-from contextlib import suppress
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
@@ -233,7 +232,7 @@ def _receipt_failures(
         )
     ]
     dbt_operation: ResolvedOperationReceipt | None = None
-    with suppress(ValueError):
+    try:
         dbt_operation = require_dbt_build_provenance(
             receipts,
             scenario_id=graph.scenario_id,
@@ -242,6 +241,11 @@ def _receipt_failures(
             dbt_project_sha256=dbt_project_sha256,
             artifact_metrics=artifact_metrics,
         )
+    except ValueError as error:
+        detail = str(error)
+        code = detail.split(":", 1)[0]
+        if not any(item.code == code for item in failures):
+            failures.append(VerificationFailure(code, detail))
     query = graph.query_evidence[0]
     query_fingerprint = normalized_sql_fingerprint_from_file(graph, query)
     query_operation: ResolvedOperationReceipt | None = None
