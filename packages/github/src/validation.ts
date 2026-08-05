@@ -9,7 +9,6 @@ const name = /^[A-Za-z0-9_.-]+$/;
 const branch = /^[A-Za-z0-9._/-]+$/;
 const evidenceId = /^ev_[a-f0-9]{24}$/;
 const opaqueReservation = /^[A-Za-z0-9_-]{32,200}$/;
-const opaqueReservationToken = /^[A-Za-z0-9_-]{43,512}$/;
 const idempotencyKey = /^[A-Za-z0-9:._/-]{16,240}$/;
 
 function reject(
@@ -60,7 +59,6 @@ function hasRuntimeRequestShape(input: GitHubReviewRequest): boolean {
   if (!input || typeof input !== "object" || Array.isArray(input)) return false;
   const strings = [
     input.effectReservationId,
-    input.effectReservationToken,
     input.runId,
     input.effectKind,
     input.target,
@@ -160,7 +158,6 @@ export function validateRequest(input: GitHubReviewRequest, options: LiveGitHubO
     reject("invalid run or base commit identity");
   if (
     !opaqueReservation.test(input.effectReservationId) ||
-    !opaqueReservationToken.test(input.effectReservationToken) ||
     !idempotencyKey.test(input.idempotencyKey)
   )
     reject("invalid effect reservation or idempotency identity");

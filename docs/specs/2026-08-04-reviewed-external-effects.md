@@ -34,6 +34,10 @@ atomically consumes the reservation immediately before the first write. Consume 
 `invokeBy` deadline and attempt fence. A missing, forged, expired, reused, or differently bound token
 fails before mutation.
 
+The raw token never enters the public GitHub request DTO. The injected trusted-authority adapter
+closes over the opaque verified capability and presents the raw token to the durable store internally;
+the GitHub port supplies only the non-secret reservation ID and complete binding claim.
+
 The canonical GitHub payload binds the exact `https://api.github.com` host, owner/repository, base
 branch and SHA, deterministic head branch, every artifact path and `CREATE | MODIFY` operation,
 expected base blob SHA for modifications, materialized SHA-256, exact pull-request title/body, and all

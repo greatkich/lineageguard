@@ -104,7 +104,6 @@ export async function resolveAuthorization(input: GitHubReviewRequest, options: 
 export function reservationClaim(input: GitHubReviewRequest) {
   return {
     reservationId: input.effectReservationId,
-    reservationToken: input.effectReservationToken,
     runId: input.runId,
     effectKind: input.effectKind,
     target: input.target,

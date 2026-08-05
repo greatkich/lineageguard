@@ -57,7 +57,6 @@ export interface GitHubValidationBinding {
 
 export interface GitHubReviewRequest {
   effectReservationId: string;
-  effectReservationToken: string;
   runId: string;
   effectKind: "GITHUB_WRITE";
   target: string;
@@ -117,7 +116,6 @@ export interface GitHubEffectAuthorization {
 
 export interface GitHubEffectReservationClaim {
   reservationId: string;
-  reservationToken: string;
   runId: string;
   effectKind: "GITHUB_WRITE";
   target: string;

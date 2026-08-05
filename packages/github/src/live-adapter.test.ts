@@ -24,7 +24,6 @@ function request(): GitHubReviewRequest {
   const content = "select customer_id as buyer_id\n";
   const input: GitHubReviewRequest = {
     effectReservationId: "reservation_0123456789abcdef0123456789abcdef",
-    effectReservationToken: "token_0123456789abcdef0123456789abcdef0123456789abcdef",
     runId: "run_0123456789abcdef01234567",
     effectKind: "GITHUB_WRITE",
     target: `https://api.github.com/repos/lineageguard/demo/git/ref/heads/main#${sha("a")}`,
