@@ -4,6 +4,7 @@ import {
   canonicalQuerySubjectFieldUrn,
   canonicalQueryUrn,
   impactCollectionResultSchema,
+  sha256,
 } from "@lineageguard/domain";
 import { describe, expect, it } from "vitest";
 import { normalizeCanonicalLiveCollection } from "./canonical-normalizer.js";
@@ -12,6 +13,22 @@ import {
   canonicalRawResponses,
   canonicalTestObservations,
 } from "./canonical-test-support.js";
+
+function additionalPage<
+  T extends {
+    invocation: { invocationId: string; responseFingerprint: string; retrievedAt: string };
+  },
+>(observation: T, suffix: string, retrievedAt: string): T {
+  return {
+    ...observation,
+    invocation: {
+      ...observation.invocation,
+      invocationId: `${observation.invocation.invocationId}_${suffix}`,
+      responseFingerprint: sha256(`${observation.invocation.responseFingerprint}:${suffix}`),
+      retrievedAt,
+    },
+  };
+}
 
 describe("canonical live DataHub normalization", () => {
   it("creates the exact complete domain context without leaking raw metadata", async () => {
@@ -53,6 +70,58 @@ describe("canonical live DataHub normalization", () => {
       first.context.evidence.map((item) => item.id),
     );
     expect(second.context.collectionFingerprint).not.toBe(first.context.collectionFingerprint);
+  });
+
+  it("binds every observed pagination call without changing semantic evidence identity", async () => {
+    const baseline = await canonicalLiveTestResult();
+    const observations = await canonicalTestObservations();
+    if (baseline.outcome !== "COLLECTED_LIVE") throw new Error("expected live result");
+
+    const paged = normalizeCanonicalLiveCollection({
+      changeId: baseline.context.changeId,
+      collectedAt: "2026-08-04T08:00:13.000Z",
+      observations: {
+        ...observations,
+        resolutionSearchPages: [
+          observations.resolutionSearch,
+          additionalPage(observations.resolutionSearch, "page_2", "2026-08-04T08:00:01.500Z"),
+        ],
+        schemaFieldPages: [
+          observations.schemaFields,
+          additionalPage(observations.schemaFields, "page_2", "2026-08-04T08:00:02.500Z"),
+        ],
+        lineageDiscoveryPages: [
+          observations.lineageDiscovery,
+          additionalPage(observations.lineageDiscovery, "page_2", "2026-08-04T08:00:03.500Z"),
+        ],
+        queryDiscoveryPages: [
+          observations.queryDiscovery,
+          additionalPage(observations.queryDiscovery, "page_2", "2026-08-04T08:00:08.500Z"),
+        ],
+      },
+    });
+    if (paged.outcome !== "COLLECTED_LIVE") throw new Error("expected live result");
+
+    expect(paged.context.impactContextFingerprint).toBe(baseline.context.impactContextFingerprint);
+    expect(paged.context.evidence.map((item) => item.id)).toEqual(
+      baseline.context.evidence.map((item) => item.id),
+    );
+    expect(paged.context.collectionFingerprint).not.toBe(baseline.context.collectionFingerprint);
+    expect(paged.context.resolution.provenance).toHaveLength(2);
+    expect(paged.context.evidence.find((item) => item.kind === "SCHEMA")?.provenance).toHaveLength(
+      2,
+    );
+    expect(
+      paged.context.evidence.find((item) => item.kind === "QUERY_USAGE")?.provenance,
+    ).toHaveLength(3);
+    expect(
+      paged.context.evidence.find((item) => item.kind === "GLOSSARY_TERM")?.provenance,
+    ).toHaveLength(3);
+    expect(
+      paged.context.evidence
+        .filter((item) => item.kind === "LINEAGE_PATH")
+        .map((item) => item.provenance.length),
+    ).toEqual([4, 4]);
   });
 
   it("rejects a query detail that does not prove the exact schema-field subject", async () => {

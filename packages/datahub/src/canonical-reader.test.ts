@@ -368,6 +368,10 @@ describe("canonical official MCP reader", () => {
     const result = await collectCanonicalObservations({ invoke }, targets);
 
     expect(result.resolutionSearch.invocation.invocationId).toBe("inv_page_2");
+    expect(result.resolutionSearchPages.map((page) => page.invocation.invocationId)).toEqual([
+      "inv_page_1",
+      "inv_page_2",
+    ]);
     expect(invoke.mock.calls.filter(([tool]) => tool === "search")).toEqual([
       ["search", expect.objectContaining({ num_results: 50, offset: 0 })],
       ["search", expect.objectContaining({ num_results: 50, offset: 1 })],
@@ -432,6 +436,11 @@ describe("canonical official MCP reader", () => {
     const result = await collectCanonicalObservations({ invoke }, targets);
 
     expect(result.schemaFields.invocation.invocationId).toBe("inv_page_3");
+    expect(result.schemaFieldPages.map((page) => page.invocation.invocationId)).toEqual([
+      "inv_page_2",
+      "inv_page_3",
+      "inv_page_4",
+    ]);
     expect(invoke.mock.calls.filter(([tool]) => tool === "list_schema_fields")).toEqual([
       ["list_schema_fields", expect.objectContaining({ limit: 50, offset: 0 })],
       ["list_schema_fields", expect.objectContaining({ limit: 50, offset: 1 })],
@@ -529,6 +538,14 @@ describe("canonical official MCP reader", () => {
     expect(result.lineageDiscovery.invocation.invocationId).toBe("inv_page_3");
     expect(result.fraudLineageDiscovery.invocation.invocationId).toBe("inv_page_4");
     expect(result.queryDiscovery.invocation.invocationId).toBe("inv_page_10");
+    expect(result.lineageDiscoveryPages.map((page) => page.invocation.invocationId)).toEqual([
+      "inv_page_3",
+      "inv_page_4",
+    ]);
+    expect(result.queryDiscoveryPages.map((page) => page.invocation.invocationId)).toEqual([
+      "inv_page_9",
+      "inv_page_10",
+    ]);
     expect(invoke.mock.calls.filter(([tool]) => tool === "get_lineage")).toHaveLength(2);
     expect(invoke.mock.calls.filter(([tool]) => tool === "get_dataset_queries")).toHaveLength(2);
   });

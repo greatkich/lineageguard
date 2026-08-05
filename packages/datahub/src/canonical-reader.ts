@@ -77,10 +77,14 @@ export type CanonicalObservations = Readonly<{
   fraudLineageDiscovery: OfficialObservation<OfficialLineagePage>;
   glossaryDetails: OfficialObservation<readonly OfficialEntity[]>;
   lineageDiscovery: OfficialObservation<OfficialLineagePage>;
+  lineageDiscoveryPages: readonly OfficialObservation<OfficialLineagePage>[];
   modelDetails: OfficialObservation<readonly OfficialEntity[]>;
   queryDetails: OfficialObservation<readonly OfficialEntity[]>;
   queryDiscovery: OfficialObservation<OfficialQueryPage>;
+  queryDiscoveryPages: readonly OfficialObservation<OfficialQueryPage>[];
   resolutionSearch: OfficialObservation<OfficialSearchPage>;
+  resolutionSearchPages: readonly OfficialObservation<OfficialSearchPage>[];
+  schemaFieldPages: readonly OfficialObservation<OfficialSchemaFieldsPage>[];
   schemaFields: OfficialObservation<OfficialSchemaFieldsPage>;
 }>;
 
@@ -206,7 +210,12 @@ function pageInvocation<TPage, TItem>(
 async function collectResolutionSearch(
   invoker: CanonicalToolInvoker,
   targets: CanonicalCollectionTargets,
-): Promise<OfficialObservation<OfficialSearchPage>> {
+): Promise<
+  Readonly<{
+    pages: readonly OfficialObservation<OfficialSearchPage>[];
+    proof: OfficialObservation<OfficialSearchPage>;
+  }>
+> {
   const paged = await collectObservedPages("search", async (offset, pageSize) => {
     const observation = await observe(
       invoker,
@@ -242,13 +251,18 @@ async function collectResolutionSearch(
   if (proof === undefined) {
     throw new DataHubAdapterError("NOT_FOUND", "Canonical DataHub dataset was not found.");
   }
-  return proof;
+  return Object.freeze({ pages: paged.pages, proof });
 }
 
 async function collectSchemaFields(
   invoker: CanonicalToolInvoker,
   targets: CanonicalCollectionTargets,
-): Promise<OfficialObservation<OfficialSchemaFieldsPage>> {
+): Promise<
+  Readonly<{
+    pages: readonly OfficialObservation<OfficialSchemaFieldsPage>[];
+    proof: OfficialObservation<OfficialSchemaFieldsPage>;
+  }>
+> {
   let globalMatchingCount: number | undefined;
   const paged = await collectObservedPages("list_schema_fields", async (offset, pageSize) => {
     const observation = await observe(
@@ -318,7 +332,7 @@ async function collectSchemaFields(
   if (proof === undefined) {
     throw new DataHubAdapterError("NOT_FOUND", "Canonical DataHub schema field was not found.");
   }
-  return proof;
+  return Object.freeze({ pages: paged.pages, proof });
 }
 
 type LineageResult = NonNullable<OfficialLineagePage["downstreams"]>["searchResults"][number];
@@ -330,6 +344,7 @@ async function collectLineageDiscovery(
   Readonly<{
     dashboard: OfficialObservation<OfficialLineagePage>;
     fraud: OfficialObservation<OfficialLineagePage>;
+    pages: readonly OfficialObservation<OfficialLineagePage>[];
   }>
 > {
   const paged = await collectObservedPages<OfficialLineagePage, LineageResult>(
@@ -403,13 +418,19 @@ async function collectLineageDiscovery(
   return Object.freeze({
     dashboard: dashboardProof,
     fraud: fraudProof,
+    pages: paged.pages,
   });
 }
 
 async function collectQueryDiscovery(
   invoker: CanonicalToolInvoker,
   targets: CanonicalCollectionTargets,
-): Promise<OfficialObservation<OfficialQueryPage>> {
+): Promise<
+  Readonly<{
+    pages: readonly OfficialObservation<OfficialQueryPage>[];
+    proof: OfficialObservation<OfficialQueryPage>;
+  }>
+> {
   const paged = await collectObservedPages("get_dataset_queries", async (offset, pageSize) => {
     const observation = await observe(
       invoker,
@@ -446,7 +467,7 @@ async function collectQueryDiscovery(
   if (proof === undefined) {
     throw new DataHubAdapterError("NOT_FOUND", "Canonical DataHub query was not found.");
   }
-  return proof;
+  return Object.freeze({ pages: paged.pages, proof });
 }
 
 export async function collectCanonicalObservations(
@@ -454,11 +475,16 @@ export async function collectCanonicalObservations(
   input: CanonicalCollectionTargets,
 ): Promise<CanonicalObservations> {
   const targets = safeTargets(input);
-  const resolutionSearch = await collectResolutionSearch(invoker, targets);
-  const schemaFields = await collectSchemaFields(invoker, targets);
+  const resolution = await collectResolutionSearch(invoker, targets);
+  const resolutionSearch = resolution.proof;
+  const resolutionSearchPages = resolution.pages;
+  const schema = await collectSchemaFields(invoker, targets);
+  const schemaFields = schema.proof;
+  const schemaFieldPages = schema.pages;
   const lineage = await collectLineageDiscovery(invoker, targets);
   const lineageDiscovery = lineage.dashboard;
   const fraudLineageDiscovery = lineage.fraud;
+  const lineageDiscoveryPages = lineage.pages;
   const dashboardFieldPath = await observe(
     invoker,
     "get_lineage_paths_between",
@@ -503,7 +529,9 @@ export async function collectCanonicalObservations(
     },
     parsePathResult,
   );
-  const queryDiscovery = await collectQueryDiscovery(invoker, targets);
+  const query = await collectQueryDiscovery(invoker, targets);
+  const queryDiscovery = query.proof;
+  const queryDiscoveryPages = query.pages;
   const dashboardDetails = await observe(
     invoker,
     "get_entities",
@@ -538,10 +566,14 @@ export async function collectCanonicalObservations(
     fraudLineageDiscovery,
     glossaryDetails,
     lineageDiscovery,
+    lineageDiscoveryPages,
     modelDetails,
     queryDetails,
     queryDiscovery,
+    queryDiscoveryPages,
     resolutionSearch,
+    resolutionSearchPages,
+    schemaFieldPages,
     schemaFields,
   });
 }

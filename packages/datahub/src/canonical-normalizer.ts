@@ -165,6 +165,13 @@ function provenance(observation: OfficialObservation<unknown>, role: ProvenanceR
   };
 }
 
+function pagedProvenance(
+  observations: readonly OfficialObservation<unknown>[],
+  role: ProvenanceRole,
+): Provenance[] {
+  return observations.map((observation) => provenance(observation, role));
+}
+
 function requireExactlyOne<T>(
   items: readonly T[],
   observation: OfficialObservation<unknown>,
@@ -558,7 +565,7 @@ export function normalizeCanonicalLiveCollection(
     datasetUrn: canonicalDatasetUrn,
     schemaFieldUrn: canonicalSchemaFieldUrn,
     nativeFieldPath: canonicalNativeFieldPath,
-    provenance: provenance(observations.resolutionSearch, "RESOLUTION"),
+    provenance: pagedProvenance(observations.resolutionSearchPages, "RESOLUTION"),
   });
   const schema = createEvidence({
     kind: "SCHEMA",
@@ -568,7 +575,7 @@ export function normalizeCanonicalLiveCollection(
     summary: "The source field is a non-null bigint in PostgreSQL.",
     criticality: "HIGH",
     relatedEvidenceIds: [],
-    provenance: [provenance(observations.schemaFields, "SCHEMA")],
+    provenance: pagedProvenance(observations.schemaFieldPages, "SCHEMA"),
     payload: {
       schemaFieldUrn: canonicalSchemaFieldUrn,
       nativeFieldPath: canonicalNativeFieldPath,
@@ -586,7 +593,7 @@ export function normalizeCanonicalLiveCollection(
     criticality: "CRITICAL",
     relatedEvidenceIds: [],
     provenance: [
-      provenance(observations.lineageDiscovery, "LINEAGE_DISCOVERY"),
+      ...pagedProvenance(observations.lineageDiscoveryPages, "LINEAGE_DISCOVERY"),
       provenance(observations.dashboardFieldPath, "FIELD_PATH"),
       provenance(observations.dashboardEntityPath, "ENTITY_PATH"),
     ],
@@ -623,7 +630,7 @@ export function normalizeCanonicalLiveCollection(
     criticality: "CRITICAL",
     relatedEvidenceIds: [],
     provenance: [
-      provenance(observations.fraudLineageDiscovery, "LINEAGE_DISCOVERY"),
+      ...pagedProvenance(observations.lineageDiscoveryPages, "LINEAGE_DISCOVERY"),
       provenance(observations.fraudFieldPath, "FIELD_PATH"),
       provenance(observations.fraudEntityPath, "ENTITY_PATH"),
     ],
@@ -660,7 +667,7 @@ export function normalizeCanonicalLiveCollection(
     criticality: "HIGH",
     relatedEvidenceIds: [dashboardPath.id],
     provenance: [
-      provenance(observations.queryDiscovery, "QUERY_DISCOVERY"),
+      ...pagedProvenance(observations.queryDiscoveryPages, "QUERY_DISCOVERY"),
       provenance(observations.queryDetails, "QUERY_DETAILS"),
     ],
     payload: {
@@ -683,7 +690,7 @@ export function normalizeCanonicalLiveCollection(
     criticality: "HIGH",
     relatedEvidenceIds: [],
     provenance: [
-      provenance(observations.schemaFields, "GLOSSARY_BINDING"),
+      ...pagedProvenance(observations.schemaFieldPages, "GLOSSARY_BINDING"),
       provenance(observations.glossaryDetails, "GLOSSARY_DETAILS"),
     ],
     payload: {

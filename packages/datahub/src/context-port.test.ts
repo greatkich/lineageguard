@@ -104,12 +104,15 @@ describe("live DataHub context port", () => {
     expect(result.context.evidence).toHaveLength(9);
     const lineagePaths = result.context.evidence.filter((item) => item.kind === "LINEAGE_PATH");
     expect(
-      lineagePaths.find((item) => item.targetUrn?.includes("dashboard"))?.provenance[0]
-        ?.invocationId,
-    ).toBe("inv_live_03");
+      lineagePaths
+        .find((item) => item.targetUrn?.includes("dashboard"))
+        ?.provenance.map((entry) => entry.invocationId),
+    ).toEqual(["inv_live_03", "inv_live_04", "inv_live_05", "inv_live_06"]);
     expect(
-      lineagePaths.find((item) => item.targetUrn?.includes("mlModel"))?.provenance[0]?.invocationId,
-    ).toBe("inv_live_04");
+      lineagePaths
+        .find((item) => item.targetUrn?.includes("mlModel"))
+        ?.provenance.map((entry) => entry.invocationId),
+    ).toEqual(["inv_live_03", "inv_live_04", "inv_live_07", "inv_live_08"]);
     expect(transport.callTool).toHaveBeenCalledTimes(13);
     expect(transport.close).toHaveBeenCalledTimes(1);
   });
