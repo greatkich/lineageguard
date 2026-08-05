@@ -1,12 +1,15 @@
 import { canonicalDatasetUrn, sha256 } from "@lineageguard/domain";
 import { describe, expect, it, vi } from "vitest";
 import { DataHubAdapterError } from "./errors.js";
-import { createMutationToolClient } from "./mutation-tool-client.js";
+import { createMutationToolClient, officialMutationInputSchemas } from "./mutation-tool-client.js";
 import type { ToolSession } from "./tool-client.js";
 import {
+  createExactReaderFromSession,
   createLiveDataHubWritebackPort,
+  createOfficialLiveDataHubWritebackPort,
   type DataHubDocumentProof,
   type DataHubWritebackRequest,
+  dataHubWritebackBindingFingerprint,
   deriveDataHubWritebackPayloads,
   type ExactDataHubEntitySnapshot,
   type TrustedDataHubEffectAuthority,
@@ -30,9 +33,10 @@ function request(): DataHubWritebackRequest {
     reasonEvidenceIds: ["evidence_01", "evidence_02"],
     rollbackRef: "migration/rollback.sql",
     runId: "run-42",
-    scenarioMarker: "lineageguard-canonical-v1",
+    scenarioMarker: "canonical-customer-id-rename",
     sourceCollectionFingerprint: hash("collection"),
     sourceUrn: canonicalDatasetUrn,
+    targetInstanceFingerprint: hash("datahub-instance"),
     validationReceiptFingerprint: hash("validation"),
   };
   const payloads = deriveDataHubWritebackPayloads(base);
@@ -46,10 +50,10 @@ function request(): DataHubWritebackRequest {
 function snapshot(input: Partial<ExactDataHubEntitySnapshot> = {}): ExactDataHubEntitySnapshot {
   return {
     documentProofs: [],
-    knownTagUrns: ["urn:li:tag:lineageguard.review-status.blocked"],
+    knownTagUrns: ["urn:li:tag:lineageguard-canonical.Reviewed"],
     observedAt: NOW,
     relevantMetadataFingerprint: hash("metadata"),
-    scenarioMarker: "lineageguard-canonical-v1",
+    scenarioMarker: "canonical-customer-id-rename",
     tagUrns: ["urn:li:tag:existing"],
     urn: canonicalDatasetUrn,
     version: "version-7",
@@ -69,18 +73,25 @@ function proofFor(writeRequest: DataHubWritebackRequest): DataHubDocumentProof {
 
 function authority() {
   const consumeCurrentEffect = vi.fn<TrustedDataHubEffectAuthority["consumeCurrentEffect"]>(
-    async () => ({
-      consumedAt: NOW,
-      fencing: 7,
+    async (_claim, canonicalEffectFingerprint) => ({
+      attemptFence: "attempt-fence-7",
+      attemptId: "attempt-7",
+      canonicalEffectFingerprint,
       invokeBy: "2026-08-05T10:01:00.000Z",
       reservationId: "reservation-42",
     }),
   );
   const verifyCurrentEffectReservation = vi.fn<
     TrustedDataHubEffectAuthority["verifyCurrentEffectReservation"]
-  >(async () => ({ state: "RESERVED" as const }));
+  >(async (_claim, canonicalEffectFingerprint) => ({
+    canonicalEffectFingerprint,
+    invokeBy: "2026-08-05T10:01:00.000Z",
+    reservationId: "reservation-42",
+    state: "RESERVED" as const,
+  }));
   return {
     consumeCurrentEffect,
+    currentEffectClaim: Object.freeze({ opaque: "trusted-test-claim" }),
     verifyCurrentEffectReservation,
   };
 }
@@ -88,7 +99,10 @@ function authority() {
 async function portFor(options: {
   authority?: TrustedDataHubEffectAuthority;
   enabled?: boolean;
+  expectedTargetInstanceFingerprint?: string;
+  mutationClientFactory?: () => Promise<Awaited<ReturnType<typeof createMutationToolClient>>>;
   onCall?: (name: string, arguments_: Readonly<Record<string, unknown>>) => void | Promise<void>;
+  onReaderClose?: () => void;
   read: () => ExactDataHubEntitySnapshot;
 }) {
   const calls: string[] = [];
@@ -96,18 +110,32 @@ async function portFor(options: {
     async callTool(name, arguments_) {
       calls.push(name);
       await options.onCall?.(name, arguments_);
-      return { structuredContent: { success: true } };
+      return name === "save_document"
+        ? {
+            structuredContent: {
+              author: null,
+              message: "Successfully created document: test",
+              success: true,
+              urn: arguments_.urn,
+            },
+          }
+        : {
+            structuredContent: {
+              message: "Successfully added 1 tag(s) to 1 entit(ies)",
+              success: true,
+            },
+          };
     },
     async close() {},
     async listTools() {
       return {
         tools: [
           {
-            annotations: { destructiveHint: true, readOnlyHint: false },
+            inputSchema: officialMutationInputSchemas.save_document,
             name: "save_document",
           },
-          { annotations: { destructiveHint: true, readOnlyHint: false }, name: "add_tags" },
-          { annotations: { destructiveHint: true, readOnlyHint: false }, name: "remove_tags" },
+          { inputSchema: officialMutationInputSchemas.add_tags, name: "add_tags" },
+          { name: "remove_tags" },
         ],
       };
     },
@@ -116,14 +144,86 @@ async function portFor(options: {
     authority: options.authority ?? authority(),
     clock: () => new Date(NOW),
     enabled: options.enabled ?? true,
-    mutationClientFactory: () =>
-      createMutationToolClient(session, { invocationId: () => `invocation-${calls.length + 1}` }),
-    readerFactory: async () => ({ readExact: async () => options.read() }),
+    ...(options.expectedTargetInstanceFingerprint === undefined
+      ? {}
+      : { expectedTargetInstanceFingerprint: options.expectedTargetInstanceFingerprint }),
+    mutationClientFactory:
+      options.mutationClientFactory ??
+      (() =>
+        createMutationToolClient(session, {
+          invocationId: () => `invocation-${calls.length + 1}`,
+        })),
+    readerFactory: async () => ({
+      async close() {
+        options.onReaderClose?.();
+      },
+      readExact: async () => options.read(),
+    }),
   });
   return { calls, port };
 }
 
 describe("controlled DataHub write-back", () => {
+  it.each(["ALLOW", "REVIEW", "BLOCK"] as const)(
+    "uses the one provisioned Reviewed tag for %s decisions",
+    (decision) => {
+      const candidate = request();
+      const payloads = deriveDataHubWritebackPayloads({ ...candidate, decision });
+      expect(payloads.reviewStatusTagUrn).toBe("urn:li:tag:lineageguard-canonical.Reviewed");
+    },
+  );
+
+  it("rejects different normalized read and mutation GMS targets before any process starts", () => {
+    expect(() =>
+      createOfficialLiveDataHubWritebackPort({
+        authority: authority(),
+        mutationCredentials: {
+          dataHubGmsUrl: "https://mutation.example.test",
+          mutationToken: "mutation-token",
+          uvCacheDir: "/tmp/mutation-cache",
+          uvxPath: "/usr/local/bin/uvx",
+        },
+        readCredentials: {
+          dataHubGmsUrl: "https://read.example.test",
+          readToken: "read-token",
+          uvCacheDir: "/tmp/read-cache",
+          uvxPath: "/usr/local/bin/uvx",
+        },
+        targetInstanceFingerprint: hash("datahub-instance"),
+      }),
+    ).toThrow("target different instances");
+  });
+
+  it("rejects a mismatched trusted target-instance attestation before authority or read", async () => {
+    const trusted = authority();
+    const read = vi.fn(() => snapshot());
+    const { port } = await portFor({
+      authority: trusted,
+      expectedTargetInstanceFingerprint: hash("other-instance"),
+      read,
+    });
+    await expect(port.write(request())).rejects.toMatchObject({ code: "CONFLICT" });
+    expect(trusted.verifyCurrentEffectReservation).not.toHaveBeenCalled();
+    expect(read).not.toHaveBeenCalled();
+  });
+
+  it("closes a constructed read session when read-tool discovery fails", async () => {
+    const close = vi.fn(async () => {});
+    const session: ToolSession = {
+      async callTool() {
+        return {};
+      },
+      close,
+      async listTools() {
+        return { tools: [] };
+      },
+    };
+    await expect(createExactReaderFromSession(session)).rejects.toMatchObject({
+      code: "TOOL_MISSING",
+    });
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+
   it("consumes exact trusted authority immediately before the first mutation and proves both writes", async () => {
     const writeRequest = request();
     const payloads = deriveDataHubWritebackPayloads(writeRequest);
@@ -165,19 +265,8 @@ describe("controlled DataHub write-back", () => {
       tag_urns: [payloads.reviewStatusTagUrn],
     });
     expect(trusted.consumeCurrentEffect).toHaveBeenCalledWith(
-      expect.objectContaining({
-        approvalFingerprint: writeRequest.approvalFingerprint,
-        documentPayloadHash: writeRequest.documentPayloadHash,
-        effectKind: "DATAHUB_WRITEBACK",
-        githubPrUrl: writeRequest.githubPrUrl,
-        inputFingerprint: sha256(writeRequest),
-        sourceUrn: canonicalDatasetUrn,
-        tagPayloadHash: writeRequest.tagPayloadHash,
-        target: canonicalDatasetUrn,
-        validationReceiptFingerprint: writeRequest.validationReceiptFingerprint,
-        writePayloadFingerprint: payloads.writePayloadFingerprint,
-      }),
-      expect.objectContaining({ signal: expect.any(AbortSignal), timeoutMs: 2_000 }),
+      trusted.currentEffectClaim,
+      dataHubWritebackBindingFingerprint(writeRequest),
     );
     expect(trusted.consumeCurrentEffect.mock.calls[0]?.[0]).toEqual(
       trusted.verifyCurrentEffectReservation.mock.calls[0]?.[0],
@@ -237,6 +326,7 @@ describe("controlled DataHub write-back", () => {
       async verifyCurrentEffectReservation() {
         throw new Error("secret token and internal reason");
       },
+      currentEffectClaim: Object.freeze({ opaque: "invalid" }),
     };
     const { calls, port } = await portFor({ authority: trusted, read: () => snapshot() });
     await expect(port.write(request())).rejects.toMatchObject({
@@ -248,16 +338,23 @@ describe("controlled DataHub write-back", () => {
 
   it("rejects an expired invoke fence returned by authority before mutation", async () => {
     const trusted: TrustedDataHubEffectAuthority = {
-      async consumeCurrentEffect() {
+      async consumeCurrentEffect(_claim, canonicalEffectFingerprint) {
         return {
-          consumedAt: NOW,
-          fencing: 8,
+          attemptFence: "attempt-fence-8",
+          attemptId: "attempt-8",
+          canonicalEffectFingerprint,
           invokeBy: "2026-08-05T09:59:59.000Z",
           reservationId: "reservation-42",
         };
       },
-      async verifyCurrentEffectReservation() {
-        return { state: "RESERVED" };
+      currentEffectClaim: Object.freeze({ opaque: "expired" }),
+      async verifyCurrentEffectReservation(_claim, canonicalEffectFingerprint) {
+        return {
+          canonicalEffectFingerprint,
+          invokeBy: "2026-08-05T10:01:00.000Z",
+          reservationId: "reservation-42",
+          state: "RESERVED",
+        };
       },
     };
     const { calls, port } = await portFor({ authority: trusted, read: () => snapshot() });
@@ -325,8 +422,9 @@ describe("controlled DataHub write-back", () => {
     const payloads = deriveDataHubWritebackPayloads(writeRequest);
     const trusted = authority();
     trusted.verifyCurrentEffectReservation.mockResolvedValue({
-      consumedAt: NOW,
-      fencing: 7,
+      attemptFence: "attempt-fence-7",
+      attemptId: "attempt-7",
+      canonicalEffectFingerprint: dataHubWritebackBindingFingerprint(writeRequest),
       invokeBy: "2026-08-05T10:01:00.000Z",
       reservationId: "reservation-42",
       state: "CONSUMED",
@@ -352,8 +450,9 @@ describe("controlled DataHub write-back", () => {
     const payloads = deriveDataHubWritebackPayloads(writeRequest);
     const trusted = authority();
     trusted.verifyCurrentEffectReservation.mockResolvedValue({
-      consumedAt: NOW,
-      fencing: 7,
+      attemptFence: "attempt-fence-7",
+      attemptId: "attempt-7",
+      canonicalEffectFingerprint: dataHubWritebackBindingFingerprint(writeRequest),
       invokeBy: "2026-08-05T10:01:00.000Z",
       reservationId: "reservation-42",
       state: "CONSUMED",
@@ -383,16 +482,18 @@ describe("controlled DataHub write-back", () => {
   });
 
   it("does not mutate a partial CONSUMED effect after its invoke fence expires", async () => {
+    const writeRequest = request();
     const trusted = authority();
     trusted.verifyCurrentEffectReservation.mockResolvedValue({
-      consumedAt: NOW,
-      fencing: 7,
+      attemptFence: "attempt-fence-7",
+      attemptId: "attempt-7",
+      canonicalEffectFingerprint: dataHubWritebackBindingFingerprint(writeRequest),
       invokeBy: "2026-08-05T09:59:59.000Z",
       reservationId: "reservation-42",
       state: "CONSUMED",
     });
     const { calls, port } = await portFor({ authority: trusted, read: () => snapshot() });
-    await expect(port.write(request())).resolves.toMatchObject({ status: "AMBIGUOUS" });
+    await expect(port.write(writeRequest)).resolves.toMatchObject({ status: "AMBIGUOUS" });
     expect(calls).toEqual([]);
   });
 
@@ -419,6 +520,45 @@ describe("controlled DataHub write-back", () => {
       status: "AMBIGUOUS",
       workerFailureState: "FAILED_WRITEBACK",
     });
+  });
+
+  it("returns AMBIGUOUS when readback contains an unexpected extra tag", async () => {
+    const writeRequest = request();
+    const payloads = deriveDataHubWritebackPayloads(writeRequest);
+    let document = false;
+    let tag = false;
+    const { port } = await portFor({
+      onCall(name) {
+        if (name === "save_document") document = true;
+        if (name === "add_tags") tag = true;
+      },
+      read: () =>
+        snapshot({
+          documentProofs: document ? [proofFor(writeRequest)] : [],
+          tagUrns: tag
+            ? ["urn:li:tag:existing", payloads.reviewStatusTagUrn, "urn:li:tag:unexpected"]
+            : ["urn:li:tag:existing"],
+        }),
+    });
+    await expect(port.write(writeRequest)).resolves.toMatchObject({
+      status: "AMBIGUOUS",
+      workerFailureState: "FAILED_WRITEBACK",
+    });
+  });
+
+  it("closes the read session if mutation-client construction fails after preflight", async () => {
+    const closed = vi.fn();
+    const { port } = await portFor({
+      mutationClientFactory: async () => {
+        throw new DataHubAdapterError("TOOL_POLICY_VIOLATION", "schema drift");
+      },
+      onReaderClose: closed,
+      read: () => snapshot(),
+    });
+    await expect(port.write(request())).rejects.toMatchObject({
+      code: "TOOL_POLICY_VIOLATION",
+    });
+    expect(closed).toHaveBeenCalledTimes(1);
   });
 
   it("fails closed when read-after-write relevant metadata no longer matches", async () => {

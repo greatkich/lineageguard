@@ -14,7 +14,8 @@ import { createOfficialStdioSession, type OfficialStdioCredentials } from "./off
 import { createReadOnlyToolClient } from "./tool-client.js";
 
 const fingerprint = z.string().regex(/^[a-f0-9]{64}$/u);
-const CANONICAL_SCENARIO_MARKER = "lineageguard-canonical-v1";
+const CANONICAL_SCENARIO_MARKER = "canonical-customer-id-rename";
+const CANONICAL_REVIEWED_TAG_URN = "urn:li:tag:lineageguard-canonical.Reviewed";
 const identifier = z
   .string()
   .min(1)
@@ -47,6 +48,7 @@ const requestObjectSchema = z
     sourceCollectionFingerprint: fingerprint,
     sourceUrn: urn,
     tagPayloadHash: fingerprint,
+    targetInstanceFingerprint: fingerprint,
     validationReceiptFingerprint: fingerprint,
   })
   .strict();
@@ -123,33 +125,36 @@ export type DataHubEffectAuthorityBinding = Readonly<{
   sourceUrn: string;
   tagPayloadHash: string;
   target: string;
+  targetInstanceFingerprint: string;
   validationReceiptFingerprint: string;
   writePayloadFingerprint: string;
 }>;
 
 export interface TrustedDataHubEffectAuthority {
-  /** The injected worker closure captures opaque VerifiedCurrentEffect bearer material. */
+  /** Opaque run-store claim; never copied into requests, receipts, diagnostics, or logs. */
+  currentEffectClaim: unknown;
   verifyCurrentEffectReservation(
-    exactBinding: DataHubEffectAuthorityBinding,
-    options: Readonly<{ signal: AbortSignal; timeoutMs: number }>,
-  ): Promise<
-    | Readonly<{ state: "RESERVED" }>
-    | Readonly<{
-        consumedAt: string;
-        fencing: number;
-        invokeBy: string;
-        reservationId: string;
-        state: "CONSUMED";
-      }>
-  >;
-  /** The trusted run store atomically consumes that same current effect and persists only token hash. */
-  consumeCurrentEffect(
-    exactBinding: DataHubEffectAuthorityBinding,
-    options: Readonly<{ signal: AbortSignal; timeoutMs: number }>,
+    claim: unknown,
+    canonicalEffectFingerprint: string,
   ): Promise<
     Readonly<{
-      consumedAt: string;
-      fencing: number;
+      attemptFence?: string;
+      attemptId?: string;
+      canonicalEffectFingerprint: string;
+      invokeBy: string;
+      reservationId: string;
+      state: "RESERVED" | "CONSUMED";
+    }>
+  >;
+  /** Matches EffectInvocationAuthority.consumeCurrentEffect(claim, canonicalEffectFingerprint). */
+  consumeCurrentEffect(
+    claim: unknown,
+    canonicalEffectFingerprint: string,
+  ): Promise<
+    Readonly<{
+      attemptFence: string;
+      attemptId: string;
+      canonicalEffectFingerprint: string;
       invokeBy: string;
       reservationId: string;
     }>
@@ -157,9 +162,11 @@ export interface TrustedDataHubEffectAuthority {
 }
 
 export type DataHubWritebackReceipt = Readonly<{
+  attemptFence?: string;
+  attemptId?: string;
   artifactFingerprint: string;
   approvalFingerprint: string;
-  authorityConsumedAt?: string;
+  canonicalEffectFingerprint?: string;
   candidateFingerprint: string;
   completedAt: string;
   decision: DataHubWritebackRequest["decision"];
@@ -169,7 +176,6 @@ export type DataHubWritebackReceipt = Readonly<{
   expectedMetadataVersion: string;
   githubPrUrl: string;
   githubReceiptFingerprint: string;
-  fencing?: number;
   idempotencyKey: string;
   inputFingerprint: string;
   intentId: string;
@@ -189,6 +195,7 @@ export type DataHubWritebackReceipt = Readonly<{
   status: "SUCCEEDED" | "AMBIGUOUS";
   tagUrn: string;
   tagPayloadHash: string;
+  targetInstanceFingerprint: string;
   validationReceiptFingerprint: string;
   workerFailureState: "NONE" | "FAILED_WRITEBACK";
   writePayloadFingerprint: string;
@@ -203,15 +210,14 @@ type LiveDependencies = Readonly<{
   authority: TrustedDataHubEffectAuthority;
   clock?: () => Date;
   enabled: boolean;
+  expectedTargetInstanceFingerprint?: string;
   mutationClientFactory: () => Promise<MutationToolClient>;
   readerFactory: () => Promise<ExactDataHubEntityReader>;
 }>;
 
 const AUTHORITY_TIMEOUT_MS = 2_000;
 
-async function withAuthorityDeadline<T>(
-  operation: (options: Readonly<{ signal: AbortSignal; timeoutMs: number }>) => Promise<T>,
-): Promise<T> {
+async function withAuthorityDeadline<T>(operation: () => Promise<T>): Promise<T> {
   const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
   const deadline = new Promise<never>((_, reject) => {
@@ -225,18 +231,10 @@ async function withAuthorityDeadline<T>(
     }, AUTHORITY_TIMEOUT_MS);
   });
   try {
-    return await Promise.race([
-      operation({ signal: controller.signal, timeoutMs: AUTHORITY_TIMEOUT_MS }),
-      deadline,
-    ]);
+    return await Promise.race([operation(), deadline]);
   } finally {
     if (timer !== undefined) clearTimeout(timer);
   }
-}
-
-function reviewStatusTag(decision: DataHubWritebackRequest["decision"]): string {
-  const status = decision === "BLOCK" ? "blocked" : decision === "REVIEW" ? "review" : "allowed";
-  return `urn:li:tag:lineageguard.review-status.${status}`;
 }
 
 function safeDocumentLine(value: string): string {
@@ -284,7 +282,7 @@ function deriveInternalDataHubWritebackPayloads(
     title,
     urn: `urn:li:document:${id}`,
   });
-  const reviewStatusTagUrn = reviewStatusTag(request.decision);
+  const reviewStatusTagUrn = CANONICAL_REVIEWED_TAG_URN;
   const tagArguments = Object.freeze({
     entity_urns: [request.sourceUrn],
     tag_urns: [reviewStatusTagUrn],
@@ -406,18 +404,27 @@ function receipt(
   completedAt: string,
   invocations: readonly MutationInvocation[],
   authority?: Readonly<{
-    consumedAt: string;
-    fencing: number;
+    attemptFence: string;
+    attemptId: string;
+    canonicalEffectFingerprint: string;
     invokeBy: string;
     reservationId: string;
   }>,
 ): DataHubWritebackReceipt {
-  const priorTagsPreserved = before.tagUrns.every((tag) => after.tagUrns.includes(tag));
-  const succeeded = proof.document && proof.tag && priorTagsPreserved;
+  const expectedFinalTags = [...new Set([...before.tagUrns, payloads.reviewStatusTagUrn])].sort();
+  const exactFinalTags = [...after.tagUrns].sort();
+  const tagsPreservedExactly = stableJson(expectedFinalTags) === stableJson(exactFinalTags);
+  const succeeded = proof.document && proof.tag && tagsPreservedExactly;
   const body = {
     artifactFingerprint: request.artifactFingerprint,
     approvalFingerprint: request.approvalFingerprint,
-    ...(authority === undefined ? {} : { authorityConsumedAt: authority.consumedAt }),
+    ...(authority === undefined
+      ? {}
+      : {
+          attemptFence: authority.attemptFence,
+          attemptId: authority.attemptId,
+          canonicalEffectFingerprint: authority.canonicalEffectFingerprint,
+        }),
     candidateFingerprint: request.candidateFingerprint,
     completedAt,
     decision: request.decision,
@@ -432,9 +439,7 @@ function receipt(
     expectedMetadataVersion: request.expectedMetadataVersion,
     githubPrUrl: request.githubPrUrl,
     githubReceiptFingerprint: request.githubReceiptFingerprint,
-    ...(authority === undefined
-      ? {}
-      : { fencing: authority.fencing, invokeBy: authority.invokeBy }),
+    ...(authority === undefined ? {} : { invokeBy: authority.invokeBy }),
     idempotencyKey: request.idempotencyKey,
     inputFingerprint: sha256(request),
     intentId: request.intentId,
@@ -452,6 +457,7 @@ function receipt(
     status: succeeded ? ("SUCCEEDED" as const) : ("AMBIGUOUS" as const),
     tagUrn: payloads.reviewStatusTagUrn,
     tagPayloadHash: request.tagPayloadHash,
+    targetInstanceFingerprint: request.targetInstanceFingerprint,
     validationReceiptFingerprint: request.validationReceiptFingerprint,
     workerFailureState: succeeded ? ("NONE" as const) : ("FAILED_WRITEBACK" as const),
     writePayloadFingerprint: payloads.writePayloadFingerprint,
@@ -461,8 +467,9 @@ function receipt(
 }
 
 type ConsumedAuthority = Readonly<{
-  consumedAt: string;
-  fencing: number;
+  attemptFence: string;
+  attemptId: string;
+  canonicalEffectFingerprint: string;
   invokeBy: string;
   reservationId: string;
 }>;
@@ -473,9 +480,9 @@ function validateConsumedAuthority(
   requireCurrentDeadline: boolean,
 ): void {
   if (
-    !Number.isSafeInteger(consumed.fencing) ||
-    consumed.fencing < 1 ||
-    !Number.isFinite(Date.parse(consumed.consumedAt)) ||
+    consumed.attemptFence.length < 1 ||
+    consumed.attemptId.length < 1 ||
+    !/^[a-f0-9]{64}$/u.test(consumed.canonicalEffectFingerprint) ||
     !Number.isFinite(Date.parse(consumed.invokeBy)) ||
     (requireCurrentDeadline && clock().getTime() > Date.parse(consumed.invokeBy))
   ) {
@@ -498,20 +505,27 @@ class LiveDataHubWritebackPort implements DataHubWritebackPort {
       throw new DataHubAdapterError("CONFIGURATION", "DataHub mutation is disabled.");
     }
     const request = validateRequest(unsafeRequest);
+    if (
+      this.#dependencies.expectedTargetInstanceFingerprint !== undefined &&
+      request.targetInstanceFingerprint !== this.#dependencies.expectedTargetInstanceFingerprint
+    ) {
+      throw new DataHubAdapterError(
+        "CONFLICT",
+        "DataHub write-back target instance attestation changed.",
+      );
+    }
     const payloads = deriveInternalDataHubWritebackPayloads(request);
     const binding = authorityBinding(request);
-    let verified:
-      | Readonly<{ state: "RESERVED" }>
-      | Readonly<{
-          consumedAt: string;
-          fencing: number;
-          invokeBy: string;
-          reservationId: string;
-          state: "CONSUMED";
-        }>;
+    const canonicalEffectFingerprint = sha256(stableJson(binding));
+    let verified: Awaited<
+      ReturnType<TrustedDataHubEffectAuthority["verifyCurrentEffectReservation"]>
+    >;
     try {
-      verified = await withAuthorityDeadline((options) =>
-        this.#dependencies.authority.verifyCurrentEffectReservation(binding, options),
+      verified = await withAuthorityDeadline(() =>
+        this.#dependencies.authority.verifyCurrentEffectReservation(
+          this.#dependencies.authority.currentEffectClaim,
+          canonicalEffectFingerprint,
+        ),
       );
     } catch (error) {
       if (error instanceof DataHubAdapterError) throw error;
@@ -520,11 +534,28 @@ class LiveDataHubWritebackPort implements DataHubWritebackPort {
         "DataHub effect authority was missing, invalid, expired, or not current.",
       );
     }
-    if (verified.state !== "RESERVED" && verified.state !== "CONSUMED") {
+    if (
+      (verified.state !== "RESERVED" && verified.state !== "CONSUMED") ||
+      verified.canonicalEffectFingerprint !== canonicalEffectFingerprint ||
+      verified.reservationId.length < 1 ||
+      !Number.isFinite(Date.parse(verified.invokeBy))
+    ) {
       throw new DataHubAdapterError("AUTHORITY_INVALID", "DataHub effect authority is invalid.");
     }
+    let verifiedConsumed: ConsumedAuthority | undefined;
     if (verified.state === "CONSUMED") {
-      validateConsumedAuthority(verified, this.#dependencies.clock ?? (() => new Date()), false);
+      verifiedConsumed = {
+        attemptFence: verified.attemptFence ?? "",
+        attemptId: verified.attemptId ?? "",
+        canonicalEffectFingerprint: verified.canonicalEffectFingerprint,
+        invokeBy: verified.invokeBy,
+        reservationId: verified.reservationId,
+      };
+      validateConsumedAuthority(
+        verifiedConsumed,
+        this.#dependencies.clock ?? (() => new Date()),
+        false,
+      );
     }
     const reader = await this.#dependencies.readerFactory();
     let mutationClient: MutationToolClient | undefined;
@@ -553,7 +584,7 @@ class LiveDataHubWritebackPort implements DataHubWritebackPort {
           existing,
           (this.#dependencies.clock ?? (() => new Date()))().toISOString(),
           invocations,
-          verified,
+          verifiedConsumed,
         );
       }
       let consumed: ConsumedAuthority;
@@ -570,16 +601,22 @@ class LiveDataHubWritebackPort implements DataHubWritebackPort {
             existing,
             (this.#dependencies.clock ?? (() => new Date()))().toISOString(),
             invocations,
-            verified,
+            verifiedConsumed,
           );
         }
-        consumed = verified;
+        if (verifiedConsumed === undefined) {
+          throw new DataHubAdapterError("AUTHORITY_INVALID", "DataHub consumed effect is invalid.");
+        }
+        consumed = verifiedConsumed;
         mutationClient = await this.#dependencies.mutationClientFactory();
       } else {
         mutationClient = await this.#dependencies.mutationClientFactory();
         try {
-          consumed = await withAuthorityDeadline((options) =>
-            this.#dependencies.authority.consumeCurrentEffect(binding, options),
+          consumed = await withAuthorityDeadline(() =>
+            this.#dependencies.authority.consumeCurrentEffect(
+              this.#dependencies.authority.currentEffectClaim,
+              canonicalEffectFingerprint,
+            ),
           );
         } catch (error) {
           if (error instanceof DataHubAdapterError) throw error;
@@ -587,6 +624,12 @@ class LiveDataHubWritebackPort implements DataHubWritebackPort {
             "AMBIGUOUS",
             "DataHub effect consumption outcome is ambiguous and requires reconciliation.",
             { retryable: true },
+          );
+        }
+        if (consumed.canonicalEffectFingerprint !== canonicalEffectFingerprint) {
+          throw new DataHubAdapterError(
+            "AUTHORITY_INVALID",
+            "DataHub consumed effect fingerprint changed.",
           );
         }
         validateConsumedAuthority(consumed, this.#dependencies.clock ?? (() => new Date()), true);
@@ -598,6 +641,7 @@ class LiveDataHubWritebackPort implements DataHubWritebackPort {
 
       if (!existing.document) {
         try {
+          validateConsumedAuthority(consumed, this.#dependencies.clock ?? (() => new Date()), true);
           invocations.push(
             await mutationClient.invoke("save_document", payloads.documentArguments),
           );
@@ -647,6 +691,7 @@ class LiveDataHubWritebackPort implements DataHubWritebackPort {
 
       if (!documentProof.tag) {
         try {
+          validateConsumedAuthority(consumed, this.#dependencies.clock ?? (() => new Date()), true);
           invocations.push(await mutationClient.invoke("add_tags", payloads.tagArguments));
         } catch (error) {
           if (!(error instanceof DataHubAdapterError) || !error.retryable) {
@@ -710,23 +755,40 @@ function isDefinedRecord(
   return value !== undefined;
 }
 
-function customProperty(
+function strictCustomProperty(
   properties: Readonly<Record<string, unknown>>,
   key: string,
 ): string | undefined {
   const custom = properties.customProperties;
   if (Array.isArray(custom)) {
+    if (custom.length > 100) {
+      throw new DataHubAdapterError("SCHEMA_DRIFT", "DataHub custom properties are unbounded.");
+    }
+    const matches: string[] = [];
     for (const item of custom) {
       const entry = record(item);
-      if (entry?.key === key && typeof entry.value === "string") return entry.value;
+      if (entry === undefined || typeof entry.key !== "string" || typeof entry.value !== "string") {
+        throw new DataHubAdapterError("SCHEMA_DRIFT", "DataHub custom properties are malformed.");
+      }
+      if (entry.key === key) matches.push(entry.value);
     }
+    if (matches.length > 1) {
+      throw new DataHubAdapterError("SCHEMA_DRIFT", "DataHub scenario marker was duplicated.");
+    }
+    return matches[0];
   }
   const customRecord = record(custom);
+  if (custom !== undefined && customRecord === undefined) {
+    throw new DataHubAdapterError("SCHEMA_DRIFT", "DataHub custom properties are malformed.");
+  }
   const value = customRecord?.[key];
-  return typeof value === "string" ? value : undefined;
+  if (value !== undefined && typeof value !== "string") {
+    throw new DataHubAdapterError("SCHEMA_DRIFT", "DataHub scenario marker is malformed.");
+  }
+  return value;
 }
 
-function parseExactEntity(
+export function parseOfficialWritebackEntities(
   payload: unknown,
   expectedUrn: string,
   documentId: string,
@@ -744,15 +806,13 @@ function parseExactEntity(
     );
   }
   const properties = record(entity.properties) ?? {};
-  const scenarioMarker =
-    entity.urn === canonicalDatasetUrn && properties.name === "orders"
-      ? CANONICAL_SCENARIO_MARKER
-      : undefined;
+  const scenarioMarker = strictCustomProperty(properties, "lineageguard.scenario");
   const systemMetadata = record(entity.systemMetadata);
   const versionValue =
-    customProperty(properties, "lineageguard.metadata-version") ?? systemMetadata?.lastObserved;
+    strictCustomProperty(properties, "lineageguard.metadata-version") ??
+    systemMetadata?.lastObserved;
   if (
-    scenarioMarker === undefined ||
+    scenarioMarker !== CANONICAL_SCENARIO_MARKER ||
     (typeof versionValue !== "string" && typeof versionValue !== "number")
   ) {
     throw new DataHubAdapterError(
@@ -761,12 +821,19 @@ function parseExactEntity(
     );
   }
   const tags = record(entity.tags)?.tags;
-  const tagUrns = Array.isArray(tags)
-    ? tags.flatMap((entry) => {
-        const tagUrn = record(record(entry)?.tag)?.urn;
-        return typeof tagUrn === "string" && tagUrn.startsWith("urn:li:tag:") ? [tagUrn] : [];
-      })
-    : [];
+  if (!Array.isArray(tags) || tags.length > 200) {
+    throw new DataHubAdapterError("SCHEMA_DRIFT", "DataHub entity tags are absent or unbounded.");
+  }
+  const tagUrns = tags.map((entry) => {
+    const tagUrn = record(record(entry)?.tag)?.urn;
+    if (typeof tagUrn !== "string" || !tagUrn.startsWith("urn:li:tag:")) {
+      throw new DataHubAdapterError("SCHEMA_DRIFT", "DataHub entity tags are malformed.");
+    }
+    return tagUrn;
+  });
+  if (new Set(tagUrns).size !== tagUrns.length) {
+    throw new DataHubAdapterError("SCHEMA_DRIFT", "DataHub entity tags are duplicated.");
+  }
   const documentUrn = `urn:li:document:${documentId}`;
   const document = entities.find((item) => item.urn === documentUrn);
   const documentInfo = document === undefined ? undefined : record(document.info);
@@ -804,6 +871,7 @@ function parseExactEntity(
       name: properties.name,
     },
     schemaMetadata: entity.schemaMetadata,
+    tagUrns: tagUrns.filter((item) => item !== tagUrn).sort(),
   };
   return Object.freeze({
     documentProofs: Object.freeze(documentProofs.map((proof) => Object.freeze(proof))),
@@ -819,11 +887,16 @@ function parseExactEntity(
   });
 }
 
-async function officialReader(
-  credentials: OfficialStdioCredentials,
+export async function createExactReaderFromSession(
+  session: Awaited<ReturnType<typeof createOfficialStdioSession>>,
 ): Promise<ExactDataHubEntityReader> {
-  const session = await createOfficialStdioSession(credentials);
-  const client = await createReadOnlyToolClient(session);
+  let client: Awaited<ReturnType<typeof createReadOnlyToolClient>>;
+  try {
+    client = await createReadOnlyToolClient(session);
+  } catch (error) {
+    await Promise.allSettled([session.close()]);
+    throw error;
+  }
   return {
     async close() {
       await client.close();
@@ -832,9 +905,38 @@ async function officialReader(
       const result = await client.invoke("get_entities", {
         urns: [expectedUrn, `urn:li:document:${documentId}`, tagUrn],
       });
-      return parseExactEntity(result.payload, expectedUrn, documentId, tagUrn, result.retrievedAt);
+      return parseOfficialWritebackEntities(
+        result.payload,
+        expectedUrn,
+        documentId,
+        tagUrn,
+        result.retrievedAt,
+      );
     },
   };
+}
+
+async function officialReader(
+  credentials: OfficialStdioCredentials,
+): Promise<ExactDataHubEntityReader> {
+  return createExactReaderFromSession(await createOfficialStdioSession(credentials));
+}
+
+export async function createMutationClientFromSession(
+  session: Awaited<ReturnType<typeof createOfficialMutationSession>>,
+): Promise<MutationToolClient> {
+  try {
+    return await createMutationToolClient(session);
+  } catch (error) {
+    await Promise.allSettled([session.close()]);
+    throw error;
+  }
+}
+
+async function officialMutationClient(
+  credentials: OfficialMutationCredentials,
+): Promise<MutationToolClient> {
+  return createMutationClientFromSession(await createOfficialMutationSession(credentials));
 }
 
 export type OfficialLiveDataHubWritebackConfiguration = Readonly<{
@@ -842,18 +944,46 @@ export type OfficialLiveDataHubWritebackConfiguration = Readonly<{
   enabled?: boolean;
   mutationCredentials: OfficialMutationCredentials;
   readCredentials: OfficialStdioCredentials;
+  targetInstanceFingerprint: string;
 }>;
+
+function normalizedGmsUrl(value: string): string {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new DataHubAdapterError("CONFIGURATION", "DataHub GMS target URL is invalid.");
+  }
+  if (url.username || url.password || url.search || url.hash) {
+    throw new DataHubAdapterError("CONFIGURATION", "DataHub GMS target URL is unsafe.");
+  }
+  return url.href;
+}
 
 export function createOfficialLiveDataHubWritebackPort(
   configuration: OfficialLiveDataHubWritebackConfiguration,
 ): DataHubWritebackPort {
+  if (
+    normalizedGmsUrl(configuration.readCredentials.dataHubGmsUrl) !==
+    normalizedGmsUrl(configuration.mutationCredentials.dataHubGmsUrl)
+  ) {
+    throw new DataHubAdapterError(
+      "CONFIGURATION",
+      "DataHub read and mutation credentials target different instances.",
+    );
+  }
+  const targetFingerprint = fingerprint.safeParse(configuration.targetInstanceFingerprint);
+  if (!targetFingerprint.success) {
+    throw new DataHubAdapterError(
+      "CONFIGURATION",
+      "DataHub target instance attestation is invalid.",
+    );
+  }
   return createLiveDataHubWritebackPort({
     authority: configuration.authority,
     enabled: configuration.enabled === true,
-    mutationClientFactory: async () =>
-      createMutationToolClient(
-        await createOfficialMutationSession(configuration.mutationCredentials),
-      ),
+    expectedTargetInstanceFingerprint: targetFingerprint.data,
+    mutationClientFactory: () => officialMutationClient(configuration.mutationCredentials),
     readerFactory: () => officialReader(configuration.readCredentials),
   });
 }
