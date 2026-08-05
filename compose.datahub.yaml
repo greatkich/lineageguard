@@ -1,0 +1,17 @@
+# DataHub Quickstart wrapper profile
+# Runs the pinned DataHub stack via uv; does not copy DataHub services into the app database.
+#
+# Usage:
+#   docker compose -f compose.datahub.yaml --profile datahub up
+#
+services:
+  datahub-quickstart:
+    profiles: ["datahub"]
+    image: alpine:3.20
+    entrypoint: >
+      echo "Use: uv run --project tools/datahub datahub docker quickstart --version v1.6.0"
+    networks:
+      - datahub-network
+
+networks:
+  datahub-network:

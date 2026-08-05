@@ -13,7 +13,9 @@
       "!**/dist/**",
       "!**/coverage/**",
       "!**/playwright-report/**",
-      "!**/test-results/**"
+      "!**/test-results/**",
+      "!**/.venv/**",
+      "!**/tools/**"
     ]
   },
   "formatter": {

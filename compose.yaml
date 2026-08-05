@@ -1,0 +1,40 @@
+services:
+  app-postgres:
+    image: postgres:17.10
+    environment:
+      POSTGRES_DB: ${APP_POSTGRES_DB:?required}
+      POSTGRES_USER: ${APP_POSTGRES_USER:?required}
+      POSTGRES_PASSWORD: ${APP_POSTGRES_PASSWORD:?required}
+    volumes:
+      - app-postgres-data:/var/lib/postgresql/data
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  validation-postgres:
+    image: postgres:17.10
+    environment:
+      POSTGRES_DB: ${VALIDATION_POSTGRES_DB:?required}
+      POSTGRES_USER: ${VALIDATION_POSTGRES_USER:?required}
+      POSTGRES_PASSWORD: ${VALIDATION_POSTGRES_PASSWORD:?required}
+    volumes:
+      - validation-postgres-data:/var/lib/postgresql/data
+    networks:
+      - validation-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  app-postgres-data:
+  validation-postgres-data:
+
+networks:
+  app-network:
+  validation-network:
