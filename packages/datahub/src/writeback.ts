@@ -127,7 +127,10 @@ export type DataHubEffectAuthorityBinding = Readonly<{
 
 export interface TrustedDataHubEffectAuthority {
   /** The injected worker closure captures opaque VerifiedCurrentEffect bearer material. */
-  verifyCurrentEffectReservation(exactBinding: DataHubEffectAuthorityBinding): Promise<
+  verifyCurrentEffectReservation(
+    exactBinding: DataHubEffectAuthorityBinding,
+    options: Readonly<{ signal: AbortSignal; timeoutMs: number }>,
+  ): Promise<
     | Readonly<{ state: "RESERVED" }>
     | Readonly<{
         consumedAt: string;
@@ -138,7 +141,10 @@ export interface TrustedDataHubEffectAuthority {
       }>
   >;
   /** The trusted run store atomically consumes that same current effect and persists only token hash. */
-  consumeCurrentEffect(exactBinding: DataHubEffectAuthorityBinding): Promise<
+  consumeCurrentEffect(
+    exactBinding: DataHubEffectAuthorityBinding,
+    options: Readonly<{ signal: AbortSignal; timeoutMs: number }>,
+  ): Promise<
     Readonly<{
       consumedAt: string;
       fencing: number;
@@ -198,6 +204,33 @@ type LiveDependencies = Readonly<{
   mutationClientFactory: () => Promise<MutationToolClient>;
   readerFactory: () => Promise<ExactDataHubEntityReader>;
 }>;
+
+const AUTHORITY_TIMEOUT_MS = 2_000;
+
+async function withAuthorityDeadline<T>(
+  operation: (options: Readonly<{ signal: AbortSignal; timeoutMs: number }>) => Promise<T>,
+): Promise<T> {
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      reject(
+        new DataHubAdapterError("AMBIGUOUS", "DataHub effect authority outcome is ambiguous.", {
+          retryable: true,
+        }),
+      );
+    }, AUTHORITY_TIMEOUT_MS);
+  });
+  try {
+    return await Promise.race([
+      operation({ signal: controller.signal, timeoutMs: AUTHORITY_TIMEOUT_MS }),
+      deadline,
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
 
 function reviewStatusTag(decision: DataHubWritebackRequest["decision"]): string {
   const status = decision === "BLOCK" ? "blocked" : decision === "REVIEW" ? "review" : "allowed";
@@ -458,8 +491,11 @@ class LiveDataHubWritebackPort implements DataHubWritebackPort {
           state: "CONSUMED";
         }>;
     try {
-      verified = await this.#dependencies.authority.verifyCurrentEffectReservation(binding);
-    } catch {
+      verified = await withAuthorityDeadline((options) =>
+        this.#dependencies.authority.verifyCurrentEffectReservation(binding, options),
+      );
+    } catch (error) {
+      if (error instanceof DataHubAdapterError) throw error;
       throw new DataHubAdapterError(
         "AUTHORITY_INVALID",
         "DataHub effect authority was missing, invalid, expired, or not current.",
@@ -467,6 +503,9 @@ class LiveDataHubWritebackPort implements DataHubWritebackPort {
     }
     if (verified.state !== "RESERVED" && verified.state !== "CONSUMED") {
       throw new DataHubAdapterError("AUTHORITY_INVALID", "DataHub effect authority is invalid.");
+    }
+    if (verified.state === "CONSUMED") {
+      validateConsumedAuthority(verified, this.#dependencies.clock ?? (() => new Date()), false);
     }
     const reader = await this.#dependencies.readerFactory();
     let mutationClient: MutationToolClient | undefined;
@@ -482,7 +521,6 @@ class LiveDataHubWritebackPort implements DataHubWritebackPort {
             "DataHub already contains the write-back without a consumed local effect.",
           );
         }
-        validateConsumedAuthority(verified, this.#dependencies.clock ?? (() => new Date()), false);
         return receipt(
           request,
           payloads,
@@ -495,7 +533,6 @@ class LiveDataHubWritebackPort implements DataHubWritebackPort {
         );
       }
       if (verified.state === "CONSUMED") {
-        validateConsumedAuthority(verified, this.#dependencies.clock ?? (() => new Date()), false);
         return receipt(
           request,
           payloads,
@@ -513,11 +550,15 @@ class LiveDataHubWritebackPort implements DataHubWritebackPort {
 
       let consumed: ConsumedAuthority;
       try {
-        consumed = await this.#dependencies.authority.consumeCurrentEffect(binding);
-      } catch {
+        consumed = await withAuthorityDeadline((options) =>
+          this.#dependencies.authority.consumeCurrentEffect(binding, options),
+        );
+      } catch (error) {
+        if (error instanceof DataHubAdapterError) throw error;
         throw new DataHubAdapterError(
-          "AUTHORITY_INVALID",
-          "DataHub effect authority was missing, invalid, expired, or already consumed.",
+          "AMBIGUOUS",
+          "DataHub effect consumption outcome is ambiguous and requires reconciliation.",
+          { retryable: true },
         );
       }
       validateConsumedAuthority(consumed, this.#dependencies.clock ?? (() => new Date()), true);

@@ -51,18 +51,21 @@ function validateEnvelope(value: unknown): string {
     throw new DataHubAdapterError(
       "MALFORMED_RESPONSE",
       "DataHub MCP mutation returned non-canonical output.",
+      { retryable: true },
     );
   }
   if (Buffer.byteLength(canonical, "utf8") > MAX_RESPONSE_BYTES) {
     throw new DataHubAdapterError(
       "RESPONSE_LIMIT",
       "DataHub MCP mutation response limit was exceeded.",
+      { retryable: true },
     );
   }
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     throw new DataHubAdapterError(
       "MALFORMED_RESPONSE",
       "DataHub MCP mutation returned an invalid result envelope.",
+      { retryable: true },
     );
   }
   const envelope = value as Readonly<Record<string, unknown>>;
@@ -73,6 +76,7 @@ function validateEnvelope(value: unknown): string {
     throw new DataHubAdapterError(
       "MALFORMED_RESPONSE",
       "DataHub MCP mutation returned no result content.",
+      { retryable: true },
     );
   }
   return canonical;
@@ -178,7 +182,7 @@ export class MutationToolClient {
       throw new DataHubAdapterError(
         "RESPONSE_LIMIT",
         "DataHub MCP mutation response limit was exceeded.",
-        { invocationId, tool },
+        { invocationId, retryable: true, tool },
       );
     }
     return Object.freeze({ invocationId, responseFingerprint: sha256(canonical), tool });

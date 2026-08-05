@@ -175,6 +175,7 @@ describe("controlled DataHub write-back", () => {
         validationReceiptFingerprint: writeRequest.validationReceiptFingerprint,
         writePayloadFingerprint: payloads.writePayloadFingerprint,
       }),
+      expect.objectContaining({ signal: expect.any(AbortSignal), timeoutMs: 2_000 }),
     );
     expect(trusted.consumeCurrentEffect.mock.calls[0]?.[0]).toEqual(
       trusted.verifyCurrentEffectReservation.mock.calls[0]?.[0],
