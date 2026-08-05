@@ -12,7 +12,7 @@
     "format:check": "biome format .",
     "lint": "biome lint .",
     "typecheck": "pnpm -r --if-present typecheck",
-    "test": "vitest run --workspace vitest.workspace.ts",
+    "test": "vitest run --config vitest.config.ts",
     "build": "pnpm -r --if-present build",
     "test:e2e": "playwright test",
     "browser:install": "playwright install chromium",

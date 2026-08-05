@@ -1,0 +1,20 @@
+{
+  "name": "@lineageguard/worker",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@lineageguard/domain": "workspace:*",
+    "@lineageguard/agent": "workspace:*",
+    "@lineageguard/datahub": "workspace:*",
+    "@lineageguard/github": "workspace:*",
+    "@lineageguard/validation": "workspace:*",
+    "@lineageguard/db": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "catalog:"
+  }
+}

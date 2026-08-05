@@ -7,7 +7,13 @@
       "**/*.js",
       "**/*.mjs",
       "**/*.json",
-      "**/*.jsonc"
+      "**/*.jsonc",
+      "!**/node_modules/**",
+      "!**/.next/**",
+      "!**/dist/**",
+      "!**/coverage/**",
+      "!**/playwright-report/**",
+      "!**/test-results/**"
     ]
   },
   "formatter": {
@@ -22,7 +28,11 @@
   },
   "linter": {
     "rules": {
-      "preset": "recommended"
+      "preset": "recommended",
+      "suspicious": {
+        "noAssignInExpressions": "off",
+        "useBiomeIgnoreFolder": "off"
+      }
     }
   },
   "assist": {
