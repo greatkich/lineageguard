@@ -594,6 +594,7 @@ class LiveDataHubWritebackPort implements DataHubWritebackPort {
       if (mutationClient === undefined) {
         throw new DataHubAdapterError("UNAVAILABLE", "DataHub mutation client is unavailable.");
       }
+      validateConsumedAuthority(consumed, this.#dependencies.clock ?? (() => new Date()), true);
 
       if (!existing.document) {
         try {
@@ -744,7 +745,9 @@ function parseExactEntity(
   }
   const properties = record(entity.properties) ?? {};
   const scenarioMarker =
-    expectedUrn === canonicalDatasetUrn ? CANONICAL_SCENARIO_MARKER : undefined;
+    entity.urn === canonicalDatasetUrn && properties.name === "orders"
+      ? CANONICAL_SCENARIO_MARKER
+      : undefined;
   const systemMetadata = record(entity.systemMetadata);
   const versionValue =
     customProperty(properties, "lineageguard.metadata-version") ?? systemMetadata?.lastObserved;

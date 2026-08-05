@@ -22,7 +22,7 @@ describe("sanitized official DataHub MCP v0.6.0 mutation envelopes", () => {
   it("records the exact add_tags success projection", async () => {
     expect(await fixture("add-tags-result")).toEqual({
       structuredContent: {
-        message: "Successfully added 1 tag(s) to 1 entity(ies)",
+        message: "Successfully added 1 tag(s) to 1 entit(ies)",
         success: true,
       },
     });
