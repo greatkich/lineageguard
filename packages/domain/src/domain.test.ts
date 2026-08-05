@@ -595,50 +595,155 @@ describe("canonical impact evidence", () => {
     expect(impactContextSchema.safeParse(context).success).toBe(true);
   });
 
-  it("rejects duplicate and extraneous existing evidence relations", () => {
+  it("rejects duplicate evidence relations when constructing a self-consistent identity", () => {
     const context = createCanonicalImpactContextFixture(canonicalChange().id);
     const query = required(
       context.evidence.find((item) => item.kind === "QUERY_USAGE"),
       "query evidence",
     );
-    const unrelatedPath = required(
+    const relatedPathId = required(query.relatedEvidenceIds[0], "query lineage relation");
+    const { id: _queryId, fingerprint: _queryFingerprint, ...queryDraft } = query;
+
+    expect(() =>
+      createEvidence({
+        ...queryDraft,
+        relatedEvidenceIds: [relatedPathId, relatedPathId],
+      }),
+    ).toThrow(/Related evidence IDs must be unique/);
+  });
+
+  it("rejects self-consistent invalid relations for every exact relation branch", () => {
+    const context = createCanonicalImpactContextFixture(canonicalChange().id);
+    const schema = required(
+      context.evidence.find((item) => item.kind === "SCHEMA"),
+      "schema evidence",
+    );
+    const dashboardPath = required(
+      context.evidence.find(
+        (item) => item.kind === "LINEAGE_PATH" && item.targetUrn === canonicalDashboardUrn,
+      ),
+      "dashboard lineage path",
+    );
+    const modelPath = required(
       context.evidence.find(
         (item) => item.kind === "LINEAGE_PATH" && item.targetUrn === canonicalFraudModelUrn,
       ),
-      "unrelated lineage path",
+      "model lineage path",
     );
-    const relatedPathId = required(query.relatedEvidenceIds[0], "query lineage relation");
-    const { id: _queryId, fingerprint: _queryFingerprint, ...queryDraft } = query;
-    const duplicateRelation = {
-      ...queryDraft,
-      id: query.id,
-      fingerprint: query.fingerprint,
-      relatedEvidenceIds: [relatedPathId, relatedPathId],
+    const glossary = required(
+      context.evidence.find((item) => item.kind === "GLOSSARY_TERM"),
+      "glossary evidence",
+    );
+    const dashboard = required(
+      context.evidence.find((item) => item.kind === "DASHBOARD"),
+      "dashboard evidence",
+    );
+    const model = required(
+      context.evidence.find((item) => item.kind === "ML_MODEL"),
+      "model evidence",
+    );
+    const query = required(
+      context.evidence.find((item) => item.kind === "QUERY_USAGE"),
+      "query evidence",
+    );
+    const owner = required(
+      context.evidence.find(
+        (item) => item.kind === "OWNER" && item.payload.assetUrn === canonicalDashboardUrn,
+      ),
+      "dashboard owner evidence",
+    );
+    type CanonicalEvidence = (typeof context.evidence)[number];
+    const expectRelationRejection = (
+      original: CanonicalEvidence,
+      mutated: CanonicalEvidence,
+      supportingEvidence: CanonicalEvidence[],
+      expectedIssue: string,
+    ) => {
+      expect(mutated.id).not.toBe(original.id);
+      expect(evidenceItemSchema.safeParse(mutated).success).toBe(true);
+      const partial = reboundContext(context, {
+        collectionStatus: "PARTIAL",
+        evidence: [...supportingEvidence, mutated],
+        failures: [
+          {
+            tool: "get_entities",
+            invocationId: `relation-check-${original.kind.toLowerCase()}`,
+            code: "TERMINATED",
+            message: "Collection stopped after the isolated relation check.",
+          },
+        ],
+      });
+      const parsed = impactContextSchema.safeParse(partial);
+      expect(parsed.success).toBe(false);
+      if (parsed.success) throw new Error("invalid relation must be rejected");
+      expect(parsed.error.issues.map((issue) => issue.message)).toContain(expectedIssue);
     };
-    expect(evidenceItemSchema.safeParse(duplicateRelation).success).toBe(false);
-    expect(
-      impactContextSchema.safeParse(
-        reboundContext(context, {
-          evidence: context.evidence.map((item) =>
-            item.id === query.id ? duplicateRelation : item,
-          ),
-        }),
-      ).success,
-    ).toBe(false);
 
-    const extraneousRelation = createEvidence({
-      ...queryDraft,
-      relatedEvidenceIds: [relatedPathId, unrelatedPath.id].sort(),
-    });
-    expect(
-      impactContextSchema.safeParse(
-        reboundContext(context, {
-          evidence: context.evidence.map((item) =>
-            item.id === query.id ? extraneousRelation : item,
-          ),
-        }),
-      ).success,
-    ).toBe(false);
+    const { id: _schemaId, fingerprint: _schemaFingerprint, ...schemaDraft } = schema;
+    expectRelationRejection(
+      schema,
+      createEvidence({ ...schemaDraft, relatedEvidenceIds: [glossary.id] }),
+      [glossary],
+      "Schema evidence does not match the resolved source field",
+    );
+
+    const {
+      id: _dashboardPathId,
+      fingerprint: _dashboardPathFingerprint,
+      ...dashboardPathDraft
+    } = dashboardPath;
+    expectRelationRejection(
+      dashboardPath,
+      createEvidence({ ...dashboardPathDraft, relatedEvidenceIds: [schema.id] }),
+      [schema],
+      "Lineage path segments do not prove the resolved downstream path",
+    );
+
+    const { id: _glossaryId, fingerprint: _glossaryFingerprint, ...glossaryDraft } = glossary;
+    expectRelationRejection(
+      glossary,
+      createEvidence({ ...glossaryDraft, relatedEvidenceIds: [schema.id] }),
+      [schema],
+      "Glossary evidence does not match the requested field",
+    );
+
+    const { id: _dashboardId, fingerprint: _dashboardFingerprint, ...dashboardDraft } = dashboard;
+    expectRelationRejection(
+      dashboard,
+      createEvidence({ ...dashboardDraft, relatedEvidenceIds: [] }),
+      [],
+      "Dashboard evidence is not linked to a matching field lineage path",
+    );
+    expectRelationRejection(
+      dashboard,
+      createEvidence({ ...dashboardDraft, relatedEvidenceIds: [modelPath.id] }),
+      [modelPath],
+      "Dashboard evidence is not linked to a matching field lineage path",
+    );
+
+    const { id: _modelId, fingerprint: _modelFingerprint, ...modelDraft } = model;
+    expectRelationRejection(
+      model,
+      createEvidence({ ...modelDraft, relatedEvidenceIds: [dashboardPath.id] }),
+      [dashboardPath],
+      "ML model evidence is not linked to a matching field lineage path",
+    );
+
+    const { id: _queryId, fingerprint: _queryFingerprint, ...queryDraft } = query;
+    expectRelationRejection(
+      query,
+      createEvidence({ ...queryDraft, relatedEvidenceIds: [modelPath.id] }),
+      [modelPath],
+      "Query evidence does not match its DataHub query subject",
+    );
+
+    const { id: _ownerId, fingerprint: _ownerFingerprint, ...ownerDraft } = owner;
+    expectRelationRejection(
+      owner,
+      createEvidence({ ...ownerDraft, relatedEvidenceIds: [schema.id] }),
+      [schema],
+      "Owner evidence does not match its related critical asset",
+    );
   });
 
   it("rejects empty/incomplete COMPLETE but permits observed critical assets without owners", () => {
