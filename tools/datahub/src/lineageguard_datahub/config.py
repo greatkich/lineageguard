@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 from dataclasses import dataclass, field
 from ipaddress import ip_address
-from urllib.parse import quote, urlsplit
+from urllib.parse import quote, quote_plus, urlsplit
 
 
 class ConfigurationError(ValueError):
@@ -201,11 +202,27 @@ def load_postgres_config(
 
 
 def redact(text: str, secrets: tuple[str | None, ...]) -> str:
-    redacted = text[:16384]
-    for secret in sorted(
-        (item for item in secrets if item and len(item) <= 4096),
-        key=len,
-        reverse=True,
-    ):
-        redacted = redacted.replace(secret, "[REDACTED]")
-    return redacted
+    variants: set[str] = set()
+    for secret in (item for item in secrets if item and len(item) <= 4096):
+        variants.add(secret)
+        for encoded in (quote(secret, safe=""), quote_plus(secret, safe="")):
+            variants.add(encoded)
+            variants.add(
+                re.sub(
+                    r"%[0-9A-F]{2}",
+                    lambda match: match.group(0).lower(),
+                    encoded,
+                )
+            )
+    ordered = sorted((item for item in variants if item), key=len, reverse=True)
+    maximum_variant = max((len(item) for item in ordered), default=0)
+    # Retain enough look-ahead to remove a credential crossing the output boundary.
+    redacted = text[: 16384 + maximum_variant]
+    marker = "[REDACTED]"
+    for secret in ordered:
+        redacted = re.sub(re.escape(secret), marker, redacted, flags=re.IGNORECASE)
+    boundary = 16384
+    marker_start = redacted.rfind(marker, 0, boundary + len(marker))
+    if marker_start >= 0 and marker_start + len(marker) > boundary:
+        return redacted[: boundary - len(marker)] + marker
+    return redacted[:boundary]

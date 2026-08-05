@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -10,7 +11,11 @@ from datahub.emitter.mce_builder import (
     make_schema_field_urn,
 )
 
-from lineageguard_datahub.expected_graph import GraphContractError, load_expected_graph
+from lineageguard_datahub.expected_graph import (
+    GraphContractError,
+    graph_fingerprint,
+    load_expected_graph,
+)
 from lineageguard_datahub.models import ExpectedGraph
 from lineageguard_datahub.verify import verify_query_files
 
@@ -49,6 +54,33 @@ def test_query_file_matches_checked_digest(
     expected_graph: ExpectedGraph, repository_root: Path
 ) -> None:
     verify_query_files(expected_graph, repository_root)
+
+
+def test_graph_fingerprint_is_stable_under_component_permutations(
+    expected_graph: ExpectedGraph,
+) -> None:
+    permuted = replace(
+        expected_graph,
+        owners=tuple(reversed(expected_graph.owners)),
+        tags=tuple(reversed(expected_graph.tags)),
+        nodes=tuple(
+            replace(
+                node,
+                owner_urns=tuple(reversed(node.owner_urns)),
+                tag_urns=tuple(reversed(node.tag_urns)),
+                schema_fields=tuple(reversed(node.schema_fields)),
+            )
+            for node in reversed(expected_graph.nodes)
+        ),
+        edges=tuple(reversed(expected_graph.edges)),
+        query_evidence=tuple(
+            replace(query, owner_urns=tuple(reversed(query.owner_urns)))
+            for query in reversed(expected_graph.query_evidence)
+        ),
+        impact_cards=tuple(reversed(expected_graph.impact_cards)),
+        lineage_intermediates=tuple(reversed(expected_graph.lineage_intermediates)),
+    )
+    assert graph_fingerprint(permuted) == graph_fingerprint(expected_graph)
 
 
 def test_loader_forbids_unknown_keys(repository_root: Path, tmp_path: Path) -> None:

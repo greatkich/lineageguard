@@ -565,26 +565,49 @@ def graph_fingerprint(graph: ExpectedGraph) -> str:
     payload = {
         "scenario": graph.scenario_id,
         "urns": graph.managed_urns,
+        "owners": tuple(
+            (owner.logical_key, owner.urn, owner.display_name)
+            for owner in sorted(graph.owners, key=lambda item: item.logical_key)
+        ),
+        "tags": tuple(
+            (tag.logical_key, tag.urn, tag.display_name)
+            for tag in sorted(graph.tags, key=lambda item: item.logical_key)
+        ),
         "nodeSemantics": tuple(
             (
                 node.logical_key,
                 node.name,
-                node.owner_urns,
+                tuple(sorted(node.owner_urns)),
                 node.ownership_type,
-                node.tag_urns,
+                tuple(sorted(node.tag_urns)),
+                tuple(sorted(node.schema_fields)),
             )
-            for node in graph.nodes
+            for node in sorted(graph.nodes, key=lambda item: item.logical_key)
         ),
-        "edges": tuple(edge.logical_key for edge in graph.edges),
+        "edges": tuple(
+            (
+                edge.logical_key,
+                edge.upstream_urn,
+                edge.downstream_urn,
+                edge.upstream_type,
+                edge.downstream_type,
+                edge.granularity,
+                edge.upstream_field_path,
+                edge.downstream_field_path,
+            )
+            for edge in sorted(graph.edges, key=lambda item: item.logical_key)
+        ),
         "queries": tuple(
             (
                 query.logical_key,
                 query.sha256,
-                query.owner_urns,
+                tuple(sorted(query.owner_urns)),
                 query.ownership_type,
             )
-            for query in graph.query_evidence
+            for query in sorted(graph.query_evidence, key=lambda item: item.logical_key)
         ),
+        "impactCards": tuple(sorted(graph.impact_cards)),
+        "lineageIntermediates": tuple(sorted(graph.lineage_intermediates)),
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
     return hashlib.sha256(encoded).hexdigest()

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from urllib.parse import quote, quote_plus
+
 import pytest
 
 from lineageguard_datahub.config import (
@@ -68,6 +70,29 @@ def test_query_and_ingest_principals_are_fixed_login_names() -> None:
 
 def test_redaction_replaces_longest_secret_first() -> None:
     assert redact("token-long token", ("token", "token-long")) == "[REDACTED] [REDACTED]"
+
+
+def test_redaction_happens_before_truncation_at_output_boundary() -> None:
+    secret = "BOUNDARY-secret-9b3d7a"
+    output = redact("x" * 16375 + secret + "tail", (secret,))
+    assert "[REDACTED]" in output
+    assert secret not in output
+    assert "BOUNDARY-" not in output
+
+
+def test_redaction_covers_dsn_and_url_encoded_secret_forms() -> None:
+    secret = "p@ss:/+ word"
+    percent_encoded = quote(secret, safe="")
+    plus_encoded = quote_plus(secret, safe="")
+    lower_hex_encoded = percent_encoded.replace("%3A", "%3a").replace("%2F", "%2f")
+    text = (
+        f"postgresql://user:{percent_encoded}@db/lineageguard "
+        f"url={plus_encoded} lower={lower_hex_encoded} raw={secret}"
+    )
+    output = redact(text, (secret,))
+    assert output.count("[REDACTED]") == 4
+    for value in (secret, percent_encoded, plus_encoded, lower_hex_encoded):
+        assert value not in output
 
 
 def test_remote_postgres_requires_verify_full_and_opt_in() -> None:
