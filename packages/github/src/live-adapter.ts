@@ -144,7 +144,7 @@ function parseTreeResponse(
     )
       return failure("Remote commit tree contains malformed or duplicate entries");
     seen.add(path);
-    if (type !== "tree") result.set(path, { path, mode, type, sha });
+    result.set(path, { path, mode, type, sha });
   }
   return result;
 }
@@ -411,7 +411,11 @@ export class LiveGitHubPort implements GitHubPort<GitHubReviewRequest> {
 
   private async readTree(treeSha: string): Promise<Map<string, TreeEntry>> {
     const response = await this.call("GET", `/git/trees/${treeSha}?recursive=1`, "RECONCILE");
-    return parseTreeResponse(response.body, treeSha, "RECONCILE");
+    return new Map(
+      [...parseTreeResponse(response.body, treeSha, "RECONCILE")].filter(
+        ([, entry]) => entry.type !== "tree",
+      ),
+    );
   }
 
   private async verifyReconciledArtifacts(
@@ -673,7 +677,20 @@ export class LiveGitHubPort implements GitHubPort<GitHubReviewRequest> {
     const basePaths = parseTreeResponse(baseTreeResponse.body, baseTree, "READ_BASE_COMMIT");
     for (const artifact of input.artifacts) {
       const existing = basePaths.get(artifact.path);
+      const hasDescendant = [...basePaths.keys()].some((path) =>
+        path.startsWith(`${artifact.path}/`),
+      );
+      const hasNonTreeAncestor = artifact.path
+        .split("/")
+        .slice(0, -1)
+        .some((_segment, index, segments) => {
+          const ancestor = segments.slice(0, index + 1).join("/");
+          const entry = basePaths.get(ancestor);
+          return entry !== undefined && entry.type !== "tree";
+        });
       if (
+        hasDescendant ||
+        hasNonTreeAncestor ||
         (artifact.operation === "CREATE" && existing !== undefined) ||
         (artifact.operation === "MODIFY" &&
           (existing?.type !== "blob" || existing.sha !== artifact.expectedBaseBlobSha))

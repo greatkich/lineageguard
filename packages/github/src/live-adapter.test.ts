@@ -70,20 +70,23 @@ function request(): GitHubReviewRequest {
   return input;
 }
 
-function createExistingPathRequest(): GitHubReviewRequest {
+function createExistingPathRequest(path = "walkthrough/models/orders.sql"): GitHubReviewRequest {
   const input = request();
   const artifact = input.artifacts[0];
   const observation = input.validation.artifacts[0];
   if (!artifact || !observation) throw new Error("test fixture is missing its artifact");
   input.artifacts = [
     {
-      path: artifact.path,
+      path,
       content: artifact.content,
       candidateArtifactFingerprint: artifact.candidateArtifactFingerprint,
       operation: "CREATE",
     },
   ];
-  input.validation = { ...input.validation, artifacts: [{ ...observation }] };
+  input.validation = {
+    ...input.validation,
+    artifacts: [{ ...observation, path }],
+  };
   input.inputFingerprint = githubEffectFingerprint(input);
   return input;
 }
@@ -355,6 +358,60 @@ describe("LiveGitHubPort", () => {
       createPort(transport, authority).createMigrationReview(input),
     ).rejects.toMatchObject({
       code: "REMOTE_FAILURE",
+      operation: "READ_BASE_COMMIT",
+      retry: "NEVER",
+    });
+    expect(authority.calls).toEqual(["verify"]);
+    expect(transport.calls.every((call) => call.method === "GET")).toBe(true);
+  });
+
+  it.each([
+    [
+      "an exact existing tree",
+      {
+        path: "docs/migrations/new.md",
+        mode: "040000",
+        type: "tree",
+        sha: sha("7"),
+      },
+    ],
+    [
+      "a non-tree ancestor",
+      {
+        path: "docs/migrations",
+        mode: "100644",
+        type: "blob",
+        sha: sha("7"),
+      },
+    ],
+    [
+      "an existing descendant subtree entry",
+      {
+        path: "docs/migrations/new.md/hidden.sql",
+        mode: "100644",
+        type: "blob",
+        sha: sha("7"),
+      },
+    ],
+  ])("rejects CREATE collision with %s before consume or POST", async (_name, treeEntry) => {
+    const input = createExistingPathRequest("docs/migrations/new.md");
+    const authority = new TrustedAuthority(input.inputFingerprint);
+    const treeBody = {
+      sha: sha("b"),
+      truncated: false,
+      tree: [treeEntry],
+    };
+    const transport = new ScriptedTransport([
+      response(200, fixture.repository),
+      response(200, fixture.baseRef),
+      response(404, fixture.notFound),
+      response(200, fixture.baseCommit),
+      response(200, treeBody),
+    ]);
+    await expect(
+      createPort(transport, authority).createMigrationReview(input),
+    ).rejects.toMatchObject({
+      code: "REMOTE_CONFLICT",
       operation: "READ_BASE_COMMIT",
       retry: "NEVER",
     });
