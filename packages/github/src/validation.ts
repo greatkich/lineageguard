@@ -49,7 +49,7 @@ export function validateOptions(options: LiveGitHubOptions): void {
   if (![1, 2, 3].includes(options.maxAttempts)) reject("max attempts must be between 1 and 3");
   if (
     !options.authority ||
-    typeof options.authority.resolveCurrentEffect !== "function" ||
+    typeof options.authority.verifyCurrentEffectReservation !== "function" ||
     typeof options.authority.consumeCurrentEffect !== "function"
   )
     reject("trusted effect authority is required", "POLICY_REJECTED");

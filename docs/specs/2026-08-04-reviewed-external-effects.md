@@ -28,15 +28,15 @@ skip validation, merge code, or turn a failed run into success.
 An adapter request is never its own validation or approval authority. The durable run store mints a
 one-time opaque reservation token, retains only its hash, and binds it to the exact run, effect kind,
 target, idempotency key, intent, input, validation-receipt, and approval fingerprints. The GitHub
-adapter resolves that complete claim before network access. After read-only preflight fixes the exact
-base commit and base blob identities, it recomputes the canonical GitHub effect fingerprint and
-atomically consumes the reservation immediately before the first write. Consume returns a bounded
-`invokeBy` deadline and attempt fence. A missing, forged, expired, reused, or differently bound token
-fails before mutation.
+adapter computes the complete canonical effect fingerprint from bounded request fields and verifies
+it through an injected authority before network access. After read-only preflight proves the exact
+base commit and request-bound base blob identities, it atomically consumes that same fingerprint
+immediately before the first write. Consume returns a bounded `invokeBy` deadline and attempt fence.
+A missing, forged, expired, reused, or differently bound reservation fails before mutation.
 
 The raw token never enters the public GitHub request DTO. The injected trusted-authority adapter
 closes over the opaque verified capability and presents the raw token to the durable store internally;
-the GitHub port supplies only the non-secret reservation ID and complete binding claim.
+the GitHub port supplies only the non-secret reservation ID and canonical fingerprint.
 
 The canonical GitHub payload binds the exact `https://api.github.com` host, owner/repository, base
 branch and SHA, deterministic head branch, every artifact path and `CREATE | MODIFY` operation,

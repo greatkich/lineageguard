@@ -73,10 +73,11 @@ export function githubEffectFingerprint(
 
 export async function resolveAuthorization(input: GitHubReviewRequest, options: LiveGitHubOptions) {
   const computed = githubEffectFingerprint(input, options.apiBaseUrl);
-  const claim = reservationClaim(input);
   let authorized: GitHubEffectAuthorization;
   try {
-    authorized = await options.authority.resolveCurrentEffect(claim);
+    authorized = await options.authority.verifyCurrentEffectReservation({
+      canonicalEffectFingerprint: computed,
+    });
   } catch {
     throw new GitHubEffectError({
       code: "AUTHORIZATION_REJECTED",
@@ -89,6 +90,7 @@ export async function resolveAuthorization(input: GitHubReviewRequest, options: 
     authorized.reservationId !== input.effectReservationId ||
     authorized.canonicalEffectFingerprint !== computed ||
     (authorized.state !== "RESERVED" && authorized.state !== "CONSUMED") ||
+    !validInvokeBy(authorized.invokeBy) ||
     input.inputFingerprint !== computed
   ) {
     throw new GitHubEffectError({
@@ -101,16 +103,12 @@ export async function resolveAuthorization(input: GitHubReviewRequest, options: 
   return authorized;
 }
 
-export function reservationClaim(input: GitHubReviewRequest) {
-  return {
-    reservationId: input.effectReservationId,
-    runId: input.runId,
-    effectKind: input.effectKind,
-    target: input.target,
-    idempotencyKey: input.idempotencyKey,
-    intentFingerprint: input.intentFingerprint,
-    inputFingerprint: input.inputFingerprint,
-    validationReceiptFingerprint: input.validationReceiptFingerprint,
-    approvalFingerprint: input.approvalFingerprint,
-  } as const;
+export function validInvokeBy(value: string): boolean {
+  const invokeBy = Date.parse(value);
+  return (
+    Number.isFinite(invokeBy) &&
+    new Date(invokeBy).toISOString() === value &&
+    invokeBy >= Date.now() &&
+    invokeBy <= Date.now() + 300_000
+  );
 }

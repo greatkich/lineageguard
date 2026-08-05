@@ -3,7 +3,6 @@ import { describe, expect, it } from "vitest";
 import {
   type GitHubEffectAuthorityPort,
   GitHubEffectError,
-  type GitHubEffectReservationClaim,
   type GitHubHttpRequest,
   type GitHubHttpResponse,
   type GitHubHttpTransport,
@@ -77,17 +76,16 @@ class TrustedAuthority implements GitHubEffectAuthorityPort {
     private readonly fingerprint = request().inputFingerprint,
     private readonly state: "RESERVED" | "CONSUMED" = "RESERVED",
   ) {}
-  async resolveCurrentEffect(input: GitHubEffectReservationClaim) {
-    this.calls.push("resolve");
+  async verifyCurrentEffectReservation(_input: { canonicalEffectFingerprint: string }) {
+    this.calls.push("verify");
     return {
-      reservationId: input.reservationId,
+      reservationId: request().effectReservationId,
       canonicalEffectFingerprint: this.fingerprint,
       state: this.state,
+      invokeBy: new Date(Date.now() + 60_000).toISOString(),
     };
   }
-  async consumeCurrentEffect(
-    input: GitHubEffectReservationClaim & { canonicalEffectFingerprint: string },
-  ) {
+  async consumeCurrentEffect(input: { canonicalEffectFingerprint: string }) {
     this.calls.push("consume");
     return {
       canonicalEffectFingerprint: input.canonicalEffectFingerprint,
@@ -283,7 +281,7 @@ describe("LiveGitHubPort", () => {
       code: "REMOTE_CONFLICT",
       retry: "NEVER",
     });
-    expect(authority.calls).toEqual(["resolve"]);
+    expect(authority.calls).toEqual(["verify"]);
     expect(transport.calls.every((call) => call.method === "GET")).toBe(true);
   });
 
@@ -520,7 +518,7 @@ describe("LiveGitHubPort", () => {
       retry: "RECONCILE",
     });
     expect(transport.calls.every((call) => call.method === "GET")).toBe(true);
-    expect(authority.calls).toEqual(["resolve"]);
+    expect(authority.calls).toEqual(["verify"]);
   });
 
   it("fails closed when an ambiguous branch creation resolves to an altered remote tree", async () => {

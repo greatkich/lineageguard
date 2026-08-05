@@ -1,4 +1,4 @@
-import { renderPullRequestBody, reservationClaim, resolveAuthorization } from "./authorization.js";
+import { renderPullRequestBody, resolveAuthorization, validInvokeBy } from "./authorization.js";
 import { GitHubEffectError } from "./errors.js";
 import { sha256Buffer } from "./hash.js";
 import { FetchGitHubTransport } from "./transport.js";
@@ -654,7 +654,6 @@ export class LiveGitHubPort implements GitHubPort<GitHubReviewRequest> {
     };
     try {
       consumed = await this.#options.authority.consumeCurrentEffect({
-        ...reservationClaim(input),
         canonicalEffectFingerprint,
       });
     } catch {
@@ -665,13 +664,9 @@ export class LiveGitHubPort implements GitHubPort<GitHubReviewRequest> {
         message: "Trusted effect reservation could not be consumed",
       });
     }
-    const invokeBy = Date.parse(consumed.invokeBy);
     if (
       consumed.canonicalEffectFingerprint !== canonicalEffectFingerprint ||
-      !Number.isFinite(invokeBy) ||
-      new Date(invokeBy).toISOString() !== consumed.invokeBy ||
-      invokeBy < Date.now() ||
-      invokeBy > Date.now() + 300_000 ||
+      !validInvokeBy(consumed.invokeBy) ||
       !/^[A-Za-z0-9_-]{32,200}$/.test(consumed.attemptFence)
     )
       throw new GitHubEffectError({

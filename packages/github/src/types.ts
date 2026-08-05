@@ -112,27 +112,14 @@ export interface GitHubEffectAuthorization {
   reservationId: string;
   canonicalEffectFingerprint: string;
   state: "RESERVED" | "CONSUMED";
-}
-
-export interface GitHubEffectReservationClaim {
-  reservationId: string;
-  runId: string;
-  effectKind: "GITHUB_WRITE";
-  target: string;
-  idempotencyKey: string;
-  intentFingerprint: string;
-  inputFingerprint: string;
-  validationReceiptFingerprint: string;
-  approvalFingerprint: string;
+  invokeBy: string;
 }
 
 export interface GitHubEffectAuthorityPort {
-  resolveCurrentEffect(input: GitHubEffectReservationClaim): Promise<GitHubEffectAuthorization>;
-  consumeCurrentEffect(
-    input: GitHubEffectReservationClaim & {
-      canonicalEffectFingerprint: string;
-    },
-  ): Promise<{
+  verifyCurrentEffectReservation(input: {
+    canonicalEffectFingerprint: string;
+  }): Promise<GitHubEffectAuthorization>;
+  consumeCurrentEffect(input: { canonicalEffectFingerprint: string }): Promise<{
     canonicalEffectFingerprint: string;
     invokeBy: string;
     attemptFence: string;
