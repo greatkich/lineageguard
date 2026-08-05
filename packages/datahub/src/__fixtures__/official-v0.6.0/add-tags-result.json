@@ -1,0 +1,6 @@
+{
+  "structuredContent": {
+    "success": true,
+    "urn": "urn:li:dataset:(urn:li:dataPlatform:postgres,example.orders,PROD)"
+  }
+}
