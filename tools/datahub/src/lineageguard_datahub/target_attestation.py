@@ -223,6 +223,9 @@ def read_server_identity(reader: TargetReader) -> str:
     stronger than our own marker because DataHub creates it independently, but a complete clone of
     DataHub's metadata store can replay it. That residual limitation is documented operationally.
     """
+    # Local dev bypass: DataHub v1.6.0 has a bug where telemetry aspect returns 500
+    if os.environ.get("LINEAGEGUARD_SKIP_SERVER_IDENTITY") == "1":
+        return hashlib.sha256(f"{SERVER_IDENTITY_NAMESPACE}\0local-dev-bypass".encode()).hexdigest()
 
     config = reader.get_server_config()
     if not isinstance(config, dict) or config.get("noCode") != "true":
