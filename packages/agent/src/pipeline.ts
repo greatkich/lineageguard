@@ -13,12 +13,7 @@ import { migrationPlanSchema } from "./llm/schemas.js";
 import { buildCanonicalCandidate } from "./steps/build-canonical-candidate.js";
 import { deriveImpactCards } from "./steps/derive-impact-cards.js";
 import type { AgentDataHubContextPort, StepContext } from "./steps/index.js";
-import {
-  baselineAssess,
-  collectContext,
-  decideRisk,
-  parseChange,
-} from "./steps/index.js";
+import { baselineAssess, collectContext, decideRisk, parseChange } from "./steps/index.js";
 
 // ---------------------------------------------------------------------------
 // Ports for external effects (wired by the worker app)
@@ -84,7 +79,9 @@ export interface AgentPipelineConfig {
   github?: AgentGitHubPort | undefined;
   validation?: AgentValidationPort | undefined;
   writeback?: AgentWritebackPort | undefined;
-  onStatusChange?: ((runId: string, status: string, extra?: Record<string, unknown>) => Promise<void>) | undefined;
+  onStatusChange?:
+    | ((runId: string, status: string, extra?: Record<string, unknown>) => Promise<void>)
+    | undefined;
 }
 
 export interface RunInput {
@@ -118,8 +115,13 @@ export interface PipelineResult {
 // ---------------------------------------------------------------------------
 
 function extractJson(text: string): unknown {
-  const stripped = text.replace(/^```(?:json)?\n?/m, "").replace(/\n?```$/m, "").trim();
-  try { return JSON.parse(stripped); } catch {}
+  const stripped = text
+    .replace(/^```(?:json)?\n?/m, "")
+    .replace(/\n?```$/m, "")
+    .trim();
+  try {
+    return JSON.parse(stripped);
+  } catch {}
   const match = stripped.match(/\{[\s\S]*\}/);
   if (match) return JSON.parse(match[0]);
   throw new Error("No JSON in LLM response");
@@ -184,7 +186,9 @@ export function createAgentPipeline(config: AgentPipelineConfig) {
         // Derive exactly 4 canonical impact cards (not raw evidence count)
         const impactCards = deriveImpactCards(context);
         result.consumersFound = impactCards.length;
-        console.log(`  [pipeline] Step 3: Collected ${context.evidence.length} evidence items (${impactCards.length} impact cards)`);
+        console.log(
+          `  [pipeline] Step 3: Collected ${context.evidence.length} evidence items (${impactCards.length} impact cards)`,
+        );
         await notify(input.runId, "CONTEXT_COLLECTED", {
           consumersFound: impactCards.length,
           evidenceItems: context.evidence.length,
@@ -205,7 +209,9 @@ export function createAgentPipeline(config: AgentPipelineConfig) {
         comparison = riskResult.comparison;
         result.groundedDecision = comparison.grounded.decision;
         result.triggeredRules = [...comparison.triggeredRuleIds];
-        console.log(`  [pipeline] Step 4: ${comparison.transition} — rules: ${comparison.triggeredRuleIds.join(", ")}`);
+        console.log(
+          `  [pipeline] Step 4: ${comparison.transition} — rules: ${comparison.triggeredRuleIds.join(", ")}`,
+        );
         await notify(input.runId, "RISK_DECIDED", {
           groundedDecision: comparison.grounded.decision,
           triggeredRules: comparison.triggeredRuleIds,
@@ -238,13 +244,20 @@ export function createAgentPipeline(config: AgentPipelineConfig) {
             type: e.kind,
             criticality: e.criticality,
           }));
-        const planPrompt = migrationPlanPrompt({
-          table: input.table, field: input.field,
-          operation: "RENAME", newName: input.newName, consumers,
-        }) + "\n\nRespond with ONLY a valid JSON object: {\"strategy\": string, \"steps\": [{\"order\": number, \"action\": string, \"description\": string}], \"rationale\": string}. No markdown fences.";
+        const planPrompt =
+          migrationPlanPrompt({
+            table: input.table,
+            field: input.field,
+            operation: "RENAME",
+            newName: input.newName,
+            consumers,
+          }) +
+          '\n\nRespond with ONLY a valid JSON object: {"strategy": string, "steps": [{"order": number, "action": string, "description": string}], "rationale": string}. No markdown fences.';
         const planText = await directLLMCall(llmConfig, planPrompt, 3000);
         plan = migrationPlanSchema.parse(extractJson(planText));
-        console.log(`  [pipeline] Step 5: Plan strategy: ${plan.strategy} (${plan.steps.length} steps)`);
+        console.log(
+          `  [pipeline] Step 5: Plan strategy: ${plan.strategy} (${plan.steps.length} steps)`,
+        );
         await notify(input.runId, "MIGRATION_PLANNED", { strategy: plan.strategy });
       } catch (err: any) {
         const msg = err.message?.slice(0, 200) ?? String(err).slice(0, 200);
@@ -267,7 +280,9 @@ export function createAgentPipeline(config: AgentPipelineConfig) {
         // Bind candidate to change/context/assessment — proves consistency
         bindMigrationCandidate(candidate, change, context, comparison.grounded);
         result.artifactsGenerated = candidate.artifacts.length;
-        console.log(`  [pipeline] Step 6: Built ${result.artifactsGenerated} artifacts (deterministic, bound)`);
+        console.log(
+          `  [pipeline] Step 6: Built ${result.artifactsGenerated} artifacts (deterministic, bound)`,
+        );
         await notify(input.runId, "PATCH_GENERATED", {
           artifactsGenerated: result.artifactsGenerated,
           candidateJson: candidate,
@@ -284,13 +299,19 @@ export function createAgentPipeline(config: AgentPipelineConfig) {
       if (config.validation) {
         console.log(`  [pipeline] Step 7: Running validation (8 checks)...`);
         try {
-          const validationOutput = await config.validation.validate(candidate, { runId: input.runId });
+          const validationOutput = await config.validation.validate(candidate, {
+            runId: input.runId,
+          });
           result.validationPassed = validationOutput.allPass;
           validationReceiptFingerprint = validationOutput.receiptFingerprint;
           if (!validationOutput.allPass) {
             const failed = validationOutput.checks.filter((c) => c.status === "FAIL");
-            console.error(`  [pipeline] Step 7: Validation FAILED: ${failed.map((c) => c.check).join(", ")}`);
-            await notify(input.runId, "FAILED_VALIDATION", { failedChecks: failed.map((c) => c.check) });
+            console.error(
+              `  [pipeline] Step 7: Validation FAILED: ${failed.map((c) => c.check).join(", ")}`,
+            );
+            await notify(input.runId, "FAILED_VALIDATION", {
+              failedChecks: failed.map((c) => c.check),
+            });
             result.finalStatus = "FAILED_VALIDATION" as RunStatus;
             return result;
           }
