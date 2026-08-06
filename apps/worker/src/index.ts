@@ -1,3 +1,4 @@
+import type { PipelineResult } from "@lineageguard/agent";
 import { eventBus } from "./events.js";
 import { createOrchestrator } from "./orchestration.js";
 import { createSimpleRun, ensureRunsTable } from "./simple-store.js";
@@ -9,7 +10,7 @@ export interface WorkerOptions {
   workerId?: string;
 }
 
-export async function runWorker(options: WorkerOptions = {}): Promise<void> {
+export async function runWorker(options: WorkerOptions = {}): Promise<PipelineResult | null> {
   const workerId = options.workerId ?? process.env.WORKER_ID ?? "worker-1";
   const orchestrator = await createOrchestrator(workerId);
 
@@ -19,6 +20,16 @@ export async function runWorker(options: WorkerOptions = {}): Promise<void> {
 
     const runId = `run_${Date.now().toString(16).padStart(24, "0")}`;
     const repository = process.env.LINEAGEGUARD_REPOSITORY ?? "greatkich/lineageguard";
+
+    const baseSha = process.env.LINEAGEGUARD_BASE_SHA;
+    const headSha = process.env.LINEAGEGUARD_HEAD_SHA;
+
+    if (!baseSha || !headSha) {
+      throw new Error(
+        "LINEAGEGUARD_BASE_SHA and LINEAGEGUARD_HEAD_SHA are required in LIVE mode. " +
+        "Set these to real Git SHAs from the repository."
+      );
+    }
 
     await createSimpleRun({
       id: runId,
@@ -32,8 +43,8 @@ export async function runWorker(options: WorkerOptions = {}): Promise<void> {
     const result = await orchestrator.execute({
       runId,
       repository,
-      baseSha: process.env.LINEAGEGUARD_BASE_SHA ?? "a".repeat(40),
-      headSha: process.env.LINEAGEGUARD_HEAD_SHA ?? "b".repeat(40),
+      baseSha,
+      headSha,
       patch: "ALTER TABLE commerce.orders RENAME COLUMN customer_id TO buyer_id;",
       table: "commerce.orders",
       field: "customer_id",
@@ -47,12 +58,12 @@ export async function runWorker(options: WorkerOptions = {}): Promise<void> {
       timestamp: new Date().toISOString(),
       detail: `${result.baselineDecision} → ${result.groundedDecision}`,
     });
-    return;
+    return result;
   }
 
   // Poll mode: check for work periodically
   const signal = options.signal;
-  if (signal?.aborted) return;
+  if (signal?.aborted) return null;
 
   const pollOnce = (): void => {
     eventBus.publish({
@@ -72,4 +83,6 @@ export async function runWorker(options: WorkerOptions = {}): Promise<void> {
 
     signal?.addEventListener("abort", stop, { once: true });
   });
+
+  return null;
 }

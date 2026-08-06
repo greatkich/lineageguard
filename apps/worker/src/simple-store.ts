@@ -1,7 +1,7 @@
 /**
  * Lightweight run persistence for MVP.
- * Reads/writes directly to lineageguard.runs table without the full RunStore
- * codecs/authority machinery. Good enough for demo, UI, and pipeline tracking.
+ * Reads/writes directly to lineageguard.simple_runs table with full context
+ * for evidence-backed Mission Control.
  */
 import pg from "pg";
 
@@ -13,11 +13,20 @@ export interface SimpleRun {
   baselineDecision: string | null;
   groundedDecision: string | null;
   consumersFound: number;
+  evidenceItems: number;
   artifactsGenerated: number;
   patch: string;
   triggeredRules: string | null;
   prUrl: string | null;
   writebackStatus: string | null;
+  validationReceiptFingerprint: string | null;
+  githubReceiptFingerprint: string | null;
+  writebackReceiptFingerprint: string | null;
+  contextJson: unknown | null;
+  candidateJson: unknown | null;
+  comparisonJson: unknown | null;
+  executionMode: string;
+  sourcePrUrl: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -40,20 +49,38 @@ export async function ensureRunsTable(): Promise<void> {
       baseline_decision TEXT,
       grounded_decision TEXT,
       consumers_found INTEGER NOT NULL DEFAULT 0,
+      evidence_items INTEGER NOT NULL DEFAULT 0,
       artifacts_generated INTEGER NOT NULL DEFAULT 0,
       triggered_rules TEXT,
       pr_url TEXT,
       writeback_status TEXT,
+      validation_receipt_fingerprint TEXT,
+      github_receipt_fingerprint TEXT,
+      writeback_receipt_fingerprint TEXT,
+      context_json JSONB,
+      candidate_json JSONB,
+      comparison_json JSONB,
+      execution_mode TEXT NOT NULL DEFAULT 'LIVE',
+      source_pr_url TEXT,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
     )
   `);
-  // Add columns if table already exists (idempotent)
+  // Add columns if table already exists from older schema (idempotent)
   await POOL.query(`
     DO $$ BEGIN
       ALTER TABLE lineageguard.simple_runs ADD COLUMN IF NOT EXISTS triggered_rules TEXT;
       ALTER TABLE lineageguard.simple_runs ADD COLUMN IF NOT EXISTS pr_url TEXT;
       ALTER TABLE lineageguard.simple_runs ADD COLUMN IF NOT EXISTS writeback_status TEXT;
+      ALTER TABLE lineageguard.simple_runs ADD COLUMN IF NOT EXISTS evidence_items INTEGER DEFAULT 0;
+      ALTER TABLE lineageguard.simple_runs ADD COLUMN IF NOT EXISTS validation_receipt_fingerprint TEXT;
+      ALTER TABLE lineageguard.simple_runs ADD COLUMN IF NOT EXISTS github_receipt_fingerprint TEXT;
+      ALTER TABLE lineageguard.simple_runs ADD COLUMN IF NOT EXISTS writeback_receipt_fingerprint TEXT;
+      ALTER TABLE lineageguard.simple_runs ADD COLUMN IF NOT EXISTS context_json JSONB;
+      ALTER TABLE lineageguard.simple_runs ADD COLUMN IF NOT EXISTS candidate_json JSONB;
+      ALTER TABLE lineageguard.simple_runs ADD COLUMN IF NOT EXISTS comparison_json JSONB;
+      ALTER TABLE lineageguard.simple_runs ADD COLUMN IF NOT EXISTS execution_mode TEXT DEFAULT 'LIVE';
+      ALTER TABLE lineageguard.simple_runs ADD COLUMN IF NOT EXISTS source_pr_url TEXT;
     EXCEPTION WHEN OTHERS THEN NULL;
     END $$;
   `);
@@ -82,11 +109,19 @@ export async function updateRunStatus(
     baselineDecision: string;
     groundedDecision: string;
     consumersFound: number;
+    evidenceItems: number;
     artifactsGenerated: number;
     triggeredRules: string[];
     prUrl: string;
     prNumber: number;
     writebackStatus: string;
+    validationReceiptFingerprint: string;
+    githubReceiptFingerprint: string;
+    writebackReceiptFingerprint: string;
+    contextJson: unknown;
+    candidateJson: unknown;
+    comparisonJson: unknown;
+    sourcePrUrl: string;
     failedChecks: string[];
   }>,
 ): Promise<void> {
@@ -106,6 +141,10 @@ export async function updateRunStatus(
     sets.push(`consumers_found = $${idx++}`);
     values.push(extra.consumersFound);
   }
+  if (extra?.evidenceItems !== undefined) {
+    sets.push(`evidence_items = $${idx++}`);
+    values.push(extra.evidenceItems);
+  }
   if (extra?.artifactsGenerated !== undefined) {
     sets.push(`artifacts_generated = $${idx++}`);
     values.push(extra.artifactsGenerated);
@@ -121,6 +160,34 @@ export async function updateRunStatus(
   if (extra?.writebackStatus !== undefined) {
     sets.push(`writeback_status = $${idx++}`);
     values.push(extra.writebackStatus);
+  }
+  if (extra?.validationReceiptFingerprint !== undefined) {
+    sets.push(`validation_receipt_fingerprint = $${idx++}`);
+    values.push(extra.validationReceiptFingerprint);
+  }
+  if (extra?.githubReceiptFingerprint !== undefined) {
+    sets.push(`github_receipt_fingerprint = $${idx++}`);
+    values.push(extra.githubReceiptFingerprint);
+  }
+  if (extra?.writebackReceiptFingerprint !== undefined) {
+    sets.push(`writeback_receipt_fingerprint = $${idx++}`);
+    values.push(extra.writebackReceiptFingerprint);
+  }
+  if (extra?.contextJson !== undefined) {
+    sets.push(`context_json = $${idx++}`);
+    values.push(JSON.stringify(extra.contextJson));
+  }
+  if (extra?.candidateJson !== undefined) {
+    sets.push(`candidate_json = $${idx++}`);
+    values.push(JSON.stringify(extra.candidateJson));
+  }
+  if (extra?.comparisonJson !== undefined) {
+    sets.push(`comparison_json = $${idx++}`);
+    values.push(JSON.stringify(extra.comparisonJson));
+  }
+  if (extra?.sourcePrUrl !== undefined) {
+    sets.push(`source_pr_url = $${idx++}`);
+    values.push(extra.sourcePrUrl);
   }
 
   await POOL.query(
@@ -154,12 +221,21 @@ function mapRow(row: any): SimpleRun {
     field: row.field,
     baselineDecision: row.baseline_decision,
     groundedDecision: row.grounded_decision,
-    consumersFound: row.consumers_found,
-    artifactsGenerated: row.artifacts_generated,
+    consumersFound: row.consumers_found ?? 0,
+    evidenceItems: row.evidence_items ?? 0,
+    artifactsGenerated: row.artifacts_generated ?? 0,
     patch: row.patch,
     triggeredRules: row.triggered_rules,
     prUrl: row.pr_url,
     writebackStatus: row.writeback_status,
+    validationReceiptFingerprint: row.validation_receipt_fingerprint,
+    githubReceiptFingerprint: row.github_receipt_fingerprint,
+    writebackReceiptFingerprint: row.writeback_receipt_fingerprint,
+    contextJson: row.context_json,
+    candidateJson: row.candidate_json,
+    comparisonJson: row.comparison_json,
+    executionMode: row.execution_mode ?? "LIVE",
+    sourcePrUrl: row.source_pr_url,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

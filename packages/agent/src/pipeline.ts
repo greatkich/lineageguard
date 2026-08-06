@@ -175,9 +175,16 @@ export function createAgentPipeline(config: AgentPipelineConfig) {
       try {
         const collectResult = await collectContext(ctx, change.id);
         context = collectResult.context;
-        result.consumersFound = context.evidence.length;
-        console.log(`  [pipeline] Step 3: Collected ${context.evidence.length} evidence items`);
-        await notify(input.runId, "CONTEXT_COLLECTED", { consumersFound: context.evidence.length });
+        // Compute impact consumers separately from total evidence count
+        const consumerKinds = new Set(["LINEAGE_PATH", "DASHBOARD", "ML_MODEL", "QUERY_USAGE"]);
+        const impactConsumers = context.evidence.filter((e) => consumerKinds.has(e.kind)).length;
+        result.consumersFound = impactConsumers;
+        console.log(`  [pipeline] Step 3: Collected ${context.evidence.length} evidence items (${impactConsumers} impact consumers)`);
+        await notify(input.runId, "CONTEXT_COLLECTED", {
+          consumersFound: impactConsumers,
+          evidenceItems: context.evidence.length,
+          contextJson: context,
+        });
       } catch (err: any) {
         console.error(`  [pipeline] Step 3 FAILED: ${err.message}`);
         await notify(input.runId, "FAILED_CONTEXT");
@@ -197,6 +204,7 @@ export function createAgentPipeline(config: AgentPipelineConfig) {
         await notify(input.runId, "RISK_DECIDED", {
           groundedDecision: comparison.grounded.decision,
           triggeredRules: comparison.triggeredRuleIds,
+          comparisonJson: comparison,
         });
       } catch (err: any) {
         console.error(`  [pipeline] Step 4 FAILED: ${err.message}`);
@@ -243,7 +251,6 @@ export function createAgentPipeline(config: AgentPipelineConfig) {
 
       // ─── Step 6: Build canonical migration candidate (deterministic) ───
       console.log(`  [pipeline] Step 6: Building canonical migration candidate...`);
-      await notify(input.runId, "PATCH_GENERATED");
       let candidate: MigrationCandidate;
       try {
         candidate = buildCanonicalCandidate({
@@ -254,6 +261,10 @@ export function createAgentPipeline(config: AgentPipelineConfig) {
         });
         result.artifactsGenerated = candidate.artifacts.length;
         console.log(`  [pipeline] Step 6: Built ${result.artifactsGenerated} artifacts (deterministic)`);
+        await notify(input.runId, "PATCH_GENERATED", {
+          artifactsGenerated: result.artifactsGenerated,
+          candidateJson: candidate,
+        });
       } catch (err: any) {
         console.error(`  [pipeline] Step 6 FAILED: ${err.message?.slice(0, 100)}`);
         await notify(input.runId, "FAILED_GENERATION");
@@ -277,7 +288,10 @@ export function createAgentPipeline(config: AgentPipelineConfig) {
             return result;
           }
           console.log(`  [pipeline] Step 7: All 8 checks PASS`);
-          await notify(input.runId, "VALIDATED", { artifactsGenerated: result.artifactsGenerated });
+          await notify(input.runId, "VALIDATED", {
+            artifactsGenerated: result.artifactsGenerated,
+            validationReceiptFingerprint,
+          });
         } catch (err: any) {
           console.error(`  [pipeline] Step 7 FAILED: ${err.message?.slice(0, 150)}`);
           await notify(input.runId, "FAILED_VALIDATION");
@@ -304,7 +318,11 @@ export function createAgentPipeline(config: AgentPipelineConfig) {
           });
           result.prUrl = githubReceipt.prUrl;
           console.log(`  [pipeline] Step 8: PR created → ${githubReceipt.prUrl}`);
-          await notify(input.runId, "REVIEW_ARTIFACT_CREATED", { prUrl: githubReceipt.prUrl, prNumber: githubReceipt.prNumber });
+          await notify(input.runId, "REVIEW_ARTIFACT_CREATED", {
+            prUrl: githubReceipt.prUrl,
+            prNumber: githubReceipt.prNumber,
+            githubReceiptFingerprint: githubReceipt.receiptFingerprint,
+          });
         } catch (err: any) {
           console.error(`  [pipeline] Step 8 FAILED: ${err.message?.slice(0, 150)}`);
           await notify(input.runId, "FAILED_GITHUB");
@@ -340,7 +358,10 @@ export function createAgentPipeline(config: AgentPipelineConfig) {
           }
           result.writebackStatus = writebackOutput.status;
           console.log(`  [pipeline] Step 9: Writeback ${writebackOutput.status}`);
-          await notify(input.runId, "WRITEBACK_PENDING", { writebackStatus: writebackOutput.status });
+          await notify(input.runId, "WRITEBACK_PENDING", {
+            writebackStatus: writebackOutput.status,
+            writebackReceiptFingerprint: writebackOutput.receiptFingerprint,
+          });
         } catch (err: any) {
           console.error(`  [pipeline] Step 9 FAILED: ${err.message?.slice(0, 150)}`);
           await notify(input.runId, "FAILED_WRITEBACK");
