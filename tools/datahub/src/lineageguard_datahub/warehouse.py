@@ -307,11 +307,12 @@ def verify_dbt_relations(cursor: SqlCursor) -> None:
         "AND to_regclass('analytics.stg_orders') IS NOT NULL "
         "AND to_regclass('analytics.customer_revenue') IS NOT NULL "
         "AND to_regclass('fraud.customer_features') IS NOT NULL "
-        "AND (SELECT array_agg(n.nspname || '.' || c.relname ORDER BY 1) "
+        "AND (SELECT array_agg(qname ORDER BY qname) FROM ("
+        "SELECT DISTINCT n.nspname || '.' || c.relname AS qname "
         "FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
         "WHERE (n.nspname, c.relname) IN ("
         "('analytics','stg_orders'),('analytics','customer_revenue'),"
-        "('fraud','customer_features'))) = "
+        "('fraud','customer_features'))) sub) = "
         "ARRAY['analytics.customer_revenue','analytics.stg_orders','fraud.customer_features']",
     )
     if checks is not True:
