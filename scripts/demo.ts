@@ -4,35 +4,24 @@ import {
   createAgentPipeline,
   type PipelineResult,
 } from "@lineageguard/agent";
+import { createRestDataHubPort } from "../apps/worker/src/datahub-rest-port.js";
 
 async function main() {
   console.log("=== LineageGuard MVP Demo ===\n");
 
   const llmConfig = agentLLMConfigFromEnv();
   const llm = createAgentModel(llmConfig);
+  const gmsUrl = process.env.DATAHUB_GMS_URL ?? "http://127.0.0.1:8080";
+  const token = process.env.DATAHUB_READ_TOKEN ?? process.env.DATAHUB_TOKEN ?? "";
 
-  console.log(`LLM: ${llmConfig.baseURL} (model: ${llmConfig.model})\n`);
+  console.log(`LLM: ${llmConfig.baseURL} (model: ${llmConfig.model})`);
+  console.log(`DataHub: ${gmsUrl}\n`);
 
-  // MVP: mock DataHub context port (returns canonical 4 consumers)
-  const mockDatahub = {
-    collect: async (input: { changeId: string }) => {
-      console.log(`  [DataHub] Collecting context for ${input.changeId}`);
-      return {
-        outcome: "COLLECTED_LIVE" as const,
-        context: {
-          evidence: [
-            { kind: "DASHBOARD", title: "Finance Revenue Dashboard", criticality: "CRITICAL" },
-            { kind: "DATASET", title: "analytics.customer_revenue", criticality: "HIGH" },
-            { kind: "ML_MODEL", title: "Fraud Model v3", criticality: "CRITICAL" },
-            { kind: "QUERY", title: "finance-monthly-close.sql", criticality: "HIGH" },
-          ],
-        },
-      } as any;
-    },
-  };
+  // Real DataHub context port — no mocks
+  const datahub = createRestDataHubPort({ gmsUrl, token });
 
   const pipeline = createAgentPipeline({
-    datahub: mockDatahub as any,
+    datahub: datahub as any,
     llm,
     workerId: "demo",
     clock: () => new Date(),
@@ -60,7 +49,7 @@ async function main() {
   console.log(`Final status:        ${result.finalStatus}`);
   console.log("\n=== Demo Complete ===");
 
-  if (result.groundedDecision === "BLOCK" && result.consumersFound >= 4) {
+  if (result.groundedDecision === "BLOCK" && result.consumersFound >= 2) {
     console.log("\n✓ SUCCESS: DataHub changed the decision from ALLOW to BLOCK");
     process.exit(0);
   } else {
