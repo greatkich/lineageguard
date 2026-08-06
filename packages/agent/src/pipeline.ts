@@ -7,8 +7,9 @@ import type {
   RunStatus,
 } from "@lineageguard/domain";
 import { type AgentLLMConfig, agentLLMConfigFromEnv, directLLMCall } from "./llm/client.js";
-import { migrationPatchPrompt, migrationPlanPrompt } from "./llm/prompts.js";
-import { migrationPatchSchema, migrationPlanSchema } from "./llm/schemas.js";
+import { migrationPlanPrompt } from "./llm/prompts.js";
+import { migrationPlanSchema } from "./llm/schemas.js";
+import { buildCanonicalCandidate } from "./steps/build-canonical-candidate.js";
 import type { AgentDataHubContextPort, StepContext } from "./steps/index.js";
 import {
   baselineAssess,
@@ -199,21 +200,9 @@ export function createAgentPipeline(config: AgentPipelineConfig) {
         });
       } catch (err: any) {
         console.error(`  [pipeline] Step 4 FAILED: ${err.message}`);
-        // Fallback: if real risk engine fails (e.g. evidence shape mismatch),
-        // use simplified decision based on evidence count
-        const groundedDecision = result.consumersFound > 0 ? "BLOCK" : "ALLOW";
-        result.groundedDecision = groundedDecision;
-        comparison = {
-          changeId: change.id,
-          baseline: baseline,
-          grounded: { ...baseline, decision: groundedDecision, contextMode: "DATAHUB_GROUNDED" },
-          decisionChanged: groundedDecision !== baseline.decision,
-          transition: `${baseline.decision}→${groundedDecision}`,
-          triggeredRuleIds: [],
-          changedBecauseEvidenceIds: [],
-        } as any;
-        console.log(`  [pipeline] Step 4: Fallback decision: ${groundedDecision}`);
-        await notify(input.runId, "RISK_DECIDED", { groundedDecision });
+        await notify(input.runId, "FAILED_CONTEXT");
+        result.finalStatus = "FAILED_CONTEXT" as RunStatus;
+        return result;
       }
 
       // If ALLOW, we're done
@@ -223,9 +212,8 @@ export function createAgentPipeline(config: AgentPipelineConfig) {
         return result;
       }
 
-      // ─── Step 5: Plan migration (LLM — direct call) ─────────────────
+      // ─── Step 5: Plan migration (LLM — rationale only) ────────────────
       console.log(`  [pipeline] Step 5: Planning migration...`);
-      await notify(input.runId, "MIGRATION_PLANNED");
       let plan;
       try {
         // Filter evidence to consumer-relevant kinds for the LLM prompt
@@ -244,6 +232,7 @@ export function createAgentPipeline(config: AgentPipelineConfig) {
         const planText = await directLLMCall(llmConfig, planPrompt, 3000);
         plan = migrationPlanSchema.parse(extractJson(planText));
         console.log(`  [pipeline] Step 5: Plan strategy: ${plan.strategy} (${plan.steps.length} steps)`);
+        await notify(input.runId, "MIGRATION_PLANNED", { strategy: plan.strategy });
       } catch (err: any) {
         const msg = err.message?.slice(0, 200) ?? String(err).slice(0, 200);
         console.error(`  [pipeline] Step 5 FAILED: ${msg}`);
@@ -252,21 +241,19 @@ export function createAgentPipeline(config: AgentPipelineConfig) {
         return result;
       }
 
-      // ─── Step 6: Generate patch (LLM — direct call) ─────────────────
-      console.log(`  [pipeline] Step 6: Generating migration patch...`);
+      // ─── Step 6: Build canonical migration candidate (deterministic) ───
+      console.log(`  [pipeline] Step 6: Building canonical migration candidate...`);
       await notify(input.runId, "PATCH_GENERATED");
       let candidate: MigrationCandidate;
       try {
-        const patchPrompt = migrationPatchPrompt({
-          plan: { steps: plan.steps.map((s) => ({ action: s.action, description: s.description })) },
-          table: input.table, field: input.field,
-          newName: input.newName, existingModels: ["customer_revenue", "fraud_features"],
-        }) + "\n\nRespond with ONLY a valid JSON object: {\"artifacts\": [{\"kind\": string, \"path\": string, \"content\": string, \"operation\": string}], \"summary\": string}. No markdown fences.";
-        const patchText = await directLLMCall(llmConfig, patchPrompt, 4000);
-        const patch = migrationPatchSchema.parse(extractJson(patchText));
-        candidate = { strategy: "EXPAND_MIGRATE_CONTRACT", artifacts: patch.artifacts, summary: patch.summary } as any;
-        result.artifactsGenerated = patch.artifacts.length;
-        console.log(`  [pipeline] Step 6: Generated ${result.artifactsGenerated} artifacts`);
+        candidate = buildCanonicalCandidate({
+          change,
+          context,
+          comparison,
+          rationale: plan.rationale,
+        });
+        result.artifactsGenerated = candidate.artifacts.length;
+        console.log(`  [pipeline] Step 6: Built ${result.artifactsGenerated} artifacts (deterministic)`);
       } catch (err: any) {
         console.error(`  [pipeline] Step 6 FAILED: ${err.message?.slice(0, 100)}`);
         await notify(input.runId, "FAILED_GENERATION");
@@ -296,9 +283,10 @@ export function createAgentPipeline(config: AgentPipelineConfig) {
           return result;
         }
       } else {
-        console.log(`  [pipeline] Step 7: Validation skipped (no validation port configured)`);
-        result.validationPassed = true;
-        await notify(input.runId, "VALIDATED", { artifactsGenerated: result.artifactsGenerated });
+        console.error(`  [pipeline] Step 7: No validation port configured — failing`);
+        await notify(input.runId, "FAILED_VALIDATION");
+        result.finalStatus = "FAILED_VALIDATION" as RunStatus;
+        return result;
       }
 
       // ─── Step 8: GitHub PR (REAL) ─────────────────────────────────────
@@ -322,8 +310,10 @@ export function createAgentPipeline(config: AgentPipelineConfig) {
           return result;
         }
       } else {
-        console.log(`  [pipeline] Step 8: GitHub PR skipped (no github port configured)`);
-        await notify(input.runId, "REVIEW_ARTIFACT_CREATED");
+        console.error(`  [pipeline] Step 8: No GitHub port configured — failing`);
+        await notify(input.runId, "FAILED_GITHUB");
+        result.finalStatus = "FAILED_GITHUB" as RunStatus;
+        return result;
       }
 
       // ─── Step 9: DataHub writeback (REAL) ─────────────────────────────
@@ -339,9 +329,16 @@ export function createAgentPipeline(config: AgentPipelineConfig) {
             githubReceiptFingerprint: githubReceipt?.receiptFingerprint ?? "",
             validationReceiptFingerprint: "",
           });
+          if (writebackOutput.status === "AMBIGUOUS") {
+            console.error(`  [pipeline] Step 9: Writeback AMBIGUOUS — failing`);
+            await notify(input.runId, "FAILED_WRITEBACK");
+            result.finalStatus = "FAILED_WRITEBACK" as RunStatus;
+            result.writebackStatus = "AMBIGUOUS";
+            return result;
+          }
           result.writebackStatus = writebackOutput.status;
           console.log(`  [pipeline] Step 9: Writeback ${writebackOutput.status}`);
-          await notify(input.runId, "WRITEBACK_COMPLETE", { writebackStatus: writebackOutput.status });
+          await notify(input.runId, "WRITEBACK_PENDING", { writebackStatus: writebackOutput.status });
         } catch (err: any) {
           console.error(`  [pipeline] Step 9 FAILED: ${err.message?.slice(0, 150)}`);
           await notify(input.runId, "FAILED_WRITEBACK");
@@ -349,7 +346,10 @@ export function createAgentPipeline(config: AgentPipelineConfig) {
           return result;
         }
       } else {
-        console.log(`  [pipeline] Step 9: Writeback skipped (no writeback port or no PR)`);
+        console.error(`  [pipeline] Step 9: No writeback port configured — failing`);
+        await notify(input.runId, "FAILED_WRITEBACK");
+        result.finalStatus = "FAILED_WRITEBACK" as RunStatus;
+        return result;
       }
 
       // ─── Done ─────────────────────────────────────────────────────────
