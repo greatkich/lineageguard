@@ -13,6 +13,18 @@ LineageGuard uses a **TypeScript-first hybrid monorepo**.
 
 This architecture optimizes for a short build window, a polished React experience, shared types across frontend and backend, and direct use of a TypeScript agent SDK with MCP support.
 
+## Scope boundary
+
+LineageGuard operates inside the analytical data platform, downstream of the ingestion boundary
+from operational systems. `commerce.orders`, the canonical dataset, is an analytical warehouse
+data product (an "Orders Data Product") ingested from an operational Orders Service database via
+events or CDC — it is not that service's live OLTP table, and the OLTP database itself is never
+in scope. LineageGuard reasons about warehouse tables, dbt models, dashboards, ML features/models,
+and ad-hoc SQL downstream of that ingestion boundary. It does not protect microservice-to-
+microservice database sharing and is not a substitute for API contract testing, Protobuf/gRPC
+schema evolution checks, or Kafka Schema Registry compatibility checking. See
+`docs/DECISIONS/ADR-003-data-platform-boundary.md`.
+
 ## System context
 
 ```text
@@ -187,6 +199,8 @@ Each transition writes an immutable run event. The UI renders persisted events r
 1. **Parse change**
    - consume a Git diff or committed scenario fixture;
    - identify changed dataset, field, operation, old type/name, new type/name;
+   - the changed dataset is always an analytical warehouse table or transformation, never an
+     operational service's OLTP schema;
    - reject unsupported changes with a typed reason.
 
 2. **Repository-only baseline**

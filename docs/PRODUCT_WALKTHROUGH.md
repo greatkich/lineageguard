@@ -4,6 +4,14 @@
 
 Show how DataHub gives an AI coding agent organizational context it cannot obtain from a repository, and how LineageGuard turns that context into a safe, verified migration.
 
+LineageGuard operates inside the analytical data platform: `commerce.orders` is an analytical
+warehouse data product (the Orders Data Product in the Commerce Warehouse), populated from the
+Orders Service's operational database via events or CDC. The walkthrough never touches that
+operational database — it protects downstream data consumers (dbt marts, dashboards, ML
+features/models, ad-hoc SQL), not microservice-to-microservice database sharing, and it is not a
+substitute for API/Protobuf/Kafka Schema Registry contract testing. See
+`docs/DECISIONS/ADR-003-data-platform-boundary.md`.
+
 The walkthrough should feel like a product, not a narrated architecture diagram.
 
 ## Reference environment
@@ -49,7 +57,7 @@ Show green checks.
 
 **Voiceover:**
 
-> “This pull request renames a customer identifier. Every test in this repository passes, so a normal coding agent recommends merging it.”
+> “This pull request renames a customer identifier on the Orders Data Product in the Commerce Warehouse. Every test in this repository passes, so a normal coding agent recommends merging it.”
 
 On-screen result:
 
@@ -64,7 +72,7 @@ ALLOW · LOW RISK
 
 **Voiceover:**
 
-> “But a repository is not the organization. Dashboards, models, and analyst queries can depend on this field without appearing anywhere in this codebase.”
+> “But a repository is not the organization. Dashboards, models, and analyst queries downstream in the data platform can depend on this field without appearing anywhere in this codebase.”
 
 Press **Analyze with DataHub**.
 
@@ -95,7 +103,7 @@ A compact lineage path highlights the renamed field.
 
 **Voiceover:**
 
-> “Through DataHub, LineageGuard finds four hidden consumers, including a production fraud model and an unmanaged Finance query. Each reason is linked to a real DataHub entity or lineage path.”
+> “Through DataHub, LineageGuard finds four hidden data consumers, including a production fraud model and an unmanaged Finance query. Each reason is linked to a real DataHub entity or lineage path.”
 
 ### The product transition
 
@@ -220,7 +228,7 @@ Show:
 ### Left: Proposed Change
 
 - GitHub-style diff;
-- changed field and operation;
+- changed field and operation (a warehouse schema change, not an operational service change);
 - repository-only result;
 - local checks.
 
@@ -228,7 +236,7 @@ Show:
 
 - resolved asset and field;
 - compact lineage graph;
-- critical consumer list;
+- critical downstream data consumer list;
 - query usage;
 - owners;
 - evidence receipts.
