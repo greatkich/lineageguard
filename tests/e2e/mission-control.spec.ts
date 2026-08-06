@@ -9,7 +9,7 @@ test.describe("Mission Control — Dashboard", () => {
     await expect(page.locator("header")).toContainText("Mission Control");
 
     // Page title
-    await expect(page.getByRole("heading", { level: 1 })).toHaveText("Runs");
+    await expect(page.getByRole("heading", { level: 1 })).toHaveText("Dashboard");
 
     // Real run from Postgres (created by pipeline E2E)
     const runLink = page.locator("a[href*='/runs/run_']").first();
@@ -45,7 +45,7 @@ test.describe("Mission Control — Run Detail", () => {
     // 3-panel layout visible
     await expect(page.locator("text=Proposed Change")).toBeVisible();
     await expect(page.locator("text=DataHub Evidence")).toBeVisible();
-    await expect(page.locator("text=Migration")).toBeVisible();
+    await expect(page.locator("text=Safe Migration")).toBeVisible();
 
     // Real data from pipeline
     await expect(page.getByText("customer_id").first()).toBeVisible();
@@ -61,9 +61,9 @@ test.describe("Mission Control — Run Detail", () => {
     // Timeline steps visible — use exact text matching
     await expect(page.getByText("Created", { exact: true })).toBeVisible();
     await expect(page.getByText("Parsed", { exact: true })).toBeVisible();
-    await expect(page.getByText("Context", { exact: true })).toBeVisible();
-    await expect(page.getByText("Decision", { exact: true })).toBeVisible();
-    await expect(page.getByText("Complete", { exact: true })).toBeVisible();
+    await expect(page.getByText("DataHub", { exact: true })).toBeVisible();
+    await expect(page.getByText("Risk", { exact: true })).toBeVisible();
+    await expect(page.getByText("Done", { exact: true })).toBeVisible();
   });
 
   test("returns 404 for non-existent run", async ({ page }) => {

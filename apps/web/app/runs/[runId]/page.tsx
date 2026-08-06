@@ -117,7 +117,7 @@ export default async function RunDetailPage({ params }: { params: Promise<{ runI
           <CardBody>
             <div className="rounded-md bg-muted/50 p-3 overflow-x-auto">
               <pre className="text-xs font-mono leading-relaxed">
-                {(run.patch || "ALTER TABLE commerce.orders\n  RENAME COLUMN customer_id TO buyer_id;").split("\n").map((line, i) => (
+                {(run.patch || "No patch data available").split("\n").map((line, i) => (
                   <div key={i} className={
                     line.startsWith("+") ? "text-status-allow" :
                     line.startsWith("-") ? "text-status-block" :

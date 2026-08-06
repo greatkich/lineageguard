@@ -9,6 +9,7 @@ export default defineConfig({
   use: {
     baseURL: "http://127.0.0.1:3000",
     trace: "on-first-retry",
+    viewport: { width: 1440, height: 900 },
   },
   webServer: {
     command: "LINEAGEGUARD_DATABASE_URL=postgresql://lineageguard:lineageguard@127.0.0.1:5432/lineageguard pnpm --filter @lineageguard/web dev --port 3000",
@@ -19,7 +20,7 @@ export default defineConfig({
   projects: [
     {
       name: "chromium",
-      use: { ...devices["Desktop Chrome"] },
+      use: { ...devices["Desktop Chrome"], viewport: { width: 1440, height: 900 } },
     },
   ],
 });
