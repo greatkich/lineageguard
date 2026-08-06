@@ -26,7 +26,7 @@ describe("agentLLMConfigFromEnv", () => {
     try {
       expect(agentLLMConfigFromEnv()).toEqual({
         baseURL: "http://localhost:20128/v1",
-        model: "auto",
+        model: "claude",
         apiKey: "local",
       });
     } finally {
