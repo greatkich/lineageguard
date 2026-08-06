@@ -37,7 +37,7 @@ The final proof should read:
 ```text
 4 hidden consumers protected
 1 safe migration generated
-6 validations passed
+8 executable checks passed
 0 downstream systems broken
 ```
 
