@@ -1,35 +1,6 @@
 import { Badge } from "@/components/ui/badge";
-
-const demoRun = {
-  id: "run_000000000000000000000001",
-  status: "COMPLETED",
-  patch: "- customer_id\n+ buyer_id",
-  baselineDecision: "ALLOW",
-  groundedDecision: "BLOCK",
-  consumers: [
-    { name: "Finance Revenue Dashboard", type: "DASHBOARD", criticality: "CRITICAL" },
-    { name: "analytics.customer_revenue", type: "DATASET", criticality: "HIGH" },
-    { name: "Fraud Model v3", type: "ML_MODEL", criticality: "CRITICAL" },
-    { name: "finance-monthly-close.sql", type: "QUERY", criticality: "HIGH" },
-  ],
-  strategy: "Expand-Migrate-Contract",
-  artifacts: [
-    { kind: "SQL_MIGRATION", path: "walkthrough/migrations/002_add_buyer_id.sql", operation: "CREATE" },
-    { kind: "SQL_MIGRATION", path: "walkthrough/migrations/003_backfill.sql", operation: "CREATE" },
-    { kind: "DBT_MODEL", path: "walkthrough/models/customer_revenue.sql", operation: "MODIFY" },
-    { kind: "DBT_TEST", path: "walkthrough/tests/buyer_id_not_null.sql", operation: "CREATE" },
-    { kind: "DBT_TEST", path: "walkthrough/tests/buyer_id_equality.sql", operation: "CREATE" },
-    { kind: "MIGRATION_DOCUMENT", path: "docs/migrations/rename-customer-id.md", operation: "CREATE" },
-  ],
-  validations: [
-    { name: "SQL Migration", status: "PASS" },
-    { name: "Backfill Equality", status: "PASS" },
-    { name: "dbt Compile", status: "PASS" },
-    { name: "dbt Tests", status: "PASS" },
-    { name: "Old Consumer Compatibility", status: "PASS" },
-    { name: "Rollback", status: "PASS" },
-  ],
-};
+import { fetchRun } from "@/lib/db";
+import { notFound } from "next/navigation";
 
 const steps = [
   { status: "CREATED", label: "Created" },
@@ -40,18 +11,21 @@ const steps = [
   { status: "MIGRATION_PLANNED", label: "Planned" },
   { status: "PATCH_GENERATED", label: "Generated" },
   { status: "VALIDATED", label: "Validated" },
-  { status: "REVIEW_ARTIFACT_CREATED", label: "PR Created" },
   { status: "COMPLETED", label: "Complete" },
 ];
 
+export const dynamic = "force-dynamic";
+
 export default async function RunDetailPage({ params }: { params: Promise<{ runId: string }> }) {
   const { runId } = await params;
-  const run = demoRun;
+  const run = await fetchRun(runId);
+  if (!run) notFound();
+
   const currentIdx = steps.findIndex((s) => s.status === run.status);
+  const patchLines = (run.patch || "- customer_id\n+ buyer_id").split("\n");
 
   return (
     <div className="flex flex-col h-[calc(100vh-3.5rem)]">
-      {/* 3-panel grid */}
       <div className="flex-1 grid grid-cols-3 gap-4 p-6 overflow-hidden">
         {/* Left: Proposed Change */}
         <div className="overflow-y-auto">
@@ -60,7 +34,7 @@ export default async function RunDetailPage({ params }: { params: Promise<{ runI
               Proposed Change
             </div>
             <pre className="p-4 text-sm font-mono overflow-x-auto">
-              {run.patch.split("\n").map((line, i) => (
+              {patchLines.map((line, i) => (
                 <div
                   key={i}
                   className={
@@ -72,7 +46,7 @@ export default async function RunDetailPage({ params }: { params: Promise<{ runI
               ))}
             </pre>
             <div className="bg-muted px-4 py-2 text-xs border-t border-border">
-              Repository-only: <span className="font-medium text-status-allow">{run.baselineDecision}</span>
+              Repository-only: <span className="font-medium text-status-allow">{run.baselineDecision ?? "ALLOW"}</span>
             </div>
           </div>
         </div>
@@ -82,59 +56,40 @@ export default async function RunDetailPage({ params }: { params: Promise<{ runI
           <div className="rounded-lg border border-border overflow-hidden">
             <div className="bg-muted px-4 py-2 text-sm font-medium border-b border-border flex items-center justify-between">
               <span>DataHub Evidence</span>
-              <Badge status="block">{run.groundedDecision}</Badge>
+              <Badge status={run.groundedDecision === "BLOCK" ? "block" : "info"}>
+                {run.groundedDecision ?? "PENDING"}
+              </Badge>
             </div>
-            <div className="divide-y divide-border">
-              {run.consumers.map((consumer, i) => (
-                <div key={i} className="px-4 py-3 flex items-center justify-between">
-                  <div>
-                    <p className="text-sm font-medium">{consumer.name}</p>
-                    <p className="text-xs text-muted-foreground">{consumer.type}</p>
-                  </div>
-                  <Badge status={consumer.criticality === "CRITICAL" ? "block" : "review"}>
-                    {consumer.criticality}
-                  </Badge>
-                </div>
-              ))}
+            <div className="p-4">
+              <p className="text-sm">{run.consumersFound} downstream consumers discovered</p>
+              <p className="text-xs text-muted-foreground mt-2">
+                Field: <span className="font-mono">{run.field}</span> in <span className="font-mono">{run.repository}</span>
+              </p>
             </div>
             <div className="bg-muted px-4 py-2 text-xs border-t border-border">
-              {run.consumers.length} downstream consumers discovered via DataHub
+              Decision changed: {run.baselineDecision} → {run.groundedDecision}
             </div>
           </div>
         </div>
 
-        {/* Right: Safe Migration */}
+        {/* Right: Migration Result */}
         <div className="overflow-y-auto">
           <div className="rounded-lg border border-border overflow-hidden">
             <div className="bg-muted px-4 py-2 text-sm font-medium border-b border-border">
-              Safe Migration
+              Migration
             </div>
-            <div className="p-4 space-y-4">
+            <div className="p-4 space-y-3">
               <div>
-                <p className="text-xs text-muted-foreground uppercase tracking-wide mb-2">Strategy</p>
-                <p className="text-sm font-medium">{run.strategy}</p>
+                <p className="text-xs text-muted-foreground uppercase tracking-wide mb-1">Status</p>
+                <Badge status={run.status === "COMPLETED" ? "pass" : "info"}>{run.status}</Badge>
               </div>
               <div>
-                <p className="text-xs text-muted-foreground uppercase tracking-wide mb-2">Artifacts</p>
-                <div className="space-y-1">
-                  {run.artifacts.map((a, i) => (
-                    <div key={i} className="flex items-center gap-2 text-sm">
-                      <Badge status="info">{a.operation}</Badge>
-                      <span className="font-mono text-xs truncate">{a.path}</span>
-                    </div>
-                  ))}
-                </div>
+                <p className="text-xs text-muted-foreground uppercase tracking-wide mb-1">Artifacts Generated</p>
+                <p className="text-2xl font-semibold">{run.artifactsGenerated}</p>
               </div>
               <div>
-                <p className="text-xs text-muted-foreground uppercase tracking-wide mb-2">Validations</p>
-                <div className="space-y-1">
-                  {run.validations.map((v, i) => (
-                    <div key={i} className="flex items-center gap-2 text-sm">
-                      <Badge status={v.status === "PASS" ? "pass" : "fail"}>{v.status}</Badge>
-                      <span>{v.name}</span>
-                    </div>
-                  ))}
-                </div>
+                <p className="text-xs text-muted-foreground uppercase tracking-wide mb-1">Strategy</p>
+                <p className="text-sm">Expand-Migrate-Contract</p>
               </div>
             </div>
           </div>
