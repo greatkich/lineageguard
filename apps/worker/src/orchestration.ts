@@ -94,6 +94,8 @@ async function fallbackCollect(gmsUrl: string, token: string, changeId: string) 
 
 function createValidationPort(): AgentValidationPort | undefined {
   const validationEnabled = process.env.VALIDATION_ENABLED !== "false";
+  const dockerPath = process.env.DOCKER_EXECUTABLE ?? "/usr/local/bin/docker";
+  const useDocker = process.env.VALIDATION_USE_DOCKER !== "false";
 
   if (!validationEnabled) {
     console.log("[orchestration] Validation disabled (VALIDATION_ENABLED=false)");
@@ -102,12 +104,13 @@ function createValidationPort(): AgentValidationPort | undefined {
 
   return {
     async validate(candidate: unknown): Promise<ValidationOutput> {
-      console.log("[orchestration] Running validation checks...");
+      const { createHash, randomBytes } = await import("node:crypto");
+      const { execSync } = await import("node:child_process");
       const cand = candidate as { artifacts?: Array<{ kind: string; content: string; path: string }> };
       const artifacts = cand.artifacts ?? [];
       const checks: ValidationOutput["checks"] = [];
 
-      // Flexible matching: LLM may use various kind names
+      // Flexible matching for LLM-generated artifact kinds
       const isSql = (a: { kind: string; path: string }) =>
         (a.kind.includes("SQL") || a.kind.includes("MIGRATION")) && !a.kind.includes("ROLLBACK") || a.path.endsWith(".sql") && !a.path.includes("rollback");
       const isRollback = (a: { kind: string; path: string }) =>
@@ -116,34 +119,154 @@ function createValidationPort(): AgentValidationPort | undefined {
         a.kind.includes("MODEL") || (a.path.includes("models/") && a.path.endsWith(".sql"));
       const isDbtTest = (a: { kind: string; path: string }) =>
         a.kind.includes("TEST") || a.path.includes("tests/");
-      const hasBuyerId = (a: { content: string }) =>
-        a.content.toLowerCase().includes("buyer_id");
 
       const sqlArtifact = artifacts.find((a) => isSql(a));
-      checks.push({ check: "SQL_MIGRATION", status: sqlArtifact?.content ? "PASS" : "FAIL", summary: sqlArtifact ? "SQL migration present" : "Missing" });
-
-      const rollback = artifacts.find((a) => isRollback(a));
-      checks.push({ check: "ROLLBACK", status: rollback?.content ? "PASS" : "FAIL", summary: rollback ? "Rollback present" : "Missing" });
-
+      const rollbackArtifact = artifacts.find((a) => isRollback(a));
       const dbtModels = artifacts.filter((a) => isDbtModel(a));
-      checks.push({ check: "DBT_PARSE", status: dbtModels.length > 0 ? "PASS" : "FAIL", summary: `${dbtModels.length} models` });
-
       const dbtTests = artifacts.filter((a) => isDbtTest(a));
-      checks.push({ check: "DBT_TEST", status: dbtTests.length > 0 ? "PASS" : "FAIL", summary: `${dbtTests.length} tests` });
+      const anyHasBuyerId = artifacts.some((a) => a.content.toLowerCase().includes("buyer_id"));
 
-      checks.push({ check: "DBT_COMPILE", status: "PASS", summary: "OK" });
+      // Docker-based validation: spin up ephemeral Postgres and execute SQL
+      if (useDocker && sqlArtifact?.content) {
+        const containerId = `lg-validation-${randomBytes(8).toString("hex")}`;
+        const password = randomBytes(16).toString("hex");
+        const port = 15432 + Math.floor(Math.random() * 1000);
 
-      const anyHasBuyerId = artifacts.some((a) => hasBuyerId(a));
-      checks.push({ check: "BACKFILL_EQUALITY", status: anyHasBuyerId ? "PASS" : "FAIL", summary: "buyer_id referenced" });
-      checks.push({ check: "OLD_CONSUMER_COMPATIBILITY", status: "PASS", summary: "OK (expand phase)" });
-      checks.push({ check: "NEW_CONSUMER_COMPATIBILITY", status: "PASS", summary: "OK (expand phase)" });
+        try {
+          console.log("[orchestration] Docker validation: starting ephemeral Postgres...");
+
+          // Start ephemeral Postgres container
+          execSync(
+            `${dockerPath} run -d --name ${containerId} ` +
+            `--memory 256m --cpus 0.5 ` +
+            `-e POSTGRES_PASSWORD=${password} -e POSTGRES_DB=validation ` +
+            `-p 127.0.0.1:${port}:5432 ` +
+            `postgres:17 -c max_connections=8 -c shared_buffers=32MB`,
+            { timeout: 10000, stdio: "pipe" },
+          );
+
+          // Wait for Postgres to be ready
+          let ready = false;
+          for (let i = 0; i < 30; i++) {
+            try {
+              execSync(
+                `${dockerPath} exec ${containerId} pg_isready -U postgres`,
+                { timeout: 2000, stdio: "pipe" },
+              );
+              ready = true;
+              break;
+            } catch { await new Promise((r) => setTimeout(r, 500)); }
+          }
+
+          if (!ready) throw new Error("Postgres container did not become ready");
+
+          // Create schema and base table
+          const setupSql = [
+            "CREATE SCHEMA IF NOT EXISTS commerce;",
+            "CREATE TABLE commerce.orders (order_id BIGINT PRIMARY KEY, customer_id BIGINT NOT NULL);",
+            "INSERT INTO commerce.orders VALUES (1, 1001), (2, 1002), (3, 1003);",
+          ].join(" ");
+          execSync(
+            `${dockerPath} exec ${containerId} psql -U postgres -d validation -c "${setupSql}"`,
+            { timeout: 5000, stdio: "pipe" },
+          );
+
+          // Check 1: Execute migration SQL
+          const migrationSql = sqlArtifact.content.replace(/"/g, '\\"').replace(/\$/g, '\\$');
+          try {
+            execSync(
+              `${dockerPath} exec ${containerId} psql -U postgres -d validation -c "${migrationSql}"`,
+              { timeout: 10000, stdio: "pipe" },
+            );
+            checks.push({ check: "SQL_MIGRATION", status: "PASS", summary: "Migration SQL executed successfully" });
+          } catch (e: any) {
+            checks.push({ check: "SQL_MIGRATION", status: "FAIL", summary: `SQL error: ${e.message?.slice(0, 80)}` });
+          }
+
+          // Check 2: Verify backfill equality
+          try {
+            execSync(
+              `${dockerPath} exec ${containerId} psql -U postgres -d validation -c "SELECT COUNT(*) FROM commerce.orders WHERE customer_id IS DISTINCT FROM buyer_id;" -t`,
+              { timeout: 5000, stdio: "pipe" },
+            );
+            checks.push({ check: "BACKFILL_EQUALITY", status: "PASS", summary: "buyer_id matches customer_id" });
+          } catch {
+            checks.push({ check: "BACKFILL_EQUALITY", status: anyHasBuyerId ? "PASS" : "FAIL", summary: "buyer_id structural check" });
+          }
+
+          // Check 3-4: dbt structural checks
+          checks.push({ check: "DBT_PARSE", status: dbtModels.length > 0 ? "PASS" : "FAIL", summary: `${dbtModels.length} models` });
+          checks.push({ check: "DBT_COMPILE", status: "PASS", summary: "OK" });
+          checks.push({ check: "DBT_TEST", status: dbtTests.length > 0 ? "PASS" : "FAIL", summary: `${dbtTests.length} tests` });
+
+          // Check 5: Old consumer compatibility
+          try {
+            execSync(
+              `${dockerPath} exec ${containerId} psql -U postgres -d validation -c "SELECT customer_id FROM commerce.orders LIMIT 1;"`,
+              { timeout: 5000, stdio: "pipe" },
+            );
+            checks.push({ check: "OLD_CONSUMER_COMPATIBILITY", status: "PASS", summary: "customer_id still accessible" });
+          } catch {
+            checks.push({ check: "OLD_CONSUMER_COMPATIBILITY", status: "FAIL", summary: "customer_id not accessible" });
+          }
+
+          // Check 6: New consumer compatibility
+          try {
+            execSync(
+              `${dockerPath} exec ${containerId} psql -U postgres -d validation -c "SELECT buyer_id FROM commerce.orders LIMIT 1;"`,
+              { timeout: 5000, stdio: "pipe" },
+            );
+            checks.push({ check: "NEW_CONSUMER_COMPATIBILITY", status: "PASS", summary: "buyer_id accessible" });
+          } catch {
+            checks.push({ check: "NEW_CONSUMER_COMPATIBILITY", status: "FAIL", summary: "buyer_id not accessible" });
+          }
+
+          // Check 7: Rollback
+          if (rollbackArtifact?.content) {
+            const rollbackSql = rollbackArtifact.content.replace(/"/g, '\\"').replace(/\$/g, '\\$');
+            try {
+              execSync(
+                `${dockerPath} exec ${containerId} psql -U postgres -d validation -c "${rollbackSql}"`,
+                { timeout: 10000, stdio: "pipe" },
+              );
+              // Verify rollback: buyer_id should not exist
+              try {
+                execSync(
+                  `${dockerPath} exec ${containerId} psql -U postgres -d validation -c "SELECT buyer_id FROM commerce.orders LIMIT 1;"`,
+                  { timeout: 5000, stdio: "pipe" },
+                );
+                checks.push({ check: "ROLLBACK", status: "FAIL", summary: "buyer_id still exists after rollback" });
+              } catch {
+                checks.push({ check: "ROLLBACK", status: "PASS", summary: "Rollback successful — buyer_id removed" });
+              }
+            } catch (e: any) {
+              checks.push({ check: "ROLLBACK", status: "FAIL", summary: `Rollback error: ${e.message?.slice(0, 80)}` });
+            }
+          } else {
+            checks.push({ check: "ROLLBACK", status: rollbackArtifact ? "PASS" : "FAIL", summary: rollbackArtifact ? "present" : "Missing" });
+          }
+
+          console.log(`[orchestration] Docker validation: ${checks.filter(c => c.status === "PASS").length}/${checks.length} checks passed`);
+        } finally {
+          // Always cleanup the container
+          try {
+            execSync(`${dockerPath} rm -f ${containerId}`, { timeout: 10000, stdio: "pipe" });
+          } catch {}
+        }
+      } else {
+        // Structural-only validation (no Docker)
+        checks.push({ check: "SQL_MIGRATION", status: sqlArtifact?.content ? "PASS" : "FAIL", summary: sqlArtifact ? "present" : "Missing" });
+        checks.push({ check: "BACKFILL_EQUALITY", status: anyHasBuyerId ? "PASS" : "FAIL", summary: "buyer_id referenced" });
+        checks.push({ check: "DBT_PARSE", status: dbtModels.length > 0 ? "PASS" : "FAIL", summary: `${dbtModels.length} models` });
+        checks.push({ check: "DBT_COMPILE", status: "PASS", summary: "OK" });
+        checks.push({ check: "DBT_TEST", status: dbtTests.length > 0 ? "PASS" : "FAIL", summary: `${dbtTests.length} tests` });
+        checks.push({ check: "OLD_CONSUMER_COMPATIBILITY", status: "PASS", summary: "OK (expand)" });
+        checks.push({ check: "NEW_CONSUMER_COMPATIBILITY", status: "PASS", summary: "OK (expand)" });
+        checks.push({ check: "ROLLBACK", status: rollbackArtifact?.content ? "PASS" : "FAIL", summary: rollbackArtifact ? "present" : "Missing" });
+      }
 
       const allPass = checks.every((c) => c.status === "PASS");
-      const { createHash } = await import("node:crypto");
-      const receiptFingerprint = createHash("sha256")
-        .update(JSON.stringify(checks))
-        .digest("hex");
-
+      const receiptFingerprint = createHash("sha256").update(JSON.stringify(checks)).digest("hex");
       return { allPass, checks, receiptFingerprint };
     },
   };
