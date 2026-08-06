@@ -12,6 +12,7 @@
     "build": "pnpm --recursive --if-present build",
     "check:boundaries": "node scripts/check-boundaries.mjs",
     "check:environment": "sh scripts/check-environment.sh",
+    "demo": "pnpm build && node --import tsx scripts/demo.ts",
     "dev": "pnpm --filter @lineageguard/web dev",
     "dev:worker": "pnpm --filter @lineageguard/worker build && pnpm --filter @lineageguard/worker start",
     "format": "biome format --write .",
@@ -29,6 +30,7 @@
     "@types/node": "24.13.3",
     "@types/react": "19.2.18",
     "@types/react-dom": "19.2.4",
+    "tsx": "^4.23.7",
     "typescript": "5.9.3",
     "vitest": "4.1.10"
   }
