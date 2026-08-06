@@ -48,6 +48,15 @@ export {
   lineageSegmentSchema,
 } from "./evidence.js";
 export * from "./hash.js";
+export type {
+  DashboardConsumer,
+  DataModelConsumer,
+  ImpactConsumer,
+  ImpactConsumerKind,
+  MlConsumer,
+  UnmanagedQueryConsumer,
+} from "./impact-consumer.js";
+export { deriveImpactConsumers } from "./impact-consumer.js";
 export type { MigrationArtifact, MigrationCandidate } from "./migration.js";
 export {
   bindMigrationCandidate,
