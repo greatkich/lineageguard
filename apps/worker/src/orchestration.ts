@@ -21,7 +21,7 @@ import {
   type WritebackInput,
   type WritebackOutput,
 } from "@lineageguard/agent";
-import { createCanonicalImpactContextFixture } from "@lineageguard/domain";
+import { createCanonicalImpactContextFixture } from "@lineageguard/domain/testing";
 import { collectFromDataHub } from "./datahub-rest-port.js";
 import { updateRunStatus } from "./simple-store.js";
 

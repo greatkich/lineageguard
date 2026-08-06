@@ -11,7 +11,7 @@ import {
   type WritebackInput,
   type WritebackOutput,
 } from "../packages/agent/src/index.js";
-import { createCanonicalImpactContextFixture } from "../packages/domain/src/index.js";
+import { createCanonicalImpactContextFixture } from "../packages/domain/src/evidence.js";
 import { collectFromDataHub } from "../apps/worker/src/datahub-rest-port.js";
 
 // Load .env file manually (no dotenv dependency)
