@@ -119,7 +119,7 @@ function payloadFor(tool: ReadToolName, call: number): RawToolInvocation["payloa
       total: 1,
     };
   }
-  const entityUrns = [dashboardUrn, modelUrn, queryUrn, glossaryTermUrn];
+  const entityUrns = [dashboardUrn, modelUrn, queryUrn, revenueUrn, glossaryTermUrn];
   return [{ urn: entityUrns[call - 9] ?? dashboardUrn }];
 }
 
@@ -142,6 +142,7 @@ describe("canonical official MCP reader", () => {
     expect(result.dashboardDetails.data).toEqual([{ urn: dashboardUrn }]);
     expect(result.modelDetails.data).toEqual([{ urn: modelUrn }]);
     expect(result.queryDetails.data).toEqual([{ urn: queryUrn }]);
+    expect(result.revenueDetails.data).toEqual([{ urn: revenueUrn }]);
     expect(result.glossaryDetails.data).toEqual([{ urn: glossaryTermUrn }]);
     expect(invoke.mock.calls).toEqual([
       [
@@ -200,6 +201,7 @@ describe("canonical official MCP reader", () => {
       ["get_entities", { urns: [dashboardUrn] }],
       ["get_entities", { urns: [modelUrn] }],
       ["get_entities", { urns: [queryUrn] }],
+      ["get_entities", { urns: [revenueUrn] }],
       ["get_entities", { urns: [glossaryTermUrn] }],
     ]);
   });

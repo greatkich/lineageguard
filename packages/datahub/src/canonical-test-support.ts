@@ -300,6 +300,21 @@ export function canonicalRawResponses(
       tool: "get_entities",
       payload: [
         {
+          ownership: {
+            owners: [owner(canonicalFinanceOwnerUrn, "Finance Analytics", "TECHNICAL_OWNER")],
+          },
+          platform: { name: "postgres", urn: "urn:li:dataPlatform:postgres" },
+          properties: { name: "customer_revenue" },
+          tags: { tags: [{ tag: { urn: canonicalCriticalTagUrn } }] },
+          type: "DATASET",
+          urn: canonicalAnalyticsRevenueUrn,
+        },
+      ],
+    },
+    {
+      tool: "get_entities",
+      payload: [
+        {
           properties: { name: "Customer Identifier", termSource: "INTERNAL" },
           type: "GLOSSARY_TERM",
           urn: canonicalGlossaryTermUrn,

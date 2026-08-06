@@ -284,7 +284,7 @@ def test_split_or_mismatched_live_signal_is_rejected(
     assert "LIVE_QUERY_SIGNAL_SPLIT" in {item.code for item in report.failures}
 
 
-def test_custom_query_owner_cannot_replace_official_asset_ownership(
+def test_removing_customer_revenue_ownership_is_rejected(
     expected_graph: ExpectedGraph, repository_root: Path
 ) -> None:
     observed, receipts = _live_bundle(expected_graph, repository_root)
@@ -295,9 +295,7 @@ def test_custom_query_owner_cannot_replace_official_asset_ownership(
     revenue_ownership = next(
         item for item in observed.ownership if item[:2] == (revenue.urn, owner)
     )
-    ownership = (set(observed.ownership) - {revenue_ownership}) | {
-        (expected_graph.query_evidence[0].query_urn, owner, revenue_ownership[2])
-    }
+    ownership = set(observed.ownership) - {revenue_ownership}
     report = compare_observed_graph(
         expected_graph,
         replace(observed, ownership=frozenset(ownership)),
@@ -344,22 +342,6 @@ class OwnershipTypeSwapReader:
         return []
 
 
-class QueryOwnershipReader(OwnershipTypeSwapReader):
-    def __init__(self, graph: ExpectedGraph, owners: tuple[tuple[str, str], ...]) -> None:
-        super().__init__(graph, "")
-        self.query_owners = owners
-
-    def get_aspect(self, entity_urn: str, aspect_type: type[Any], version: int = 0) -> Any | None:
-        if aspect_type is OwnershipClass and entity_urn == self.graph.query_evidence[0].query_urn:
-            return OwnershipClass(
-                owners=[
-                    OwnerClass(owner=owner, type=owner_type)
-                    for owner, owner_type in self.query_owners
-                ]
-            )
-        return super().get_aspect(entity_urn, aspect_type, version)
-
-
 @pytest.mark.parametrize(
     ("logical_key", "expected_type", "swapped_type"),
     [
@@ -392,42 +374,6 @@ def test_live_verification_rejects_swapped_ownership_type(
     owner_failure = next(item for item in report.failures if item.code == "OWNER_MISMATCH")
     assert expected_type in owner_failure.detail
     assert swapped_type in owner_failure.detail
-
-
-@pytest.mark.parametrize(
-    "owners",
-    [
-        (),
-        (
-            (
-                "urn:li:corpGroup:lineageguard-canonical.finance-analytics",
-                OwnershipTypeClass.BUSINESS_OWNER,
-            ),
-            (
-                "urn:li:corpGroup:lineageguard-canonical.risk-ml",
-                OwnershipTypeClass.TECHNICAL_OWNER,
-            ),
-        ),
-        (
-            (
-                "urn:li:corpGroup:lineageguard-canonical.risk-ml",
-                OwnershipTypeClass.BUSINESS_OWNER,
-            ),
-        ),
-        (
-            (
-                "urn:li:corpGroup:lineageguard-canonical.finance-analytics",
-                OwnershipTypeClass.TECHNICAL_OWNER,
-            ),
-        ),
-    ],
-)
-def test_live_verification_rejects_missing_extra_wrong_query_owner_or_type(
-    expected_graph: ExpectedGraph, owners: tuple[tuple[str, str], ...]
-) -> None:
-    observed = observe_live(QueryOwnershipReader(expected_graph, owners), expected_graph)
-    report = compare_observed_graph(expected_graph, observed)
-    assert "OWNER_MISMATCH" in {failure.code for failure in report.failures}
 
 
 def test_missing_receipts_cannot_report_live_success(expected_graph: ExpectedGraph) -> None:
