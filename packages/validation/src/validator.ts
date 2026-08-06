@@ -158,10 +158,9 @@ function pathsFor(candidate: MigrationCandidate, kinds: ReadonlySet<MigrationArt
 export function assertSafeDbtProject(candidate: MigrationCandidate): void {
   for (const artifact of candidate.artifacts) {
     if (artifact.kind === "DBT_MODEL" || artifact.kind === "DBT_TEST") {
-      const withoutAllowedReferences = artifact.content.replace(
-        /\{\{\s*ref\(\s*['"]orders['"]\s*\)\s*\}\}/g,
-        "",
-      );
+      const withoutAllowedReferences = artifact.content
+        .replace(/\{\{\s*ref\(\s*['"](?:orders|stg_orders)['"]\s*\)\s*\}\}/g, "")
+        .replace(/\{\{\s*source\(\s*['"]commerce['"]\s*,\s*['"]orders['"]\s*\)\s*\}\}/g, "");
       if (
         forbiddenDbtJinja.test(artifact.content) ||
         /\{[{%#]|[}%#]\}/.test(withoutAllowedReferences)
@@ -203,7 +202,7 @@ function dbt(
       "/work/bundle/project",
       "--profiles-dir",
       "/work/bundle/profiles",
-      ...(subcommand === "parse" ? [] : ["--select", "orders"]),
+      ...(subcommand === "parse" ? [] : ["--select", "stg_orders+"])
     ],
     cwd: checkout,
     timeoutMs,
@@ -1143,7 +1142,7 @@ export async function createSealedValidationBundle(
     if (!snapshot) throw new ValidationError("ARTIFACT_CONFLICT", "bundle snapshot missing");
     add(`artifacts/${artifact.path}`, snapshot.bytes);
     if (artifact.kind === "DBT_MODEL" || artifact.kind === "DBT_TEST") {
-      add(`project/${artifact.path.replace(/^walkthrough\//, "")}`, snapshot.bytes);
+      add(`project/${artifact.path.replace(/^walkthrough\/(?:dbt\/)?/, "")}`, snapshot.bytes);
     }
     if (artifact.kind === "SQL_MIGRATION" || artifact.kind === "ROLLBACK_SQL") {
       sealedSql.set(artifact.path, {

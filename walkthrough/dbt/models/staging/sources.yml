@@ -1,0 +1,13 @@
+version: 2
+sources:
+  - name: commerce
+    schema: commerce
+    tables:
+      - name: orders
+        identifier: orders
+        columns:
+          - name: order_id
+          - name: customer_id
+          - name: buyer_id
+          - name: order_total
+          - name: ordered_at

@@ -68,7 +68,7 @@ async function createDataHubPort() {
 // Phase D: Validation port adapter
 // ---------------------------------------------------------------------------
 
-function createValidationPort(): AgentValidationPort | undefined {
+function createValidationPort(workerId: string): AgentValidationPort | undefined {
   const validationEnabled = process.env.VALIDATION_ENABLED !== "false";
 
   if (!validationEnabled) {
@@ -82,10 +82,12 @@ function createValidationPort(): AgentValidationPort | undefined {
   const baseFixturePath = process.env.VALIDATION_BASE_FIXTURE_PATH ?? "";
 
   return {
-    async validate(candidate: unknown): Promise<ValidationOutput> {
+    async validate(candidate: unknown, context?: { runId: string }): Promise<ValidationOutput> {
       const { createHash } = await import("node:crypto");
       const { readFile, access } = await import("node:fs/promises");
       const { migrationCandidateSchema } = await import("@lineageguard/domain");
+
+      const runId = context?.runId ?? `run_${Date.now().toString(16).padStart(24, "0")}`;
 
       // Strict schema validation first — rejects malformed candidates
       const parsed = migrationCandidateSchema.parse(candidate);
@@ -120,8 +122,8 @@ function createValidationPort(): AgentValidationPort | undefined {
         const sandboxId = `validation-${Date.now()}`;
         const worktreeId = `lineageguard/validation/${sandboxId}`;
 
-        // Read base fixture SQL
-        let baseFixtureSql = "CREATE SCHEMA IF NOT EXISTS commerce; CREATE TABLE commerce.orders (order_id BIGINT PRIMARY KEY, customer_id BIGINT NOT NULL, order_total NUMERIC(10,2), ordered_at TIMESTAMPTZ DEFAULT now());";
+        // Read base fixture SQL — must include existing rows for backfill verification
+        let baseFixtureSql = "CREATE SCHEMA IF NOT EXISTS commerce; CREATE TABLE commerce.orders (order_id BIGINT PRIMARY KEY, customer_id BIGINT NOT NULL, order_total NUMERIC(10,2), ordered_at TIMESTAMPTZ DEFAULT now()); INSERT INTO commerce.orders (order_id, customer_id, order_total, ordered_at) VALUES (1, 100, 49.99, '2024-01-15'), (2, 200, 129.00, '2024-02-20'), (3, 100, 75.50, '2024-03-10');";
         if (baseFixturePath) {
           try {
             baseFixtureSql = await readFile(baseFixturePath, "utf8");
@@ -139,27 +141,43 @@ function createValidationPort(): AgentValidationPort | undefined {
         });
 
         try {
+          const { sqlDriverDigest } = await import("@lineageguard/validation");
+
+          const sqlDriverImpl = "lineageguard:postgres-driver:v1";
+          const sqlDriverVer = "8.16.3";
+          const dbtImpl = "lineageguard:dbt-runner:v1";
+          const dbtVer = "1.8.0";
+          const dbtDigest = createHash("sha256").update(runnerImageId).digest("hex");
+
+          const validators = [
+            { check: "SQL_MIGRATION", commandId: "VALIDATE_SQL_MIGRATION_V1", impl: sqlDriverImpl, ver: sqlDriverVer, dig: sqlDriverDigest },
+            { check: "BACKFILL_EQUALITY", commandId: "VALIDATE_BACKFILL_EQUALITY_V1", impl: sqlDriverImpl, ver: sqlDriverVer, dig: sqlDriverDigest },
+            { check: "DBT_PARSE", commandId: "VALIDATE_DBT_PARSE_V1", impl: dbtImpl, ver: dbtVer, dig: dbtDigest },
+            { check: "DBT_COMPILE", commandId: "VALIDATE_DBT_COMPILE_V1", impl: dbtImpl, ver: dbtVer, dig: dbtDigest },
+            { check: "DBT_TEST", commandId: "VALIDATE_DBT_TEST_V1", impl: dbtImpl, ver: dbtVer, dig: dbtDigest },
+            { check: "OLD_CONSUMER_COMPATIBILITY", commandId: "VALIDATE_OLD_CONSUMER_V1", impl: sqlDriverImpl, ver: sqlDriverVer, dig: sqlDriverDigest },
+            { check: "NEW_CONSUMER_COMPATIBILITY", commandId: "VALIDATE_NEW_CONSUMER_V1", impl: sqlDriverImpl, ver: sqlDriverVer, dig: sqlDriverDigest },
+            { check: "ROLLBACK", commandId: "VALIDATE_ROLLBACK_V1", impl: sqlDriverImpl, ver: sqlDriverVer, dig: sqlDriverDigest },
+          ] as const;
+
           const evidence = await executeValidationInOwnedDatabase(
             parsed,
             handle,
             {
               schemaVersion: 1,
               purpose: "LINEAGEGUARD_EXPECTED_VALIDATION_EXECUTION",
-              runId: `run_${"0".repeat(24)}`,
+              runId: runId as any,
               sandboxId,
               worktreeId,
-              leaseId: `lease_${"0".repeat(24)}`,
-              workerId: "validation-worker",
+              leaseId: `lease_${createHash("sha256").update(runId + sandboxId).digest("hex").slice(0, 24)}` as any,
+              workerId,
               generation: 1,
-              validators: [
-                "SQL_MIGRATION", "BACKFILL_EQUALITY", "DBT_PARSE", "DBT_COMPILE",
-                "DBT_TEST", "OLD_CONSUMER_COMPATIBILITY", "NEW_CONSUMER_COMPATIBILITY", "ROLLBACK",
-              ].map((check) => ({
-                check: check as any,
-                commandId: `VALIDATE_${check}_V1` as any,
-                implementationId: "lineageguard:postgres-driver:v1",
-                version: "1.0.0",
-                digest: createHash("sha256").update(check).digest("hex"),
+              validators: validators.map((v) => ({
+                check: v.check as any,
+                commandId: v.commandId as any,
+                implementationId: v.impl,
+                version: v.ver,
+                digest: v.dig,
               })),
             },
             {
@@ -167,10 +185,10 @@ function createValidationPort(): AgentValidationPort | undefined {
               dockerExecutable,
               validationRunnerImageId: runnerImageId,
               postgresImageId,
-              sqlDriverImplementationId: "lineageguard:postgres-driver:v1",
-              sqlDriverVersion: "8.16.3",
-              dbtImplementationId: "lineageguard:dbt-runner:v1",
-              dbtVersion: "1.8.0",
+              sqlDriverImplementationId: sqlDriverImpl,
+              sqlDriverVersion: sqlDriverVer,
+              dbtImplementationId: dbtImpl,
+              dbtVersion: dbtVer,
               timeoutMs: 90_000,
               maxOutputBytes: 256_000,
             },
@@ -512,7 +530,7 @@ export async function createOrchestrator(workerId: string) {
   const llm = createAgentModel(llmConfig);
 
   const datahub = await createDataHubPort();
-  const validation = createValidationPort();
+  const validation = createValidationPort(workerId);
   const github = createGitHubPort();
   const writeback = createWritebackPort();
 

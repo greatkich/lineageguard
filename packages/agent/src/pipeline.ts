@@ -1,10 +1,11 @@
 import type { LanguageModelV2 } from "@ai-sdk/provider";
-import type {
-  ImpactContext,
-  MigrationCandidate,
-  ProposedChange,
-  RiskComparison,
-  RunStatus,
+import {
+  bindMigrationCandidate,
+  type ImpactContext,
+  type MigrationCandidate,
+  type ProposedChange,
+  type RiskComparison,
+  type RunStatus,
 } from "@lineageguard/domain";
 import { type AgentLLMConfig, agentLLMConfigFromEnv, directLLMCall } from "./llm/client.js";
 import { migrationPlanPrompt } from "./llm/prompts.js";
@@ -42,7 +43,7 @@ export interface GitHubReviewOutput {
 }
 
 export interface AgentValidationPort {
-  validate(candidate: MigrationCandidate): Promise<ValidationOutput>;
+  validate(candidate: MigrationCandidate, context: { runId: string }): Promise<ValidationOutput>;
 }
 
 export interface ValidationOutput {
@@ -259,8 +260,10 @@ export function createAgentPipeline(config: AgentPipelineConfig) {
           comparison,
           rationale: plan.rationale,
         });
+        // Bind candidate to change/context/assessment — proves consistency
+        bindMigrationCandidate(candidate, change, context, comparison.grounded);
         result.artifactsGenerated = candidate.artifacts.length;
-        console.log(`  [pipeline] Step 6: Built ${result.artifactsGenerated} artifacts (deterministic)`);
+        console.log(`  [pipeline] Step 6: Built ${result.artifactsGenerated} artifacts (deterministic, bound)`);
         await notify(input.runId, "PATCH_GENERATED", {
           artifactsGenerated: result.artifactsGenerated,
           candidateJson: candidate,
@@ -277,7 +280,7 @@ export function createAgentPipeline(config: AgentPipelineConfig) {
       if (config.validation) {
         console.log(`  [pipeline] Step 7: Running validation (8 checks)...`);
         try {
-          const validationOutput = await config.validation.validate(candidate);
+          const validationOutput = await config.validation.validate(candidate, { runId: input.runId });
           result.validationPassed = validationOutput.allPass;
           validationReceiptFingerprint = validationOutput.receiptFingerprint;
           if (!validationOutput.allPass) {
