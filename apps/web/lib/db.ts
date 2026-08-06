@@ -16,10 +16,19 @@ export interface RunRow {
   baselineDecision: string | null;
   groundedDecision: string | null;
   consumersFound: number;
+  evidenceItems: number;
   artifactsGenerated: number;
   triggeredRules: string | null;
   prUrl: string | null;
   writebackStatus: string | null;
+  validationReceiptFingerprint: string | null;
+  githubReceiptFingerprint: string | null;
+  writebackReceiptFingerprint: string | null;
+  contextJson: unknown | null;
+  candidateJson: unknown | null;
+  comparisonJson: unknown | null;
+  executionMode: string;
+  sourcePrUrl: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -34,10 +43,19 @@ function mapRow(row: any): RunRow {
     baselineDecision: row.baseline_decision,
     groundedDecision: row.grounded_decision,
     consumersFound: row.consumers_found ?? 0,
+    evidenceItems: row.evidence_items ?? 0,
     artifactsGenerated: row.artifacts_generated ?? 0,
     triggeredRules: row.triggered_rules ?? null,
     prUrl: row.pr_url ?? null,
     writebackStatus: row.writeback_status ?? null,
+    validationReceiptFingerprint: row.validation_receipt_fingerprint ?? null,
+    githubReceiptFingerprint: row.github_receipt_fingerprint ?? null,
+    writebackReceiptFingerprint: row.writeback_receipt_fingerprint ?? null,
+    contextJson: row.context_json ?? null,
+    candidateJson: row.candidate_json ?? null,
+    comparisonJson: row.comparison_json ?? null,
+    executionMode: row.execution_mode ?? "LIVE",
+    sourcePrUrl: row.source_pr_url ?? null,
     createdAt: row.created_at?.toISOString() ?? "",
     updatedAt: row.updated_at?.toISOString() ?? "",
   };

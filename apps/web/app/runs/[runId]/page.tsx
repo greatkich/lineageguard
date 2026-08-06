@@ -63,6 +63,15 @@ export default async function RunDetailPage({ params }: { params: Promise<{ runI
   const effectiveStatus = failedStatusMap[run.status] ?? run.status;
   const rules = run.triggeredRules?.split(",").filter(Boolean) ?? [];
 
+  // Extract evidence from persisted context
+  const context = run.contextJson as { evidence?: Array<{ id: string; kind: string; title?: string; entityName?: string; payload?: any }> } | null;
+  const evidence = context?.evidence ?? [];
+  const consumerKinds = new Set(["LINEAGE_PATH", "DASHBOARD", "ML_MODEL", "QUERY_USAGE"]);
+  const impactConsumers = evidence.filter((e) => consumerKinds.has(e.kind));
+
+  // Extract candidate info from persisted data
+  const candidate = run.candidateJson as { strategy?: string; artifacts?: Array<{ path: string; kind: string }> } | null;
+
   return (
     <div className="mx-auto max-w-7xl px-6 py-6 space-y-6">
       {/* Breadcrumb + header */}
@@ -74,9 +83,12 @@ export default async function RunDetailPage({ params }: { params: Promise<{ runI
           <span className="text-muted-foreground/40">/</span>
           <span className="text-sm font-medium">Run Detail</span>
         </div>
-        <Badge status={isComplete ? "pass" : isFailed ? "fail" : "info"}>
-          {run.status.replace(/_/g, " ")}
-        </Badge>
+        <div className="flex items-center gap-2">
+          <Badge status="info">{run.executionMode}</Badge>
+          <Badge status={isComplete ? "pass" : isFailed ? "fail" : "info"}>
+            {run.status.replace(/_/g, " ")}
+          </Badge>
+        </div>
       </div>
 
       {/* Title */}
@@ -86,6 +98,9 @@ export default async function RunDetailPage({ params }: { params: Promise<{ runI
         </h1>
         <p className="text-sm text-muted-foreground mt-1">
           {run.repository} &middot; {new Date(run.createdAt).toLocaleString()}
+          {run.sourcePrUrl && (
+            <> &middot; <a href={run.sourcePrUrl} target="_blank" rel="noopener noreferrer" className="text-status-info hover:underline">Source PR</a></>
+          )}
         </p>
       </div>
 
@@ -112,7 +127,9 @@ export default async function RunDetailPage({ params }: { params: Promise<{ runI
               <IconCode className="w-4 h-4 text-muted-foreground" />
               <h3 className="text-sm font-medium">Proposed Change</h3>
             </div>
-            <Badge status="allow">ALLOW</Badge>
+            {run.baselineDecision && (
+              <Badge status="allow">{run.baselineDecision}</Badge>
+            )}
           </CardHeader>
           <CardBody>
             <div className="rounded-md bg-muted/50 p-3 overflow-x-auto">
@@ -130,7 +147,13 @@ export default async function RunDetailPage({ params }: { params: Promise<{ runI
             </div>
             <div className="mt-4 flex items-center gap-2 text-xs text-muted-foreground">
               <IconSearch className="w-3.5 h-3.5" />
-              <span>Repository-only analysis: no consumers detected</span>
+              <span>
+                {run.baselineDecision === "ALLOW"
+                  ? "Repository-only assessment: no breaking change detected without DataHub context"
+                  : run.baselineDecision
+                    ? `Baseline assessment: ${run.baselineDecision}`
+                    : "Assessment pending"}
+              </span>
             </div>
           </CardBody>
         </Card>
@@ -142,22 +165,43 @@ export default async function RunDetailPage({ params }: { params: Promise<{ runI
               <IconDatabase className="w-4 h-4 text-muted-foreground" />
               <h3 className="text-sm font-medium">DataHub Evidence</h3>
             </div>
-            <Badge status={run.groundedDecision === "BLOCK" ? "block" : "allow"}>
-              {run.groundedDecision ?? "PENDING"}
-            </Badge>
+            {run.groundedDecision ? (
+              <Badge status={run.groundedDecision === "BLOCK" ? "block" : "allow"}>
+                {run.groundedDecision}
+              </Badge>
+            ) : (
+              <Badge status="info">PENDING</Badge>
+            )}
           </CardHeader>
           <CardBody className="space-y-4">
             {/* Decision transition */}
-            <div className="flex items-center justify-between p-3 rounded-md bg-muted/50">
-              <span className="text-xs text-muted-foreground">Decision</span>
-              <div className="flex items-center gap-2">
-                <Badge status="allow">{run.baselineDecision ?? "ALLOW"}</Badge>
-                <IconArrowRight className="w-3.5 h-3.5 text-muted-foreground" />
-                <Badge status={run.groundedDecision === "BLOCK" ? "block" : "allow"}>
-                  {run.groundedDecision ?? "—"}
-                </Badge>
+            {run.baselineDecision && run.groundedDecision && (
+              <div className="flex items-center justify-between p-3 rounded-md bg-muted/50">
+                <span className="text-xs text-muted-foreground">Decision</span>
+                <div className="flex items-center gap-2">
+                  <Badge status="allow">{run.baselineDecision}</Badge>
+                  <IconArrowRight className="w-3.5 h-3.5 text-muted-foreground" />
+                  <Badge status={run.groundedDecision === "BLOCK" ? "block" : "allow"}>
+                    {run.groundedDecision}
+                  </Badge>
+                </div>
               </div>
-            </div>
+            )}
+
+            {/* Impact consumers from persisted context */}
+            {impactConsumers.length > 0 && (
+              <div>
+                <p className="text-xs font-medium text-muted-foreground mb-2">Impact Consumers ({impactConsumers.length})</p>
+                <div className="space-y-1.5">
+                  {impactConsumers.slice(0, 6).map((item) => (
+                    <div key={item.id} className="flex items-center gap-2 p-1.5 rounded bg-muted/30 text-xs">
+                      <span className="font-mono text-[10px] text-muted-foreground">{item.kind}</span>
+                      <span className="truncate">{item.title ?? item.entityName ?? item.id}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* Triggered rules */}
             {rules.length > 0 && (
@@ -188,12 +232,12 @@ export default async function RunDetailPage({ params }: { params: Promise<{ runI
             {/* Stats */}
             <div className="grid grid-cols-2 gap-3">
               <div className="p-2.5 rounded-md bg-muted/50">
-                <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Evidence</p>
-                <p className="text-lg font-semibold mt-0.5">{run.consumersFound}</p>
+                <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Consumers</p>
+                <p className="text-lg font-semibold mt-0.5">{run.consumersFound || "—"}</p>
               </div>
               <div className="p-2.5 rounded-md bg-muted/50">
-                <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Rules</p>
-                <p className="text-lg font-semibold mt-0.5">{rules.length}/5</p>
+                <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Evidence</p>
+                <p className="text-lg font-semibold mt-0.5">{run.evidenceItems || "—"}</p>
               </div>
             </div>
           </CardBody>
@@ -211,19 +255,23 @@ export default async function RunDetailPage({ params }: { params: Promise<{ runI
           <CardBody className="space-y-4">
             <div>
               <p className="text-xs text-muted-foreground mb-1">Strategy</p>
-              <p className="text-sm font-medium">Expand → Migrate → Contract</p>
+              <p className="text-sm font-medium">
+                {candidate?.strategy
+                  ? candidate.strategy.replace(/_/g, " → ").replace("EXPAND → MIGRATE → CONTRACT", "Expand → Migrate → Contract")
+                  : "—"}
+              </p>
             </div>
 
             <div className="grid grid-cols-2 gap-3">
               <div className="p-2.5 rounded-md bg-muted/50">
                 <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Artifacts</p>
-                <p className="text-lg font-semibold mt-0.5">{run.artifactsGenerated}</p>
+                <p className="text-lg font-semibold mt-0.5">{run.artifactsGenerated || "—"}</p>
               </div>
               <div className="p-2.5 rounded-md bg-muted/50">
                 <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Validation</p>
                 <p className="text-lg font-semibold mt-0.5 flex items-center gap-1">
-                  {isComplete ? (
-                    <><IconCheck className="w-4 h-4 text-status-pass" /> <span className="text-sm">8/8</span></>
+                  {run.validationReceiptFingerprint ? (
+                    <><IconCheck className="w-4 h-4 text-status-pass" /> <span className="text-sm">PASS</span></>
                   ) : isFailed && run.status === "FAILED_VALIDATION" ? (
                     <><IconX className="w-4 h-4 text-status-fail" /> <span className="text-sm">FAIL</span></>
                   ) : (
@@ -233,13 +281,32 @@ export default async function RunDetailPage({ params }: { params: Promise<{ runI
               </div>
             </div>
 
+            {/* Generated artifacts list from persisted candidate */}
+            {candidate?.artifacts && candidate.artifacts.length > 0 && (
+              <div>
+                <p className="text-xs font-medium text-muted-foreground mb-2">Generated Files</p>
+                <div className="space-y-1">
+                  {candidate.artifacts.map((a) => (
+                    <div key={a.path} className="text-[11px] font-mono text-muted-foreground truncate">
+                      {a.path}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* Writeback */}
             {run.writebackStatus && (
               <div className="flex items-center gap-2 p-2.5 rounded-md bg-status-pass/5">
                 <IconUpload className="w-4 h-4 text-status-pass" />
                 <div>
                   <p className="text-xs font-medium">DataHub Writeback</p>
-                  <p className="text-[11px] text-muted-foreground">{run.writebackStatus}</p>
+                  <p className="text-[11px] text-muted-foreground">
+                    {run.writebackStatus}
+                    {run.writebackReceiptFingerprint && (
+                      <span className="ml-1 font-mono">[{run.writebackReceiptFingerprint.slice(0, 8)}]</span>
+                    )}
+                  </p>
                 </div>
               </div>
             )}
@@ -270,8 +337,9 @@ export default async function RunDetailPage({ params }: { params: Promise<{ runI
             <div>
               <p className="text-sm font-medium">Breaking change prevented</p>
               <p className="text-xs text-muted-foreground mt-0.5">
-                DataHub lineage revealed {run.consumersFound} downstream dependencies invisible from the repository.
-                A safe expand-migrate-contract migration was generated, validated against Docker Postgres, and written back to DataHub.
+                DataHub lineage revealed {run.consumersFound} downstream {run.consumersFound === 1 ? "dependency" : "dependencies"} invisible from the repository.
+                {run.validationReceiptFingerprint && " A safe migration was validated"}
+                {run.writebackReceiptFingerprint && " and written back to DataHub"}.
               </p>
             </div>
           </CardBody>
