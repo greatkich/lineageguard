@@ -5,9 +5,16 @@ sources:
     tables:
       - name: orders
         identifier: orders
+        description: >
+          Orders Data Product (Commerce Warehouse). Analytical warehouse table derived from the
+          Orders Service via CDC/event ingestion. This is NOT the Orders Service operational
+          (OLTP) database.
         columns:
           - name: order_id
+            data_tests: [not_null, unique]
           - name: customer_id
+            description: Stable customer identifier used by downstream consumers.
+            data_tests: [not_null]
           - name: buyer_id
           - name: order_total
           - name: ordered_at

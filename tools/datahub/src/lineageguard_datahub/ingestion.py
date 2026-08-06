@@ -31,7 +31,7 @@ from lineageguard_datahub.receipts import (
 
 RECIPE_DIGESTS = {
     "walkthrough/metadata/postgres-ingestion.yml": (
-        "489acdca9c293b77938f4a8e313b78e5254cb1fe85881a39cfcc14eb863742f1"
+        "14683e7c5bdfd10a3b3c1a75562e952bc43ff5bfb939d2e73f732b26b50eaa76"
     ),
     "walkthrough/metadata/dbt-ingestion.yml": (
         "53d74a2f471bc2561b604bb60141729370cba1ce8dc0d9c84e05f9f1e5a605eb"
@@ -72,8 +72,11 @@ DBT_PROJECT_FILE_DIGESTS = {
     "walkthrough/dbt/models/staging/stg_orders.sql": (
         "11fa44ec156f88ee6a9e6b2165df703daa951d85a7747c7256e12d95dd317f49"
     ),
+    "walkthrough/dbt/models/staging/sources.yml": (
+        "e332b15630886b6ec6b1d344a6c55849bc762752d5481f0299e669b72984cd37"
+    ),
     "walkthrough/dbt/models/staging/stg_orders.yml": (
-        "66785862d2089d625b6909ed0552ded8fd3c8dfafbcfe4181768449a23f383e1"
+        "b545c38db13cc6d0570135dc5ff83e3d11da01b991d76dd98cef1a70d58982c8"
     ),
     "walkthrough/dbt/models/analytics/customer_revenue.sql": (
         "852d66d766e19cf69db53bc381e0036d8b10f2a0db4881c7901db1b9b5d2d681"
