@@ -1,36 +1,22 @@
 import {
   agentLLMConfigFromEnv,
-  type AgentDataHubContextPort,
   createAgentModel,
   createAgentPipeline,
 } from "@lineageguard/agent";
-
-// MVP stand-in for the real DataHub context port. `createCanonicalImpactContextFixture`
-// (packages/domain/src/evidence.ts) exists but is intentionally not part of domain's
-// public surface (see packages/domain/src/domain.test.ts), so the worker builds a
-// minimal evidence shape here instead of depending on it. This mock is expected to be
-// replaced by the real @lineageguard/datahub adapter in a follow-up task.
-const mockDatahub: AgentDataHubContextPort = {
-  collect: async (_input) =>
-    ({
-      outcome: "COLLECTED_LIVE",
-      context: {
-        evidence: [
-          { kind: "DASHBOARD", title: "Finance Revenue Dashboard", criticality: "CRITICAL" },
-          { kind: "DATASET", title: "analytics.customer_revenue", criticality: "HIGH" },
-          { kind: "ML_MODEL", title: "Fraud Model v3", criticality: "CRITICAL" },
-          { kind: "QUERY", title: "finance-monthly-close.sql", criticality: "HIGH" },
-        ],
-      },
-    }) as any,
-};
+import { createRestDataHubPort } from "./datahub-rest-port.js";
 
 export function createOrchestrator(workerId: string) {
   const llmConfig = agentLLMConfigFromEnv();
   const llm = createAgentModel(llmConfig);
 
+  // Real DataHub context port — queries GMS REST API directly
+  const datahub = createRestDataHubPort({
+    gmsUrl: process.env.DATAHUB_GMS_URL ?? "http://127.0.0.1:8080",
+    token: process.env.DATAHUB_READ_TOKEN ?? process.env.DATAHUB_TOKEN ?? "",
+  });
+
   return createAgentPipeline({
-    datahub: mockDatahub,
+    datahub: datahub as any,
     llm,
     workerId,
     clock: () => new Date(),
