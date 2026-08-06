@@ -3,10 +3,6 @@ import { createAgentPipeline } from "./pipeline.js";
 
 describe("createAgentPipeline", () => {
   it("returns a pipeline object with an execute function", () => {
-    const mockStore = {
-      transition: vi.fn(async (_runId: string, _guard: unknown, to: string) => ({ status: to })),
-      claimDue: vi.fn(async () => null),
-    };
     const mockDatahub = {
       collect: vi.fn(async () => ({
         outcome: "COLLECTED_LIVE",
@@ -26,7 +22,6 @@ describe("createAgentPipeline", () => {
     const mockLlm = {} as any;
 
     const pipeline = createAgentPipeline({
-      store: mockStore as any,
       datahub: mockDatahub as any,
       llm: mockLlm,
       workerId: "test",
