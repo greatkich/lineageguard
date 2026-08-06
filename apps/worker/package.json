@@ -13,5 +13,9 @@
     "build": "node ../../scripts/clean-worker-dist.mjs && tsc -p tsconfig.build.json && node ../../scripts/assert-worker-dist.mjs",
     "start": "node dist/worker.js",
     "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@lineageguard/agent": "workspace:*",
+    "@lineageguard/domain": "workspace:*"
   }
 }
