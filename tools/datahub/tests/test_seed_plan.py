@@ -167,6 +167,37 @@ def test_repeated_seed_emits_same_upsert_sequence(
     assert second.skipped == first.emitted
 
 
+def test_repeated_seed_with_preexisting_dbt_sibling_lineage_is_idempotent(
+    expected_graph: ExpectedGraph, repository_root: Path, tmp_path: Path
+) -> None:
+    """Reconciliation against a connector that already emitted its sibling lineage
+    before the very first LineageGuard seed must still converge to a stable,
+    idempotent result on the second run."""
+    catalog = FakeCatalog()
+    _add_connector_entities(catalog, expected_graph)
+    revenue = next(
+        node for node in expected_graph.nodes if node.logical_key == "analytics.customer_revenue"
+    )
+    dbt_sibling_urn = revenue.urn.replace("dataPlatform:postgres", "dataPlatform:dbt")
+    catalog.aspects[(revenue.urn, UpstreamLineageClass)] = UpstreamLineageClass(
+        upstreams=[UpstreamClass(dataset=dbt_sibling_urn, type=DatasetLineageTypeClass.COPY)]
+    )
+    emitter = RecordingEmitter(catalog)
+    store = ReceiptStore(tmp_path / "operations.jsonl")
+    first = seed_metadata(emitter, catalog, store, expected_graph, repository_root)
+    merged = catalog.get_aspect(revenue.urn, UpstreamLineageClass)
+    assert merged is not None
+    merged_datasets = {u.dataset for u in merged.upstreams}
+    assert dbt_sibling_urn in merged_datasets
+    assert any(u.type == DatasetLineageTypeClass.TRANSFORMED for u in merged.upstreams)
+
+    second = seed_metadata(emitter, catalog, store, expected_graph, repository_root)
+    assert first.idempotency_keys == second.idempotency_keys
+    assert second.emitted == 0
+    assert second.skipped == first.emitted
+    assert catalog.get_aspect(revenue.urn, UpstreamLineageClass).to_obj() == merged.to_obj()
+
+
 def test_metadata_seed_rejects_missing_ingestion_prerequisites(
     expected_graph: ExpectedGraph, repository_root: Path, tmp_path: Path
 ) -> None:
@@ -413,7 +444,7 @@ def test_repeat_connector_refresh_preserves_overlays_and_owned_markers(
     assert entity_has_scenario_marker(catalog, dashboard.urn, "dashboard", store.ownership_nonce)
 
 
-def test_connector_lineage_conflict_is_never_overwritten(
+def test_foreign_lineage_edge_is_rejected_and_never_overwritten(
     expected_graph: ExpectedGraph, repository_root: Path, tmp_path: Path
 ) -> None:
     store = ReceiptStore(tmp_path / "operations.jsonl")
@@ -439,7 +470,7 @@ def test_connector_lineage_conflict_is_never_overwritten(
     )
     catalog.aspects[(lineage.proposal.entityUrn, UpstreamLineageClass)] = unrelated
     emitter = RecordingEmitter(catalog)
-    with pytest.raises(ValueError, match="CONNECTOR_LINEAGE_CONFLICT"):
+    with pytest.raises(ValueError, match="LINEAGE_FOREIGN_EDGE_REJECTED"):
         seed_metadata(emitter, catalog, store, expected_graph, repository_root)
     assert emitter.proposals == []
     assert catalog.get_aspect(lineage.proposal.entityUrn, UpstreamLineageClass) is unrelated
