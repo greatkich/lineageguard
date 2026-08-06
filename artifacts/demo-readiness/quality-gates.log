@@ -1,0 +1,13 @@
+=== Quality Gates (baseline) ===
+Date: 2026-08-06T20:42Z
+Branch: fix/demo-readiness-final
+HEAD: d130fd2a0307eaec187b6a764cd164e76b0062ac
+
+format:check — FAIL (biome tailwind CSS parse issue in globals.css + minor formatting)
+lint — FAIL (1 lint issue)
+typecheck — PASS (after build; requires pnpm build first due to dist/ exports)
+test — PASS (355 passed, 31 skipped, 19 node:test)
+build — PASS
+
+NOTE: format/lint failures are pre-existing on main, not introduced by this branch.
+Demo run not attempted yet (needs env vars: DATAHUB, GITHUB_TOKEN, ANTHROPIC_API_KEY, etc.)
