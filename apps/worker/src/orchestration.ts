@@ -147,7 +147,7 @@ function createValidationPort(workerId: string): AgentValidationPort | undefined
           const sqlDriverVer = "8.16.3";
           const dbtImpl = "lineageguard:dbt-runner:v1";
           const dbtVer = "1.8.0";
-          const dbtDigest = createHash("sha256").update(runnerImageId).digest("hex");
+          const dbtDigest = runnerImageId.startsWith("sha256:") ? runnerImageId.slice("sha256:".length) : createHash("sha256").update(runnerImageId).digest("hex");
 
           const validators = [
             { check: "SQL_MIGRATION", commandId: "VALIDATE_SQL_MIGRATION_V1", impl: sqlDriverImpl, ver: sqlDriverVer, dig: sqlDriverDigest },

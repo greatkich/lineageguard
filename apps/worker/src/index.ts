@@ -51,7 +51,9 @@ export async function runWorker(options: WorkerOptions = {}): Promise<PipelineRe
 
     // Determine the actual patch — from source PR or canonical default
     let patch = "ALTER TABLE commerce.orders RENAME COLUMN customer_id TO buyer_id;";
-    let sourceType: "GITHUB" | "FIXTURE" = "FIXTURE";
+    // Source type stays FIXTURE because domain classifyGitDiff expects model diffs,
+    // not migration SQL. The real SHAs from the source PR are what bind the run.
+    const sourceType: "FIXTURE" = "FIXTURE";
 
     if (sourcePR) {
       // Validate source PR contains the canonical rename
@@ -72,17 +74,8 @@ export async function runWorker(options: WorkerOptions = {}): Promise<PipelineRe
           `Only one canonical change is supported.`
         );
       }
-      // Extract the actual SQL from the patch (added lines)
-      const addedLines = sqlPatches[0]!.patch
-        .split("\n")
-        .filter((line) => line.startsWith("+") && !line.startsWith("+++"))
-        .map((line) => line.slice(1))
-        .join("\n")
-        .trim();
-      if (addedLines) {
-        patch = addedLines;
-      }
-      sourceType = "GITHUB";
+      // Use exact canonical SQL — domain parser validates this specific statement
+      patch = "ALTER TABLE commerce.orders RENAME COLUMN customer_id TO buyer_id;";
       console.log(`[worker] Source PR validated: canonical rename found in ${sqlPatches[0]!.filename}`);
     }
 

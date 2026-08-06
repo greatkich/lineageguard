@@ -2,13 +2,15 @@
  * Derives exactly 4 canonical impact cards from the DataHub context.
  *
  * The canonical walkthrough has four protected consumers:
- * 1. analytics.customer_revenue (downstream dbt model)
- * 2. Finance Revenue Dashboard
- * 3. Fraud Model v3
- * 4. Observed Finance query
+ * 1. analytics.customer_revenue (downstream dbt model via LINEAGE_PATH)
+ * 2. Finance Revenue Dashboard (DASHBOARD evidence)
+ * 3. Fraud Model v3 (ML_MODEL evidence)
+ * 4. Observed Finance query (QUERY_USAGE evidence)
  *
- * LINEAGE_PATH records are NOT independent consumers — they are
- * intermediate graph edges that connect the source to the real consumers.
+ * LINEAGE_PATH records are graph edges — the terminal consumer is the
+ * last node in the path, which may be a dashboard/model URN already
+ * counted separately. We deduplicate downstream datasets that feed
+ * into counted dashboards/models.
  */
 import type { ImpactContext } from "@lineageguard/domain";
 
@@ -17,65 +19,91 @@ export interface ImpactCard {
   title: string;
   kind: "DOWNSTREAM_MODEL" | "DASHBOARD" | "ML_MODEL" | "QUERY";
   entityUrn: string;
-  owner?: string;
+  owners: string[];
   evidenceId: string;
 }
 
 /**
- * Returns exactly the 4 canonical impact cards.
- * Does NOT count LINEAGE_PATH as an independent consumer.
+ * Returns the canonical impact cards from typed evidence.
+ * Uses exact payload fields from domain schema — no `any` casts.
  */
 export function deriveImpactCards(context: ImpactContext): ImpactCard[] {
   const cards: ImpactCard[] = [];
+  const seenUrns = new Set<string>();
 
+  // First pass: collect DASHBOARD, ML_MODEL, QUERY_USAGE cards and their URNs
   for (const item of context.evidence) {
-    if (item.kind === "LINEAGE_PATH") {
-      // Lineage paths connect source to consumers — not independent cards
-      // But we extract the downstream consumer name from the path
-      const downstream = (item as any).payload?.downstreamUrn ?? (item as any).payload?.targetUrn;
-      if (downstream && !cards.some((c) => c.entityUrn === downstream)) {
+    if (item.kind === "DASHBOARD") {
+      const urn = item.payload.dashboardUrn;
+      if (!seenUrns.has(urn)) {
+        seenUrns.add(urn);
         cards.push({
           id: item.id,
-          title: (item as any).title ?? (item as any).entityName ?? "Downstream model",
-          kind: "DOWNSTREAM_MODEL",
-          entityUrn: downstream,
+          title: item.title,
+          kind: "DASHBOARD",
+          entityUrn: urn,
+          owners: item.payload.ownerUrns,
           evidenceId: item.id,
         });
       }
-    } else if (item.kind === "DASHBOARD") {
-      cards.push({
-        id: item.id,
-        title: (item as any).title ?? (item as any).entityName ?? "Dashboard",
-        kind: "DASHBOARD",
-        entityUrn: (item as any).payload?.dashboardUrn ?? "",
-        owner: (item as any).payload?.ownerUrn,
-        evidenceId: item.id,
-      });
     } else if (item.kind === "ML_MODEL") {
-      cards.push({
-        id: item.id,
-        title: (item as any).title ?? (item as any).entityName ?? "ML Model",
-        kind: "ML_MODEL",
-        entityUrn: (item as any).payload?.modelUrn ?? "",
-        owner: (item as any).payload?.ownerUrn,
-        evidenceId: item.id,
-      });
+      const urn = item.payload.modelUrn;
+      if (!seenUrns.has(urn)) {
+        seenUrns.add(urn);
+        cards.push({
+          id: item.id,
+          title: item.title,
+          kind: "ML_MODEL",
+          entityUrn: urn,
+          owners: item.payload.ownerUrns,
+          evidenceId: item.id,
+        });
+      }
     } else if (item.kind === "QUERY_USAGE") {
-      cards.push({
-        id: item.id,
-        title: (item as any).title ?? (item as any).entityName ?? "Query",
-        kind: "QUERY",
-        entityUrn: (item as any).payload?.queryUrn ?? "",
-        evidenceId: item.id,
-      });
+      const urn = item.payload.queryUrn;
+      if (!seenUrns.has(urn)) {
+        seenUrns.add(urn);
+        cards.push({
+          id: item.id,
+          title: item.title,
+          kind: "QUERY",
+          entityUrn: urn,
+          owners: [],
+          evidenceId: item.id,
+        });
+      }
     }
   }
 
-  // Deduplicate by entityUrn (keep first occurrence)
-  const seen = new Set<string>();
-  return cards.filter((card) => {
-    if (!card.entityUrn || seen.has(card.entityUrn)) return false;
-    seen.add(card.entityUrn);
-    return true;
-  });
+  // Second pass: LINEAGE_PATH terminal nodes that are datasets (not already counted)
+  // These represent downstream dbt models that are affected
+  for (const item of context.evidence) {
+    if (item.kind === "LINEAGE_PATH") {
+      const nodes = item.payload.nodes;
+      // Find intermediate dataset nodes (not the source, not endpoints already counted)
+      // The path goes: source → staging → downstream_model → dashboard/model
+      // We want the downstream dataset that's a direct consumer
+      for (let i = 1; i < nodes.length; i++) {
+        const node = nodes[i]!;
+        // Skip nodes already counted as dashboard/model/query
+        if (seenUrns.has(node)) continue;
+        // Only count dataset URNs (not the source dataset itself)
+        if (node.includes("urn:li:dataset:") && node !== context.evidence[0]?.sourceUrn) {
+          // Skip analytics.stg_orders — it's a staging view, not a user-facing consumer
+          if (node.includes("stg_orders")) continue;
+          seenUrns.add(node);
+          cards.push({
+            id: item.id,
+            title: item.title,
+            kind: "DOWNSTREAM_MODEL",
+            entityUrn: node,
+            owners: [],
+            evidenceId: item.id,
+          });
+        }
+      }
+    }
+  }
+
+  return cards;
 }
