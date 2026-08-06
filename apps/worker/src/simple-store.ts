@@ -15,6 +15,9 @@ export interface SimpleRun {
   consumersFound: number;
   artifactsGenerated: number;
   patch: string;
+  triggeredRules: string | null;
+  prUrl: string | null;
+  writebackStatus: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -38,9 +41,21 @@ export async function ensureRunsTable(): Promise<void> {
       grounded_decision TEXT,
       consumers_found INTEGER NOT NULL DEFAULT 0,
       artifacts_generated INTEGER NOT NULL DEFAULT 0,
+      triggered_rules TEXT,
+      pr_url TEXT,
+      writeback_status TEXT,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
     )
+  `);
+  // Add columns if table already exists (idempotent)
+  await POOL.query(`
+    DO $$ BEGIN
+      ALTER TABLE lineageguard.simple_runs ADD COLUMN IF NOT EXISTS triggered_rules TEXT;
+      ALTER TABLE lineageguard.simple_runs ADD COLUMN IF NOT EXISTS pr_url TEXT;
+      ALTER TABLE lineageguard.simple_runs ADD COLUMN IF NOT EXISTS writeback_status TEXT;
+    EXCEPTION WHEN OTHERS THEN NULL;
+    END $$;
   `);
 }
 
@@ -68,6 +83,11 @@ export async function updateRunStatus(
     groundedDecision: string;
     consumersFound: number;
     artifactsGenerated: number;
+    triggeredRules: string[];
+    prUrl: string;
+    prNumber: number;
+    writebackStatus: string;
+    failedChecks: string[];
   }>,
 ): Promise<void> {
   const sets = ["status = $2", "updated_at = now()"];
@@ -89,6 +109,18 @@ export async function updateRunStatus(
   if (extra?.artifactsGenerated !== undefined) {
     sets.push(`artifacts_generated = $${idx++}`);
     values.push(extra.artifactsGenerated);
+  }
+  if (extra?.triggeredRules !== undefined) {
+    sets.push(`triggered_rules = $${idx++}`);
+    values.push(extra.triggeredRules.join(","));
+  }
+  if (extra?.prUrl !== undefined) {
+    sets.push(`pr_url = $${idx++}`);
+    values.push(extra.prUrl);
+  }
+  if (extra?.writebackStatus !== undefined) {
+    sets.push(`writeback_status = $${idx++}`);
+    values.push(extra.writebackStatus);
   }
 
   await POOL.query(
@@ -125,6 +157,9 @@ function mapRow(row: any): SimpleRun {
     consumersFound: row.consumers_found,
     artifactsGenerated: row.artifacts_generated,
     patch: row.patch,
+    triggeredRules: row.triggered_rules,
+    prUrl: row.pr_url,
+    writebackStatus: row.writeback_status,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
