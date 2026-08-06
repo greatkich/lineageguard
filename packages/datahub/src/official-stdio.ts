@@ -126,7 +126,7 @@ function controlledProcessEnvironment(
     HOME: credentials.uvCacheDir,
     LOGNAME: "lineageguard",
     NO_COLOR: "1",
-    PATH: dirname(credentials.uvxPath),
+    PATH: `${dirname(credentials.uvxPath)}:/usr/bin:/bin`,
     SAVE_DOCUMENT_TOOL_ENABLED: "false",
     SEMANTIC_SEARCH_ENABLED: "false",
     SHELL: "",

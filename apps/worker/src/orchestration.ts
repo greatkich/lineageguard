@@ -53,7 +53,13 @@ async function createDataHubPort() {
 
   return {
     async collect(input: { changeId: string; request?: unknown }) {
-      return await port.collect(input as any);
+      try {
+        return await port.collect(input as any);
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(`[orchestration] DataHub collect error: ${msg}`);
+        throw err;
+      }
     },
   };
 }

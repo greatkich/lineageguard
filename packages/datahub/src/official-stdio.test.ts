@@ -82,7 +82,7 @@ describe("official DataHub MCP stdio configuration", () => {
       HOME: credentials.uvCacheDir,
       LOGNAME: "lineageguard",
       NO_COLOR: "1",
-      PATH: dirname(credentials.uvxPath),
+      PATH: `${dirname(credentials.uvxPath)}:/usr/bin:/bin`,
       SAVE_DOCUMENT_TOOL_ENABLED: "false",
       SEMANTIC_SEARCH_ENABLED: "false",
       SHELL: "",
@@ -169,7 +169,7 @@ describe("official DataHub MCP stdio configuration", () => {
       expect(spawnedEnvironment).toMatchObject({
         HOME: uvCacheDir,
         LOGNAME: "lineageguard",
-        PATH: dirname(uvxPath),
+        PATH: `${dirname(uvxPath)}:/usr/bin:/bin`,
         SHELL: "",
         TERM: "dumb",
         USER: "lineageguard",
