@@ -1,7 +1,8 @@
 import type { PipelineResult } from "@lineageguard/agent";
+import { createSimpleRunStore } from "@lineageguard/db";
+import pg from "pg";
 import { eventBus } from "./events.js";
 import { createOrchestrator } from "./orchestration.js";
-import { createSimpleRun, ensureRunsTable, updateRunStatus } from "./simple-store.js";
 import { readSourcePR, type SourcePRInfo } from "./source-pr-reader.js";
 
 export interface WorkerOptions {
@@ -11,13 +12,21 @@ export interface WorkerOptions {
   workerId?: string;
 }
 
+const pool = new pg.Pool({
+  connectionString:
+    process.env.LINEAGEGUARD_DATABASE_URL ??
+    "postgresql://lineageguard:lineageguard@127.0.0.1:5432/lineageguard",
+  max: 5,
+});
+const store = createSimpleRunStore(pool);
+
 export async function runWorker(options: WorkerOptions = {}): Promise<PipelineResult | null> {
   const workerId = options.workerId ?? process.env.WORKER_ID ?? "worker-1";
-  const orchestrator = await createOrchestrator(workerId);
+  const orchestrator = await createOrchestrator(workerId, store);
 
   if (options.once) {
     // --once mode: create and execute a single canonical run
-    await ensureRunsTable();
+    await store.ensureSchema();
 
     const runId = `run_${Date.now().toString(16).padStart(24, "0")}`;
     const repository = process.env.LINEAGEGUARD_REPOSITORY ?? "greatkich/lineageguard";
@@ -79,7 +88,7 @@ export async function runWorker(options: WorkerOptions = {}): Promise<PipelineRe
       console.log(`[worker] Source PR validated: canonical rename found in ${sqlPatches[0]!.filename}`);
     }
 
-    await createSimpleRun({
+    await store.create({
       id: runId,
       repository,
       field: "customer_id",
@@ -88,7 +97,7 @@ export async function runWorker(options: WorkerOptions = {}): Promise<PipelineRe
 
     // Persist source PR info if available
     if (sourcePR) {
-      await updateRunStatus(runId, "CREATED", { sourcePrUrl: sourcePR.prUrl });
+      await store.update(runId, "CREATED", { sourcePrUrl: sourcePR.prUrl });
     }
 
     console.log(`[worker] Executing canonical run ${runId}... (source: ${sourceType})`);

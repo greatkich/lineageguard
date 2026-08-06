@@ -17,6 +17,7 @@
   "dependencies": {
     "@lineageguard/agent": "workspace:*",
     "@lineageguard/datahub": "workspace:*",
+    "@lineageguard/db": "workspace:*",
     "@lineageguard/domain": "workspace:*",
     "@lineageguard/validation": "workspace:*",
     "pg": "^8.22.0"

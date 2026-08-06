@@ -21,7 +21,7 @@ import {
   type WritebackInput,
   type WritebackOutput,
 } from "@lineageguard/agent";
-import { updateRunStatus } from "./simple-store.js";
+import type { SimpleRunStore } from "@lineageguard/db";
 
 // ---------------------------------------------------------------------------
 // Phase B: DataHub context port (MCP stdio → full ImpactContext)
@@ -574,7 +574,7 @@ function createWritebackPort(): AgentWritebackPort | undefined {
 // Main orchestrator factory
 // ---------------------------------------------------------------------------
 
-export async function createOrchestrator(workerId: string) {
+export async function createOrchestrator(workerId: string, store: SimpleRunStore) {
   const llmConfig = agentLLMConfigFromEnv();
   const llm = createAgentModel(llmConfig);
 
@@ -598,7 +598,7 @@ export async function createOrchestrator(workerId: string) {
     github,
     writeback,
     onStatusChange: async (runId: string, status: string, extra?: Record<string, unknown>) => {
-      await updateRunStatus(runId, status, extra as any);
+      await store.update(runId, status, extra as any);
     },
   });
 }
