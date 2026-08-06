@@ -12,9 +12,23 @@ DataHub already contains the missing map: schemas, field-level lineage, dashboar
 
 It does not merely display blast radius. It uses DataHub context to change a decision, produce a safer implementation, prove that implementation with executable checks, and preserve the verified decision for future work.
 
+## Scope boundary
+
+LineageGuard operates inside the analytical data platform, strictly downstream of the ingestion
+boundary from operational systems (events, CDC, or ETL/ELT). It protects warehouse tables, dbt
+models, dashboards, ML features/models, and ad-hoc SQL that consume a data product once it has
+landed in the warehouse.
+
+It does **not** protect microservice-to-microservice database sharing, and it is **not** a
+substitute for API contract testing, Protobuf/gRPC schema evolution, or Kafka Schema Registry
+compatibility checking between operational services. An operational service's own OLTP schema is
+out of scope; only the analytical data product derived from it — after it crosses the ingestion
+boundary — is in scope. See `docs/DECISIONS/ADR-003-data-platform-boundary.md`.
+
 ## The user problem
 
-A data engineer, analytics engineer, or service team wants to evolve a data contract. The changed repository contains only a partial view of the system.
+A data engineer or analytics engineer wants to evolve a warehouse table, dbt model, or other
+analytical data product. The changed repository contains only a partial view of the system.
 
 Typical hidden consumers include:
 
@@ -33,11 +47,11 @@ LineageGuard answers: “Can the organization absorb this change safely?”
 
 ## Primary persona
 
-**Data platform engineer reviewing schema and transformation changes.**
+**Data or analytics engineer proposing a warehouse schema or transformation change.**
 
 They need to:
 
-- see hidden consumers before merge;
+- see hidden data-platform consumers before merge;
 - distinguish safe additive changes from breaking changes;
 - generate a practical migration rather than a generic warning;
 - route review to actual data owners;
@@ -45,8 +59,10 @@ They need to:
 
 ## Secondary personas
 
-- analytics engineer changing dbt models;
-- backend engineer publishing data used outside a microservice boundary;
+- data platform engineer reviewing schema and transformation changes across teams;
+- backend engineer publishing an analytical data product derived from an operational system
+  (their service's own OLTP schema and API contracts remain out of LineageGuard's scope; only the
+  resulting warehouse/data-product asset is in scope);
 - ML platform engineer protecting feature and model dependencies;
 - data steward reviewing deprecations and business semantics;
 - AI coding agent that needs context beyond the repository.
@@ -57,13 +73,18 @@ They need to:
 
 ## Canonical walkthrough scenario
 
+`commerce.orders` is an analytical warehouse data product — the Orders Data Product in the
+Commerce Warehouse — populated from the Orders Service's operational (OLTP) database via events
+or CDC. The Orders Service's OLTP database itself is out of scope; LineageGuard's analysis begins
+at the warehouse table.
+
 The source dataset contains:
 
 ```text
 commerce.orders.customer_id
 ```
 
-A developer proposes renaming the column to `buyer_id`.
+A data or analytics engineer proposes renaming the column to `buyer_id`.
 
 The changed repository's tests pass. A repository-only agent sees no consumer and returns:
 
@@ -170,7 +191,10 @@ A reviewer can understand and verify the core value in within the concise walkth
 - deploy a multi-agent swarm;
 - support multiple data warehouses;
 - train an ML model;
-- simulate production scale.
+- simulate production scale;
+- protect microservice-to-microservice database sharing;
+- replace API contract testing, Protobuf/gRPC schema evolution checks, or Kafka Schema Registry
+  compatibility checking between operational services.
 
 ## Success metrics
 
