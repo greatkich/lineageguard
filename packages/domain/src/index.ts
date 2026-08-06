@@ -34,6 +34,7 @@ export {
   computeImpactCollectionFailureFingerprint,
   computeImpactCollectionFingerprint,
   computeImpactContextFingerprint,
+  createCanonicalImpactContextFixture,
   createEvidence,
   createImpactCollectionFailureReport,
   criticalitySchema,

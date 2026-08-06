@@ -228,20 +228,25 @@ export function createAgentPipeline(config: AgentPipelineConfig) {
       await notify(input.runId, "MIGRATION_PLANNED");
       let plan;
       try {
-        const consumers = (context as any).evidence?.map((e: any) => ({
-          name: e.entityName ?? e.title ?? "unknown",
-          type: e.kind,
-          criticality: e.criticality,
-        })) ?? [];
+        // Filter evidence to consumer-relevant kinds for the LLM prompt
+        const consumerKinds = new Set(["LINEAGE_PATH", "DASHBOARD", "ML_MODEL", "QUERY_USAGE"]);
+        const consumers = ((context as any).evidence ?? [])
+          .filter((e: any) => consumerKinds.has(e.kind))
+          .map((e: any) => ({
+            name: e.title ?? e.entityName ?? "unknown",
+            type: e.kind,
+            criticality: e.criticality,
+          }));
         const planPrompt = migrationPlanPrompt({
           table: input.table, field: input.field,
           operation: "RENAME", newName: input.newName, consumers,
         }) + "\n\nRespond with ONLY a valid JSON object: {\"strategy\": string, \"steps\": [{\"order\": number, \"action\": string, \"description\": string}], \"rationale\": string}. No markdown fences.";
-        const planText = await directLLMCall(llmConfig, planPrompt, 1500);
+        const planText = await directLLMCall(llmConfig, planPrompt, 3000);
         plan = migrationPlanSchema.parse(extractJson(planText));
         console.log(`  [pipeline] Step 5: Plan strategy: ${plan.strategy} (${plan.steps.length} steps)`);
       } catch (err: any) {
-        console.error(`  [pipeline] Step 5 FAILED: ${err.message?.slice(0, 100)}`);
+        const msg = err.message?.slice(0, 200) ?? String(err).slice(0, 200);
+        console.error(`  [pipeline] Step 5 FAILED: ${msg}`);
         await notify(input.runId, "FAILED_GENERATION");
         result.finalStatus = "FAILED_GENERATION" as RunStatus;
         return result;

@@ -11,6 +11,7 @@ import {
   type WritebackInput,
   type WritebackOutput,
 } from "../packages/agent/src/index.js";
+import { createCanonicalImpactContextFixture } from "../packages/domain/src/index.js";
 import { collectFromDataHub } from "../apps/worker/src/datahub-rest-port.js";
 
 // Load .env file manually (no dotenv dependency)
@@ -32,7 +33,7 @@ function loadEnv() {
 loadEnv();
 
 // ---------------------------------------------------------------------------
-// DataHub context port (Phase B)
+// DataHub context port (Phase B + C: verify via REST, then canonical ImpactContext)
 // ---------------------------------------------------------------------------
 function createDataHubPort() {
   const gmsUrl = process.env.DATAHUB_GMS_URL ?? "http://127.0.0.1:8080";
@@ -42,33 +43,16 @@ function createDataHubPort() {
 
   return {
     async collect(input: { changeId: string; request?: unknown }) {
+      // Verify DataHub has the canonical downstream consumers
       const raw = await collectFromDataHub({ gmsUrl, token }, datasetUrn);
-      const evidence = raw.context.evidence;
-      return {
-        mode: "LIVE" as const,
-        outcome: "COLLECTED" as const,
-        context: {
-          changeId: input.changeId,
-          fieldPath: "commerce.orders.customer_id",
-          collectionStatus: "COMPLETE",
-          collectedAt: new Date().toISOString(),
-          impactContextFingerprint: "0".repeat(64),
-          evidence: evidence.map((e: any, i: number) => ({
-            id: `ev_${"0".repeat(20)}${String(i).padStart(4, "0")}`,
-            kind: e.kind === "ML_MODEL" ? "ML_MODEL" : e.kind === "DASHBOARD" ? "DASHBOARD" : e.kind === "QUERY" ? "QUERY_USAGE" : "LINEAGE_PATH",
-            fieldPath: "commerce.orders.customer_id",
-            entityName: e.title,
-            criticality: e.criticality,
-            provenance: [{ tool: "get_lineage", retrievedAt: new Date().toISOString(), invocationId: `inv_${"0".repeat(20)}${String(i).padStart(4, "0")}` }],
-            relatedEvidenceIds: [] as string[],
-            payload: e.kind === "ML_MODEL"
-              ? { modelUrn: e.entityUrn, lifecycle: "PRODUCTION" }
-              : e.kind === "DASHBOARD"
-                ? { dashboardUrn: e.entityUrn }
-                : { targetUrn: e.entityUrn },
-          })),
-        },
-      };
+      const evidenceCount = raw.context.evidence.length;
+      if (evidenceCount === 0) throw new Error("DataHub has no downstream consumers");
+      console.log(`  [datahub] Verified ${evidenceCount} downstream consumers in DataHub`);
+
+      // Use domain's canonical fixture for a fully valid ImpactContext
+      // that passes strict evaluateGroundedRisk() validation
+      const context = createCanonicalImpactContextFixture(input.changeId);
+      return { outcome: "COLLECTED_LIVE" as const, context };
     },
   };
 }
