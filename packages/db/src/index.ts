@@ -86,3 +86,5 @@ export type {
   RunStoreCodecs,
   StrictCodec,
 } from "./types.js";
+export type { SimpleRun, SimpleRunStore, SimpleRunUpdateExtra } from "./simple-runs.js";
+export { createSimpleRunStore } from "./simple-runs.js";
