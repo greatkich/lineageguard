@@ -55,7 +55,6 @@ const ruleDescriptions: Record<string, { title: string; severity: string }> = {
   LG004: { title: "Critical dashboard depends on field change", severity: "CRITICAL" },
   LG005: { title: "Affected critical asset has no recorded owner", severity: "HIGH" },
 };
-
 export const dynamic = "force-dynamic";
 
 export default async function RunDetailPage({ params }: { params: Promise<{ runId: string }> }) {
@@ -229,7 +228,7 @@ export default async function RunDetailPage({ params }: { params: Promise<{ runI
             {impactConsumers.length > 0 && (
               <div>
                 <p className="text-xs font-medium text-muted-foreground mb-2">
-                  Impact Consumers ({impactConsumers.length})
+                  Downstream Data Consumers ({impactConsumers.length})
                 </p>
                 <div className="space-y-1.5">
                   {impactConsumers.slice(0, 6).map((item) => (
@@ -289,7 +288,7 @@ export default async function RunDetailPage({ params }: { params: Promise<{ runI
             <div className="grid grid-cols-2 gap-3">
               <div className="p-2.5 rounded-md bg-muted/50">
                 <p className="text-[10px] text-muted-foreground uppercase tracking-wider">
-                  Consumers
+                  Data Consumers
                 </p>
                 <p className="text-lg font-semibold mt-0.5">{run.consumersFound || "—"}</p>
               </div>
@@ -414,9 +413,8 @@ export default async function RunDetailPage({ params }: { params: Promise<{ runI
             <div>
               <p className="text-sm font-medium">Breaking change prevented</p>
               <p className="text-xs text-muted-foreground mt-0.5">
-                DataHub lineage revealed {run.consumersFound} downstream{" "}
-                {run.consumersFound === 1 ? "dependency" : "dependencies"} invisible from the
-                repository.
+                DataHub lineage revealed {run.consumersFound} downstream data{" "}
+                {run.consumersFound === 1 ? "consumer" : "consumers"} invisible from the repository.
                 {run.validationReceiptFingerprint && " A safe migration was validated"}
                 {run.writebackReceiptFingerprint && " and written back to DataHub"}.
               </p>
