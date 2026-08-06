@@ -220,10 +220,10 @@ describe("canonical impact evidence", () => {
       }).success,
     ).toBe(false);
     expect(first.impactContextFingerprint).toBe(
-      "279bdd00ec97b74d63af2b9ac49732b17f5ee51f0ed1a35363898ab574076018",
+      "fc5ce646e9317fd4314f4356f214a12eeddccfb13bd19af6c3eb7c0a9a44c76f",
     );
     expect(first.collectionFingerprint).toBe(
-      "4fba22f13d1fa7093e4096ba1dfa7dae113e17e075d6940375da52097b1ae1f6",
+      "eff48edf5c15c229b478229c652beac14f591b7cae1ba75415189c7161cb06cb",
     );
     expect(first.evidence.map((item) => `${item.kind}:${item.id}`)).toEqual([
       "SCHEMA:ev_09d0ce72de399bd52bd82247",
@@ -235,13 +235,14 @@ describe("canonical impact evidence", () => {
       "LINEAGE_PATH:ev_a193c7a6f647028a5d17fbac",
       "GLOSSARY_TERM:ev_ba2121f8360a611382d3a157",
       "OWNER:ev_d4164db054a4481b94a20931",
+      "OWNER:ev_e81b6d759a2158b1562bc984",
     ]);
     expect(first.evidence.some((item) => item.kind === "SCHEMA")).toBe(true);
     expect(first.evidence.filter((item) => item.kind === "LINEAGE_PATH")).toHaveLength(2);
     expect(first.evidence.some((item) => item.kind === "DASHBOARD")).toBe(true);
     expect(first.evidence.some((item) => item.kind === "ML_MODEL")).toBe(true);
     expect(first.evidence.some((item) => item.kind === "QUERY_USAGE")).toBe(true);
-    expect(first.evidence.filter((item) => item.kind === "OWNER")).toHaveLength(2);
+    expect(first.evidence.filter((item) => item.kind === "OWNER")).toHaveLength(3);
     expect(first.evidence.some((item) => item.kind === "GLOSSARY_TERM")).toBe(true);
     expect(first.datasetUrn).toBe(canonicalDatasetUrn);
     expect(first.resolution.schemaFieldUrn).toBe(canonicalSchemaFieldUrn);
@@ -578,6 +579,10 @@ describe("canonical impact evidence", () => {
       context.evidence.find((item) => item.kind === "ML_MODEL"),
       "model evidence",
     );
+    const query = required(
+      context.evidence.find((item) => item.kind === "QUERY_USAGE"),
+      "query evidence",
+    );
 
     for (const item of context.evidence) {
       const expectedRelations =
@@ -589,7 +594,9 @@ describe("canonical impact evidence", () => {
               ? [dashboard.id]
               : item.kind === "OWNER" && item.payload.assetUrn === canonicalFraudModelUrn
                 ? [model.id]
-                : [];
+                : item.kind === "OWNER" && item.payload.assetUrn === canonicalAnalyticsRevenueUrn
+                  ? [query.id]
+                  : [];
       expect(item.relatedEvidenceIds).toEqual(expectedRelations);
     }
     expect(impactContextSchema.safeParse(context).success).toBe(true);

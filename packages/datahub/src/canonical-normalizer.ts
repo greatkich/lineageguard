@@ -300,6 +300,37 @@ function normalizeAsset(
   });
 }
 
+/**
+ * Normalizes the owner of `analytics.customer_revenue` itself. The Finance ad-hoc
+ * query is intentionally an unmanaged/unowned DataHub Query entity (SYSTEM-observed,
+ * no Ownership aspect) — reviewer routing for that query goes through the recorded
+ * owner of the dataset it reads from instead of an owner on the Query entity.
+ */
+function normalizeRevenueOwner(
+  observation: OfficialObservation<readonly OfficialEntity[]>,
+): Owner | undefined {
+  const entity = exactEntity(observation, canonicalAnalyticsRevenueUrn, "revenue dataset");
+  const parsed = assetEntitySchema.safeParse(entity);
+  if (!parsed.success) {
+    errorFor(observation, "SCHEMA_DRIFT", "Canonical DataHub revenue dataset details changed.");
+  }
+  const asset = parsed.data;
+  const owners = asset.ownership?.owners ?? [];
+  if (owners.length > 1) {
+    errorFor(observation, "AMBIGUOUS", "Canonical DataHub revenue dataset ownership was ambiguous.");
+  }
+  const owner = owners[0];
+  return owner === undefined
+    ? undefined
+    : normalizeOwner(
+        owner,
+        canonicalFinanceOwnerUrn,
+        "Finance Analytics",
+        "TECHNICAL_OWNER",
+        observation,
+      );
+}
+
 function requireLineageDiscovery(
   observation: OfficialObservation<OfficialLineagePage>,
   expectedUrns: readonly string[],
@@ -533,6 +564,7 @@ export function normalizeCanonicalLiveCollection(
   normalizeQueryDiscovery(observations.queryDiscovery);
   normalizeQueryDetails(observations.queryDetails);
   normalizeGlossaryDetails(observations.glossaryDetails);
+  const revenueOwner = normalizeRevenueOwner(observations.revenueDetails);
 
   const dashboardAsset = normalizeAsset(
     observations.dashboardDetails,
@@ -745,6 +777,29 @@ export function normalizeCanonicalLiveCollection(
           ownerUrn: canonicalRiskOwnerUrn,
           displayName: modelAsset.owner.displayName,
           ownershipType: modelAsset.owner.ownershipType,
+        },
+      }),
+    );
+  }
+  if (revenueOwner !== undefined) {
+    evidence.push(
+      createEvidence({
+        kind: "OWNER",
+        sourceUrn: canonicalAnalyticsRevenueUrn,
+        targetUrn: canonicalFinanceOwnerUrn,
+        title: "Finance Analytics owner",
+        summary:
+          "Finance Analytics owns analytics.customer_revenue, the dataset the unmanaged " +
+          "Finance query reads from. Review for that query routes through this owner " +
+          "rather than an owner on the Query entity itself.",
+        criticality: "HIGH",
+        relatedEvidenceIds: [query.id],
+        provenance: [provenance(observations.revenueDetails, "OWNER")],
+        payload: {
+          assetUrn: canonicalAnalyticsRevenueUrn,
+          ownerUrn: canonicalFinanceOwnerUrn,
+          displayName: revenueOwner.displayName,
+          ownershipType: revenueOwner.ownershipType,
         },
       }),
     );

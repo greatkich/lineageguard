@@ -84,6 +84,7 @@ export type CanonicalObservations = Readonly<{
   queryDiscoveryPages: readonly OfficialObservation<OfficialQueryPage>[];
   resolutionSearch: OfficialObservation<OfficialSearchPage>;
   resolutionSearchPages: readonly OfficialObservation<OfficialSearchPage>[];
+  revenueDetails: OfficialObservation<readonly OfficialEntity[]>;
   schemaFieldPages: readonly OfficialObservation<OfficialSchemaFieldsPage>[];
   schemaFields: OfficialObservation<OfficialSchemaFieldsPage>;
 }>;
@@ -628,6 +629,12 @@ export async function collectCanonicalObservations(
     { urns: [targets.queryUrn] },
     parseEntitiesResult,
   );
+  const revenueDetails = await observe(
+    invoker,
+    "get_entities",
+    { urns: [targets.revenueUrn] },
+    parseEntitiesResult,
+  );
   const glossaryDetails = await observe(
     invoker,
     "get_entities",
@@ -651,6 +658,7 @@ export async function collectCanonicalObservations(
     queryDiscoveryPages,
     resolutionSearch,
     resolutionSearchPages,
+    revenueDetails,
     schemaFieldPages,
     schemaFields,
   });

@@ -15,9 +15,6 @@ from datahub.emitter.mcp import MetadataChangeProposalWrapper
 from datahub.metadata.schema_classes import (
     AuditStampClass,
     DataPlatformInstanceClass,
-    OwnerClass,
-    OwnershipClass,
-    OwnershipTypeClass,
     QueryLanguageClass,
     QueryPropertiesClass,
     QuerySourceClass,
@@ -194,21 +191,6 @@ def build_live_query_plan(
             aspect=DataPlatformInstanceClass(
                 platform="urn:li:dataPlatform:postgres",
                 instance=make_dataplatform_instance_urn("postgres", graph.platform_instance),
-            ),
-        ),
-        MetadataChangeProposalWrapper(
-            entityUrn=urn,
-            aspect=OwnershipClass(
-                owners=[
-                    OwnerClass(
-                        owner=owner_urn,
-                        type={
-                            "BUSINESS_OWNER": OwnershipTypeClass.BUSINESS_OWNER,
-                            "TECHNICAL_OWNER": OwnershipTypeClass.TECHNICAL_OWNER,
-                        }[query.ownership_type.value],
-                    )
-                    for owner_urn in query.owner_urns
-                ]
             ),
         ),
         MetadataChangeProposalWrapper(entityUrn=urn, aspect=StatusClass(removed=False)),
