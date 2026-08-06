@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "scenario": "canonical-customer-id-rename",
+  "description": "ALTER TABLE commerce.orders RENAME COLUMN customer_id TO buyer_id",
+  "executionMode": "LIVE",
+  "note": "Populate with real fingerprints after a successful live run",
+  "fingerprints": {
+    "change": "PLACEHOLDER_AFTER_LIVE_RUN",
+    "impactContext": "PLACEHOLDER_AFTER_LIVE_RUN",
+    "candidate": "PLACEHOLDER_AFTER_LIVE_RUN",
+    "validation": "PLACEHOLDER_AFTER_LIVE_RUN",
+    "github": "PLACEHOLDER_AFTER_LIVE_RUN",
+    "writeback": "PLACEHOLDER_AFTER_LIVE_RUN"
+  },
+  "expectedOutcome": {
+    "baselineDecision": "ALLOW",
+    "groundedDecision": "BLOCK",
+    "impactConsumers": 4,
+    "triggeredRules": ["LG001", "LG002", "LG003", "LG004", "LG005"],
+    "strategy": "EXPAND_MIGRATE_CONTRACT",
+    "generatedArtifacts": 8,
+    "validationChecks": 8,
+    "writebackVerified": true
+  }
+}

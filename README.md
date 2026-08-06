@@ -129,4 +129,33 @@ See [`CODEX_START_PROMPT.md`](CODEX_START_PROMPT.md).
 - Reproducible evidence, executable validation, and explicit mutation controls.
 - Architecture that remains useful beyond the initial release.
 
+## Quick start
+
+```bash
+# Prerequisites: Node 24+, pnpm 11.20+, Docker, PostgreSQL, DataHub OSS
+pnpm install --frozen-lockfile
+pnpm check:environment
+
+# Copy and configure environment
+cp .env.example .env
+# Edit .env: set DATAHUB_READ_TOKEN, GITHUB_TOKEN, DATAHUB_MUTATION_TOKEN,
+# LINEAGEGUARD_BASE_SHA, LINEAGEGUARD_HEAD_SHA (or SOURCE_PR_NUMBER)
+
+# Verify everything compiles and passes
+pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build
+
+# Run the canonical scenario
+pnpm demo
+```
+
+The demo exits 0 only when the full pipeline reaches COMPLETED (DataHub context collected, risk decided, migration generated, validated, PR created, write-back verified). Any failure exits non-zero with a clear status.
+
+## Limitations
+
+- One scenario only: `customer_id → buyer_id` rename on `commerce.orders`
+- Validation requires Docker with pre-built content-addressed images
+- No multi-tenant, no authentication on Mission Control
+- Write-back uses DataHub GMS REST (not GraphQL mutations)
+- Verified replay is a contingency path, not a primary demo mode
+
 Implementation and deployment instructions evolve alongside verified product capabilities.

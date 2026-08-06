@@ -22,7 +22,7 @@
     "test": "node --test scripts/*.test.mjs && pnpm check:boundaries && vitest run",
     "test:e2e": "playwright test",
     "typecheck": "pnpm --recursive --if-present typecheck",
-    "walkthrough:verify": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build && pnpm test:e2e"
+    "walkthrough:verify": "pnpm check:environment && pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build && pnpm test:e2e"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.7",
