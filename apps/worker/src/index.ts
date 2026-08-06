@@ -10,11 +10,7 @@ export interface WorkerOptions {
 
 export async function runWorker(options: WorkerOptions = {}): Promise<void> {
   const workerId = options.workerId ?? process.env.WORKER_ID ?? "worker-1";
-  // Wires the agent pipeline (LLM + DataHub context port) for this worker.
-  // MVP: no durable run source is wired in yet, so each poll cycle currently
-  // has nothing to claim. Once @lineageguard/db's RunStore.claimDue is wired
-  // in, claimed runs are handed to `orchestrator.execute(...)` here.
-  const orchestrator = createOrchestrator(workerId);
+  const orchestrator = await createOrchestrator(workerId);
   void orchestrator;
 
   const pollOnce = (): void => {

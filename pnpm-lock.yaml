@@ -93,6 +93,9 @@ importers:
       '@lineageguard/agent':
         specifier: workspace:*
         version: link:../../packages/agent
+      '@lineageguard/datahub':
+        specifier: workspace:*
+        version: link:../../packages/datahub
       '@lineageguard/domain':
         specifier: workspace:*
         version: link:../../packages/domain
