@@ -7,14 +7,14 @@ export default defineConfig({
   retries: process.env.CI ? 2 : 0,
   reporter: process.env.CI ? "github" : "list",
   use: {
-    baseURL: "http://127.0.0.1:4317",
+    baseURL: "http://127.0.0.1:3000",
     trace: "on-first-retry",
   },
   webServer: {
-    command:
-      "pnpm --filter @lineageguard/web build && pnpm --filter @lineageguard/web exec next start --hostname 127.0.0.1 --port 4317",
-    reuseExistingServer: false,
-    url: "http://127.0.0.1:4317",
+    command: "LINEAGEGUARD_DATABASE_URL=postgresql://lineageguard:lineageguard@127.0.0.1:5432/lineageguard pnpm --filter @lineageguard/web dev --port 3000",
+    reuseExistingServer: true,
+    url: "http://127.0.0.1:3000",
+    timeout: 15_000,
   },
   projects: [
     {
