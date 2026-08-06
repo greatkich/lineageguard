@@ -7,10 +7,30 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./ipc": {
+      "types": "./dist/ipc.d.ts",
+      "default": "./dist/ipc.js"
+    },
+    "./server/validation-receipt-issuer": {
+      "types": "./dist/server/validation-receipt-issuer.d.ts",
+      "default": "./dist/server/validation-receipt-issuer.js"
+    },
+    "./server/effect-authorization": {
+      "types": "./dist/server/effect-authorization.d.ts",
+      "default": "./dist/server/effect-authorization.js"
     }
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run --root ../.. packages/validation/src",
     "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@lineageguard/domain": "workspace:*",
+    "pg": "8.16.3"
+  },
+  "devDependencies": {
+    "@types/pg": "8.16.0"
   }
 }
