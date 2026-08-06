@@ -17,6 +17,9 @@ export interface RunRow {
   groundedDecision: string | null;
   consumersFound: number;
   artifactsGenerated: number;
+  triggeredRules: string | null;
+  prUrl: string | null;
+  writebackStatus: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -32,6 +35,9 @@ function mapRow(row: any): RunRow {
     groundedDecision: row.grounded_decision,
     consumersFound: row.consumers_found ?? 0,
     artifactsGenerated: row.artifacts_generated ?? 0,
+    triggeredRules: row.triggered_rules ?? null,
+    prUrl: row.pr_url ?? null,
+    writebackStatus: row.writeback_status ?? null,
     createdAt: row.created_at?.toISOString() ?? "",
     updatedAt: row.updated_at?.toISOString() ?? "",
   };
