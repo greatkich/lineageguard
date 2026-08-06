@@ -95,6 +95,8 @@ export interface RunInput {
   table: string;
   field: string;
   newName: string;
+  source?: "GITHUB" | "FIXTURE" | undefined;
+  sourcePath?: string | undefined;
 }
 
 export interface PipelineResult {
@@ -161,6 +163,8 @@ export function createAgentPipeline(config: AgentPipelineConfig) {
         baseSha: input.baseSha,
         headSha: input.headSha,
         patch: input.patch,
+        source: input.source,
+        sourcePath: input.sourcePath,
       });
 
       // ─── Step 2: Baseline assessment ──────────────────────────────────

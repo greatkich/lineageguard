@@ -13,6 +13,7 @@ export interface SourcePRInfo {
   headBranch: string;
   diffFingerprint: string;
   changedFiles: string[];
+  patches: Array<{ filename: string; patch: string }>;
 }
 
 export async function readSourcePR(options: {
@@ -69,5 +70,6 @@ export async function readSourcePR(options: {
     headBranch: pr.head.ref,
     diffFingerprint,
     changedFiles: files.map((f) => f.filename),
+    patches: files.map((f) => ({ filename: f.filename, patch: f.patch ?? "" })),
   };
 }

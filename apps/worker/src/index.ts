@@ -49,11 +49,48 @@ export async function runWorker(options: WorkerOptions = {}): Promise<PipelineRe
       );
     }
 
+    // Determine the actual patch — from source PR or canonical default
+    let patch = "ALTER TABLE commerce.orders RENAME COLUMN customer_id TO buyer_id;";
+    let sourceType: "GITHUB" | "FIXTURE" = "FIXTURE";
+
+    if (sourcePR) {
+      // Validate source PR contains the canonical rename
+      const renamePattern = /RENAME\s+COLUMN\s+customer_id\s+TO\s+buyer_id/i;
+      const sqlPatches = sourcePR.patches.filter(
+        (p) => p.filename.endsWith(".sql") && renamePattern.test(p.patch)
+      );
+      if (sqlPatches.length === 0) {
+        throw new Error(
+          `Source PR #${sourcePR.prNumber} does not contain the canonical rename ` +
+          `(ALTER TABLE ... RENAME COLUMN customer_id TO buyer_id). ` +
+          `Changed files: ${sourcePR.changedFiles.join(", ")}`
+        );
+      }
+      if (sqlPatches.length > 1) {
+        throw new Error(
+          `Source PR #${sourcePR.prNumber} contains multiple schema rename statements. ` +
+          `Only one canonical change is supported.`
+        );
+      }
+      // Extract the actual SQL from the patch (added lines)
+      const addedLines = sqlPatches[0]!.patch
+        .split("\n")
+        .filter((line) => line.startsWith("+") && !line.startsWith("+++"))
+        .map((line) => line.slice(1))
+        .join("\n")
+        .trim();
+      if (addedLines) {
+        patch = addedLines;
+      }
+      sourceType = "GITHUB";
+      console.log(`[worker] Source PR validated: canonical rename found in ${sqlPatches[0]!.filename}`);
+    }
+
     await createSimpleRun({
       id: runId,
       repository,
       field: "customer_id",
-      patch: "ALTER TABLE commerce.orders RENAME COLUMN customer_id TO buyer_id;",
+      patch,
     });
 
     // Persist source PR info if available
@@ -61,17 +98,19 @@ export async function runWorker(options: WorkerOptions = {}): Promise<PipelineRe
       await updateRunStatus(runId, "CREATED", { sourcePrUrl: sourcePR.prUrl });
     }
 
-    console.log(`[worker] Executing canonical run ${runId}...`);
+    console.log(`[worker] Executing canonical run ${runId}... (source: ${sourceType})`);
 
     const result = await orchestrator.execute({
       runId,
       repository,
       baseSha,
       headSha,
-      patch: "ALTER TABLE commerce.orders RENAME COLUMN customer_id TO buyer_id;",
+      patch,
       table: "commerce.orders",
       field: "customer_id",
       newName: "buyer_id",
+      source: sourceType,
+      sourcePath: sourcePR ? sourcePR.patches.find((p) => /RENAME\s+COLUMN\s+customer_id/i.test(p.patch))?.filename : undefined,
     });
 
     console.log(`[worker] Run ${runId} finished: ${result.finalStatus}`);
