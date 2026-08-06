@@ -262,11 +262,13 @@ export function createAgentPipeline(config: AgentPipelineConfig) {
       }
 
       // ─── Step 7: Validation (REAL Docker containers) ──────────────────
+      let validationReceiptFingerprint = "";
       if (config.validation) {
         console.log(`  [pipeline] Step 7: Running validation (8 checks)...`);
         try {
           const validationOutput = await config.validation.validate(candidate);
           result.validationPassed = validationOutput.allPass;
+          validationReceiptFingerprint = validationOutput.receiptFingerprint;
           if (!validationOutput.allPass) {
             const failed = validationOutput.checks.filter((c) => c.status === "FAIL");
             console.error(`  [pipeline] Step 7: Validation FAILED: ${failed.map((c) => c.check).join(", ")}`);
@@ -327,7 +329,7 @@ export function createAgentPipeline(config: AgentPipelineConfig) {
             candidate,
             githubPrUrl: githubReceipt?.prUrl ?? "",
             githubReceiptFingerprint: githubReceipt?.receiptFingerprint ?? "",
-            validationReceiptFingerprint: "",
+            validationReceiptFingerprint,
           });
           if (writebackOutput.status === "AMBIGUOUS") {
             console.error(`  [pipeline] Step 9: Writeback AMBIGUOUS — failing`);

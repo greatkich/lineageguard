@@ -99,6 +99,9 @@ importers:
       '@lineageguard/domain':
         specifier: workspace:*
         version: link:../../packages/domain
+      '@lineageguard/validation':
+        specifier: workspace:*
+        version: link:../../packages/validation
       pg:
         specifier: ^8.22.0
         version: 8.22.0

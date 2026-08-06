@@ -28,8 +28,8 @@ const sqlMigrationPathSchema = artifactPath(
 const rollbackPathSchema = artifactPath(
   /^walkthrough\/migrations\/[A-Za-z0-9._-]*rollback[A-Za-z0-9._-]*\.sql$/i,
 );
-const dbtModelPathSchema = artifactPath(/^walkthrough\/models\/[A-Za-z0-9_./-]+\.sql$/);
-const dbtTestPathSchema = artifactPath(/^walkthrough\/tests\/[A-Za-z0-9_./-]+\.sql$/);
+const dbtModelPathSchema = artifactPath(/^walkthrough\/(?:dbt\/)?models\/[A-Za-z0-9_./-]+\.sql$/);
+const dbtTestPathSchema = artifactPath(/^walkthrough\/(?:dbt\/)?tests\/[A-Za-z0-9_./-]+\.sql$/);
 const migrationDocumentPathSchema = artifactPath(/^docs\/migrations\/[A-Za-z0-9._-]+\.md$/);
 
 export const migrationArtifactPathSchema = z.union([

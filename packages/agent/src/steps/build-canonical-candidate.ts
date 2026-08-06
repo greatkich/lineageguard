@@ -117,22 +117,48 @@ export function buildCanonicalCandidate(input: CanonicalCandidateInput): Migrati
     "alter table commerce.orders drop column buyer_id;",
   ].join("\n");
 
-  const dbtModelContent = [
-    "-- dbt model: orders (expand phase)",
-    "-- Both customer_id and buyer_id are exposed during compatibility window",
-    "select",
-    "  order_id,",
-    "  customer_id,",
-    "  buyer_id,",
-    "  created_at",
-    "from {{ ref('orders') }}",
+  // Real dbt model contents — targeting the actual walkthrough/dbt/models/ files
+  const stgOrdersContent = [
+    "SELECT",
+    "    order_id,",
+    "    customer_id,",
+    "    buyer_id,",
+    "    order_total,",
+    "    ordered_at",
+    "FROM {{ source('commerce', 'orders') }}",
   ].join("\n");
 
-  const dbtTestContent = [
+  const customerRevenueContent = [
+    "SELECT",
+    "    buyer_id,",
+    "    SUM(order_total) AS lifetime_revenue",
+    "FROM {{ ref('stg_orders') }}",
+    "GROUP BY buyer_id",
+  ].join("\n");
+
+  const customerFeaturesContent = [
+    "SELECT",
+    "    buyer_id,",
+    "    COUNT(*) AS order_count,",
+    "    MAX(order_total) AS max_order_total",
+    "FROM {{ ref('stg_orders') }}",
+    "GROUP BY buyer_id",
+  ].join("\n");
+
+  // Equality test: customer_id and buyer_id must match during compatibility window
+  const equalityTestContent = [
     "-- Compatibility test: customer_id and buyer_id must always match",
     "select *",
-    "from {{ ref('orders') }}",
+    "from {{ ref('stg_orders') }}",
     "where customer_id is distinct from buyer_id",
+  ].join("\n");
+
+  // Not-null test: buyer_id must never be null after migration
+  const notNullTestContent = [
+    "-- Not-null assertion: buyer_id must be populated for all rows",
+    "select *",
+    "from {{ ref('stg_orders') }}",
+    "where buyer_id is null",
   ].join("\n");
 
   const migrationDoc = [
@@ -146,7 +172,7 @@ export function buildCanonicalCandidate(input: CanonicalCandidateInput): Migrati
     "",
     "### Phase 2: Migrate",
     "- Update dbt models to expose both columns",
-    "- Add compatibility tests",
+    "- Add compatibility and not-null tests",
     "",
     "### Phase 3: Contract",
     "- After compatibility window (30 days), deprecate `customer_id`",
@@ -173,11 +199,8 @@ export function buildCanonicalCandidate(input: CanonicalCandidateInput): Migrati
   const contractEvidence = [sourceEvidenceIds[0]!];
 
   // Ensure all evidence is covered exactly once across steps
-  // The union of step evidence must equal sourceEvidenceIds exactly
   const allStepEvidence = [...new Set([...expandEvidence, ...migrateEvidence, ...contractEvidence])].sort();
   if (JSON.stringify(allStepEvidence) !== JSON.stringify(sourceEvidenceIds)) {
-    // Fallback: if the split doesn't cover all, give everything to expand/migrate
-    // This shouldn't happen with the logic above, but safety check
     throw new Error("Evidence distribution failed — all source evidence must be covered by steps");
   }
 
@@ -205,11 +228,14 @@ export function buildCanonicalCandidate(input: CanonicalCandidateInput): Migrati
         id: "step_migrate",
         phase: "MIGRATE",
         title: "Migrate: update controlled readers",
-        rationale: "Backfill and move controlled readers to use buyer_id.",
+        rationale: "Update all dbt consumers to use buyer_id and add compatibility assertions.",
         affectedEvidenceIds: migrateEvidence,
         artifactTargets: [
-          "walkthrough/models/orders.sql",
-          "walkthrough/tests/orders_compat.sql",
+          "walkthrough/dbt/models/analytics/customer_revenue.sql",
+          "walkthrough/dbt/models/fraud/customer_features.sql",
+          "walkthrough/dbt/models/staging/stg_orders.sql",
+          "walkthrough/dbt/tests/orders_buyer_id_not_null.sql",
+          "walkthrough/dbt/tests/orders_compat.sql",
         ],
       },
       {
@@ -229,6 +255,39 @@ export function buildCanonicalCandidate(input: CanonicalCandidateInput): Migrati
         content: migrationDoc,
       },
       {
+        operation: "MODIFY",
+        expectedBaseSha: change.baseSha,
+        path: "walkthrough/dbt/models/analytics/customer_revenue.sql",
+        kind: "DBT_MODEL",
+        content: customerRevenueContent,
+      },
+      {
+        operation: "MODIFY",
+        expectedBaseSha: change.baseSha,
+        path: "walkthrough/dbt/models/fraud/customer_features.sql",
+        kind: "DBT_MODEL",
+        content: customerFeaturesContent,
+      },
+      {
+        operation: "MODIFY",
+        expectedBaseSha: change.baseSha,
+        path: "walkthrough/dbt/models/staging/stg_orders.sql",
+        kind: "DBT_MODEL",
+        content: stgOrdersContent,
+      },
+      {
+        operation: "CREATE",
+        path: "walkthrough/dbt/tests/orders_buyer_id_not_null.sql",
+        kind: "DBT_TEST",
+        content: notNullTestContent,
+      },
+      {
+        operation: "CREATE",
+        path: "walkthrough/dbt/tests/orders_compat.sql",
+        kind: "DBT_TEST",
+        content: equalityTestContent,
+      },
+      {
         operation: "CREATE",
         path: "walkthrough/migrations/001_expand.sql",
         kind: "SQL_MIGRATION",
@@ -240,20 +299,7 @@ export function buildCanonicalCandidate(input: CanonicalCandidateInput): Migrati
         kind: "ROLLBACK_SQL",
         content: rollbackSql,
       },
-      {
-        operation: "MODIFY",
-        expectedBaseSha: change.baseSha,
-        path: "walkthrough/models/orders.sql",
-        kind: "DBT_MODEL",
-        content: dbtModelContent,
-      },
-      {
-        operation: "CREATE",
-        path: "walkthrough/tests/orders_compat.sql",
-        kind: "DBT_TEST",
-        content: dbtTestContent,
-      },
-    ].sort((left, right) => left.path.localeCompare(right.path)) as MigrationCandidate["artifacts"],
+    ] as MigrationCandidate["artifacts"],
     requiredReviewers: requiredReviewers as MigrationCandidate["requiredReviewers"],
     compatibilityWindowDays: 30,
     rollbackPlan: "Run walkthrough/migrations/001_rollback.sql while customer_id remains the source of truth.",

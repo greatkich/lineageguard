@@ -70,77 +70,139 @@ function createValidationPort(): AgentValidationPort | undefined {
     return undefined;
   }
 
-  // The pipeline will fail with FAILED_VALIDATION if Docker/runtime is unavailable.
-  // No structural-only mode — missing runtime is a failure, not a silent PASS.
+  const dockerExecutable = process.env.VALIDATION_DOCKER_EXECUTABLE ?? "/usr/bin/docker";
+  const runnerImageId = process.env.VALIDATION_RUNNER_IMAGE_ID ?? "";
+  const postgresImageId = process.env.VALIDATION_POSTGRES_IMAGE_ID ?? "";
+  const baseFixturePath = process.env.VALIDATION_BASE_FIXTURE_PATH ?? "";
+
   return {
     async validate(candidate: unknown): Promise<ValidationOutput> {
       const { createHash } = await import("node:crypto");
+      const { readFile, access } = await import("node:fs/promises");
       const { migrationCandidateSchema } = await import("@lineageguard/domain");
 
-      // Validate candidate passes strict schema first
+      // Strict schema validation first — rejects malformed candidates
       const parsed = migrationCandidateSchema.parse(candidate);
-      const checks: ValidationOutput["checks"] = [];
 
-      // For MVP, we verify the candidate is schema-valid and has all required artifacts.
-      // Full Docker-based executeValidationInOwnedDatabase requires the complete
-      // materialization pipeline (worktree, sealed bundle, Docker images).
-      // This adapter verifies artifacts exist and are well-formed.
-      const hasMigration = parsed.artifacts.some((a) => a.kind === "SQL_MIGRATION");
-      const hasRollback = parsed.artifacts.some((a) => a.kind === "ROLLBACK_SQL");
-      const hasDbtModel = parsed.artifacts.some((a) => a.kind === "DBT_MODEL");
-      const hasDbtTest = parsed.artifacts.some((a) => a.kind === "DBT_TEST");
-      const hasDocument = parsed.artifacts.some((a) => a.kind === "MIGRATION_DOCUMENT");
-
-      checks.push({
-        check: "SQL_MIGRATION",
-        status: hasMigration ? "PASS" : "FAIL",
-        summary: hasMigration ? "Migration SQL artifact present and schema-valid" : "Missing SQL_MIGRATION artifact",
-      });
-      checks.push({
-        check: "BACKFILL_EQUALITY",
-        status: hasMigration ? "PASS" : "FAIL",
-        summary: "Backfill logic included in migration SQL",
-      });
-      checks.push({
-        check: "DBT_PARSE",
-        status: hasDbtModel ? "PASS" : "FAIL",
-        summary: hasDbtModel ? "dbt model artifact present" : "Missing DBT_MODEL artifact",
-      });
-      checks.push({
-        check: "DBT_COMPILE",
-        status: hasDbtModel ? "PASS" : "FAIL",
-        summary: hasDbtModel ? "dbt model compilable" : "Missing DBT_MODEL",
-      });
-      checks.push({
-        check: "DBT_TEST",
-        status: hasDbtTest ? "PASS" : "FAIL",
-        summary: hasDbtTest ? "dbt test artifact present" : "Missing DBT_TEST artifact",
-      });
-      checks.push({
-        check: "OLD_CONSUMER_COMPATIBILITY",
-        status: hasMigration ? "PASS" : "FAIL",
-        summary: "Expand pattern preserves customer_id",
-      });
-      checks.push({
-        check: "NEW_CONSUMER_COMPATIBILITY",
-        status: hasMigration ? "PASS" : "FAIL",
-        summary: "buyer_id accessible after migration",
-      });
-      checks.push({
-        check: "ROLLBACK",
-        status: hasRollback ? "PASS" : "FAIL",
-        summary: hasRollback ? "Rollback SQL artifact present" : "Missing ROLLBACK_SQL artifact",
-      });
-
-      if (!hasMigration || !hasRollback || !hasDbtModel || !hasDbtTest || !hasDocument) {
-        console.error("[orchestration] Validation FAILED: missing required artifacts");
+      // Check Docker availability
+      try {
+        await access(dockerExecutable);
+      } catch {
+        throw new Error(
+          `Validation runtime unavailable: Docker executable not found at ${dockerExecutable}. ` +
+          `Set VALIDATION_DOCKER_EXECUTABLE or install Docker.`
+        );
       }
 
-      const allPass = checks.every((c) => c.status === "PASS");
-      const receiptFingerprint = createHash("sha256")
-        .update(JSON.stringify({ checks, candidateArtifacts: parsed.artifacts.length }))
-        .digest("hex");
-      return { allPass, checks, receiptFingerprint };
+      // Check required image IDs
+      if (!runnerImageId || !postgresImageId) {
+        throw new Error(
+          "Validation runtime unavailable: VALIDATION_RUNNER_IMAGE_ID and VALIDATION_POSTGRES_IMAGE_ID must be set. " +
+          "These are content-addressed image digests (sha256:...) for the validation containers."
+        );
+      }
+
+      // Attempt to use the real validation pipeline
+      try {
+        const { materializeCandidate } = await import("@lineageguard/validation");
+        const { executeValidationInOwnedDatabase } = await import("@lineageguard/validation");
+        const { resolve } = await import("node:path");
+
+        const repositoryPath = resolve(process.cwd());
+        const sandboxRoot = process.env.VALIDATION_SANDBOX_ROOT ?? "/tmp";
+        const baseSha = parsed.artifacts.find((a) => a.operation === "MODIFY")?.expectedBaseSha ?? "HEAD";
+        const sandboxId = `validation-${Date.now()}`;
+        const worktreeId = `lineageguard/validation/${sandboxId}`;
+
+        // Read base fixture SQL
+        let baseFixtureSql = "CREATE SCHEMA IF NOT EXISTS commerce; CREATE TABLE commerce.orders (order_id BIGINT PRIMARY KEY, customer_id BIGINT NOT NULL, order_total NUMERIC(10,2), ordered_at TIMESTAMPTZ DEFAULT now());";
+        if (baseFixturePath) {
+          try {
+            baseFixtureSql = await readFile(baseFixturePath, "utf8");
+          } catch {
+            console.warn(`[orchestration] Could not read base fixture from ${baseFixturePath}, using default`);
+          }
+        }
+
+        const handle = await materializeCandidate(parsed, {
+          repositoryPath,
+          sandboxRoot,
+          baseSha,
+          sandboxId,
+          worktreeId,
+        });
+
+        try {
+          const evidence = await executeValidationInOwnedDatabase(
+            parsed,
+            handle,
+            {
+              schemaVersion: 1,
+              purpose: "LINEAGEGUARD_EXPECTED_VALIDATION_EXECUTION",
+              runId: `run_${"0".repeat(24)}`,
+              sandboxId,
+              worktreeId,
+              leaseId: `lease_${"0".repeat(24)}`,
+              workerId: "validation-worker",
+              generation: 1,
+              validators: [
+                "SQL_MIGRATION", "BACKFILL_EQUALITY", "DBT_PARSE", "DBT_COMPILE",
+                "DBT_TEST", "OLD_CONSUMER_COMPATIBILITY", "NEW_CONSUMER_COMPATIBILITY", "ROLLBACK",
+              ].map((check) => ({
+                check: check as any,
+                commandId: `VALIDATE_${check}_V1` as any,
+                implementationId: "lineageguard:postgres-driver:v1",
+                version: "1.0.0",
+                digest: createHash("sha256").update(check).digest("hex"),
+              })),
+            },
+            {
+              baseFixtureSql,
+              dockerExecutable,
+              validationRunnerImageId: runnerImageId,
+              postgresImageId,
+              sqlDriverImplementationId: "lineageguard:postgres-driver:v1",
+              sqlDriverVersion: "8.16.3",
+              dbtImplementationId: "lineageguard:dbt-runner:v1",
+              dbtVersion: "1.8.0",
+              timeoutMs: 90_000,
+              maxOutputBytes: 256_000,
+            },
+          );
+
+          const checks: ValidationOutput["checks"] = evidence.checks.map((c) => ({
+            check: c.check,
+            status: c.status,
+            summary: c.summary,
+          }));
+
+          const allPass = checks.every((c) => c.status === "PASS");
+          const receiptFingerprint = createHash("sha256")
+            .update(JSON.stringify(evidence))
+            .digest("hex");
+
+          return { allPass, checks, receiptFingerprint };
+        } finally {
+          await handle.cleanup();
+        }
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+
+        // If the error is about missing Docker infrastructure, surface it clearly
+        if (
+          message.includes("trusted system git") ||
+          message.includes("MISSING_TOOL") ||
+          message.includes("content-addressed validation image") ||
+          message.includes("docker") ||
+          message.includes("Docker")
+        ) {
+          throw new Error(`Validation runtime unavailable: ${message.slice(0, 300)}`);
+        }
+
+        // For other validation errors (bad SQL, dbt parse failures, etc.),
+        // report as check failures
+        throw err;
+      }
     },
   };
 }
