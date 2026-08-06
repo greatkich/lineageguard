@@ -389,8 +389,16 @@ function createWritebackPort(): AgentWritebackPort | undefined {
         `Rollback: walkthrough/migrations/rollback.sql`,
       ].join("\n");
 
+      const authHeader = { "Content-Type": "application/json", Authorization: `Bearer ${mutationToken}` };
+
+      async function gmsGet(path: string): Promise<unknown> {
+        const res = await fetch(`${gmsUrl}${path}`, { headers: { Authorization: `Bearer ${mutationToken}` } });
+        if (!res.ok) throw new Error(`DataHub GET ${path} failed: HTTP ${res.status}`);
+        return res.json();
+      }
+
       try {
-        // Add 'Reviewed' tag to the dataset
+        // --- Write 'Reviewed' tag ---
         const tagPayload = {
           proposal: {
             entityType: "dataset",
@@ -409,17 +417,29 @@ function createWritebackPort(): AgentWritebackPort | undefined {
             },
           },
         };
-
         const tagRes = await fetch(`${gmsUrl}/aspects?action=ingestProposal`, {
           method: "POST",
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${mutationToken}` },
+          headers: authHeader,
           body: JSON.stringify(tagPayload),
         });
         if (!tagRes.ok) {
           throw new Error(`DataHub tag writeback failed: HTTP ${tagRes.status}`);
         }
 
-        // Write decision document (institutional memory)
+        // --- Read-back: verify 'Reviewed' tag was written ---
+        const tagReadback = await gmsGet(
+          `/aspects/${encodeURIComponent(datasetUrn)}?aspect=globalTags&version=0`
+        ) as { aspect?: { value?: string } };
+        const tagValue = tagReadback?.aspect?.value ?? "{}";
+        const tagData = JSON.parse(typeof tagValue === "string" ? tagValue : JSON.stringify(tagValue)) as { tags?: Array<{ tag: string }> };
+        const reviewedTagPresent = (tagData.tags ?? []).some(
+          (t) => t.tag === "urn:li:tag:lineageguard-canonical.Reviewed"
+        );
+        if (!reviewedTagPresent) {
+          throw new Error("DataHub write-back verification failed: 'Reviewed' tag not found on read-back");
+        }
+
+        // --- Write decision document (institutional memory) ---
         const docPayload = {
           proposal: {
             entityType: "dataset",
@@ -438,18 +458,33 @@ function createWritebackPort(): AgentWritebackPort | undefined {
             },
           },
         };
-
         const docRes = await fetch(`${gmsUrl}/aspects?action=ingestProposal`, {
           method: "POST",
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${mutationToken}` },
+          headers: authHeader,
           body: JSON.stringify(docPayload),
         });
         if (!docRes.ok) {
           throw new Error(`DataHub document writeback failed: HTTP ${docRes.status}`);
         }
 
+        // --- Read-back: verify decision document was written ---
+        const docReadback = await gmsGet(
+          `/aspects/${encodeURIComponent(datasetUrn)}?aspect=institutionalMemory&version=0`
+        ) as { aspect?: { value?: string } };
+        const docValue = docReadback?.aspect?.value ?? "{}";
+        const docData = JSON.parse(typeof docValue === "string" ? docValue : JSON.stringify(docValue)) as { elements?: Array<{ description?: string }> };
+        const markerPhrase = `lineageguard:decision:v1:lineageguard-${input.runId}`;
+        const docPresent = (docData.elements ?? []).some(
+          (el) => el.description?.includes(markerPhrase)
+        );
+        if (!docPresent) {
+          throw new Error("DataHub write-back verification failed: decision document not found on read-back");
+        }
+
+        console.log("[orchestration] DataHub write-back verified: tag ✓, document ✓");
+
         const receiptFingerprint = createHash("sha256")
-          .update(JSON.stringify({ documentContent, datasetUrn, runId: input.runId }))
+          .update(JSON.stringify({ documentContent, datasetUrn, runId: input.runId, verified: true }))
           .digest("hex");
 
         return { status: "SUCCEEDED", receiptFingerprint };

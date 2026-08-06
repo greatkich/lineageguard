@@ -1,7 +1,8 @@
 import type { PipelineResult } from "@lineageguard/agent";
 import { eventBus } from "./events.js";
 import { createOrchestrator } from "./orchestration.js";
-import { createSimpleRun, ensureRunsTable } from "./simple-store.js";
+import { createSimpleRun, ensureRunsTable, updateRunStatus } from "./simple-store.js";
+import { readSourcePR, type SourcePRInfo } from "./source-pr-reader.js";
 
 export interface WorkerOptions {
   once?: boolean;
@@ -20,14 +21,31 @@ export async function runWorker(options: WorkerOptions = {}): Promise<PipelineRe
 
     const runId = `run_${Date.now().toString(16).padStart(24, "0")}`;
     const repository = process.env.LINEAGEGUARD_REPOSITORY ?? "greatkich/lineageguard";
+    const owner = process.env.GITHUB_OWNER ?? "greatkich";
+    const repo = process.env.GITHUB_REPO ?? "lineageguard";
+    const token = process.env.GITHUB_TOKEN ?? "";
 
-    const baseSha = process.env.LINEAGEGUARD_BASE_SHA;
-    const headSha = process.env.LINEAGEGUARD_HEAD_SHA;
+    // Read source PR if SOURCE_PR_NUMBER is set
+    let sourcePR: SourcePRInfo | undefined;
+    const sourcePrNumber = process.env.SOURCE_PR_NUMBER;
+    if (sourcePrNumber && token) {
+      console.log(`[worker] Reading source PR #${sourcePrNumber}...`);
+      sourcePR = await readSourcePR({
+        owner,
+        repo,
+        token,
+        prNumber: Number.parseInt(sourcePrNumber, 10),
+      });
+      console.log(`[worker] Source PR: ${sourcePR.prUrl} (${sourcePR.baseSha.slice(0, 7)}..${sourcePR.headSha.slice(0, 7)})`);
+    }
+
+    const baseSha = sourcePR?.baseSha ?? process.env.LINEAGEGUARD_BASE_SHA;
+    const headSha = sourcePR?.headSha ?? process.env.LINEAGEGUARD_HEAD_SHA;
 
     if (!baseSha || !headSha) {
       throw new Error(
         "LINEAGEGUARD_BASE_SHA and LINEAGEGUARD_HEAD_SHA are required in LIVE mode. " +
-        "Set these to real Git SHAs from the repository."
+        "Set these to real Git SHAs, or set SOURCE_PR_NUMBER to read from a GitHub PR."
       );
     }
 
@@ -37,6 +55,11 @@ export async function runWorker(options: WorkerOptions = {}): Promise<PipelineRe
       field: "customer_id",
       patch: "ALTER TABLE commerce.orders RENAME COLUMN customer_id TO buyer_id;",
     });
+
+    // Persist source PR info if available
+    if (sourcePR) {
+      await updateRunStatus(runId, "CREATED", { sourcePrUrl: sourcePR.prUrl });
+    }
 
     console.log(`[worker] Executing canonical run ${runId}...`);
 
