@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "@lineageguard/agent": "workspace:*",
-    "@lineageguard/domain": "workspace:*"
+    "@lineageguard/domain": "workspace:*",
+    "pg": "^8.22.0"
   }
 }

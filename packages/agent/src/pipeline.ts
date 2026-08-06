@@ -12,6 +12,7 @@ export interface AgentPipelineConfig {
   llm: LanguageModelV2;
   workerId: string;
   clock: () => Date;
+  onStatusChange?: (runId: string, status: string, extra?: Record<string, unknown>) => Promise<void>;
 }
 
 export interface RunInput {
@@ -52,12 +53,14 @@ export function createAgentPipeline(config: AgentPipelineConfig) {
   };
 
   const llmConfig = agentLLMConfigFromEnv();
+  const notify = config.onStatusChange ?? (async () => {});
 
   return {
     async execute(input: RunInput): Promise<PipelineResult> {
       ctx.runId = input.runId;
 
       // Step 1: Parse change
+      await notify(input.runId, "CHANGE_PARSED");
       const { change } = await parseChange(ctx, {
         repository: input.repository,
         baseSha: input.baseSha,
@@ -66,27 +69,31 @@ export function createAgentPipeline(config: AgentPipelineConfig) {
       });
 
       // Step 2: Baseline assessment
+      await notify(input.runId, "BASELINE_ASSESSED", { baselineDecision: "ALLOW" });
       const { baseline } = await baselineAssess(ctx, change);
 
       // Step 3: Collect DataHub context
+      await notify(input.runId, "CONTEXT_COLLECTING");
       const rawResult = await ctx.datahub.collect({ changeId: change.id });
       const rawContext = (rawResult as any)?.context;
       const evidence: Array<{ kind: string; title: string; criticality: string }> =
         rawContext?.evidence ?? [];
       const consumersFound = evidence.length;
+      await notify(input.runId, "CONTEXT_COLLECTED", { consumersFound });
 
       // Step 4: Risk decision
       const groundedDecision = consumersFound > 0 ? "BLOCK" : "ALLOW";
+      await notify(input.runId, "RISK_DECIDED", { groundedDecision });
 
       // Step 5 & 6: LLM migration generation (direct fetch, no streaming)
       let artifactsGenerated = 0;
       if (groundedDecision !== "ALLOW") {
         try {
+          await notify(input.runId, "MIGRATION_PLANNED");
           const consumers = evidence.map((e) => ({
             name: e.title, type: e.kind, criticality: e.criticality,
           }));
 
-          // Plan migration
           const planPrompt = migrationPlanPrompt({
             table: input.table, field: input.field,
             operation: "RENAME", newName: input.newName, consumers,
@@ -96,7 +103,7 @@ export function createAgentPipeline(config: AgentPipelineConfig) {
           const plan = migrationPlanSchema.parse(extractJson(planText));
           console.log(`  [pipeline] Migration plan: ${plan.strategy} (${plan.steps.length} steps)`);
 
-          // Generate patch
+          await notify(input.runId, "PATCH_GENERATED");
           const patchPrompt = migrationPatchPrompt({
             plan: { steps: plan.steps.map((s) => ({ action: s.action, description: s.description })) },
             table: input.table, field: input.field,
@@ -107,14 +114,20 @@ export function createAgentPipeline(config: AgentPipelineConfig) {
           const patch = migrationPatchSchema.parse(extractJson(patchText));
           artifactsGenerated = patch.artifacts.length;
           console.log(`  [pipeline] Generated ${artifactsGenerated} artifacts`);
+
+          await notify(input.runId, "VALIDATED", { artifactsGenerated });
         } catch (err: any) {
           console.log(`  [pipeline] LLM step skipped: ${err.message?.slice(0, 100)}`);
+          await notify(input.runId, "FAILED_GENERATION");
         }
       }
 
+      const finalStatus = groundedDecision === "ALLOW" ? "COMPLETED" : (artifactsGenerated > 0 ? "COMPLETED" : "FAILED_GENERATION");
+      await notify(input.runId, finalStatus, { artifactsGenerated });
+
       return {
         runId: input.runId,
-        finalStatus: groundedDecision === "ALLOW" ? "COMPLETED" : "VALIDATED",
+        finalStatus: finalStatus as RunStatus,
         baselineDecision: baseline.decision,
         groundedDecision,
         consumersFound,

@@ -90,6 +90,9 @@ importers:
       '@lineageguard/domain':
         specifier: workspace:*
         version: link:../../packages/domain
+      pg:
+        specifier: ^8.22.0
+        version: 8.22.0
 
   packages/agent:
     dependencies:
