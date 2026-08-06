@@ -15,6 +15,7 @@ from datahub.emitter.mce_builder import (
 from datahub.metadata.schema_classes import (
     DashboardInfoClass,
     DataPlatformInstanceClass,
+    DomainsClass,
     GlobalTagsClass,
     GlossaryTermsClass,
     OwnershipClass,
@@ -85,6 +86,7 @@ class ObservedGraph:
     field_edges: frozenset[tuple[str, str]]
     ownership: frozenset[tuple[str, str, str]]
     tags: frozenset[tuple[str, str]]
+    domains: frozenset[tuple[str, str]]
     glossary_terms: frozenset[tuple[str, str]]
     query_signals: tuple[QuerySignal, ...]
 
@@ -154,6 +156,9 @@ def expected_observation(graph: ExpectedGraph) -> ObservedGraph:
             }
         ),
         tags=frozenset((node.urn, tag_urn) for node in graph.nodes for tag_urn in node.tag_urns),
+        domains=frozenset(
+            (node.urn, node.domain_urn) for node in graph.nodes if node.domain_urn is not None
+        ),
         glossary_terms=frozenset(
             {(graph.source_field.schema_field_urn, graph.source_field.glossary_term_urn)}
         ),
@@ -516,6 +521,7 @@ def compare_observed_graph(
         ("FIELD_LINEAGE_MISMATCH", expected.field_edges, observed.field_edges),
         ("OWNER_MISMATCH", expected.ownership, observed.ownership),
         ("TAG_MISMATCH", expected.tags, observed.tags),
+        ("DOMAIN_MISMATCH", expected.domains, observed.domains),
         ("GLOSSARY_TERM_MISMATCH", expected.glossary_terms, observed.glossary_terms),
     )
     failures = [
@@ -594,6 +600,7 @@ def observe_live(reader: GraphReader, graph: ExpectedGraph) -> ObservedGraph:
     field_edges: set[tuple[str, str]] = set()
     ownership: set[tuple[str, str, str]] = set()
     tags: set[tuple[str, str]] = set()
+    domains: set[tuple[str, str]] = set()
     glossary_terms: set[tuple[str, str]] = set()
     query_signals: list[QuerySignal] = []
     dataset_nodes = [node for node in graph.nodes if node.entity_type.value == "DATASET"]
@@ -641,6 +648,9 @@ def observe_live(reader: GraphReader, graph: ExpectedGraph) -> ObservedGraph:
         tag_aspect = reader.get_aspect(node.urn, GlobalTagsClass)
         if tag_aspect is not None:
             tags.update((node.urn, association.tag) for association in tag_aspect.tags)
+        domain_aspect = reader.get_aspect(node.urn, DomainsClass)
+        if domain_aspect is not None:
+            domains.update((node.urn, domain_urn) for domain_urn in domain_aspect.domains)
     source_terms = reader.get_aspect(graph.source_field.schema_field_urn, GlossaryTermsClass)
     if source_terms is not None:
         glossary_terms.update(
@@ -705,6 +715,7 @@ def observe_live(reader: GraphReader, graph: ExpectedGraph) -> ObservedGraph:
         field_edges=frozenset(field_edges),
         ownership=frozenset(ownership),
         tags=frozenset(tags),
+        domains=frozenset(domains),
         glossary_terms=frozenset(glossary_terms),
         query_signals=tuple(sorted(query_signals, key=lambda signal: signal.urn)),
     )

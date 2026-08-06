@@ -14,6 +14,7 @@ from lineageguard_datahub.models import (
     LineageEdge,
     Owner,
     OwnershipType,
+    Domain,
     QueryEvidence,
     SourceField,
     Tag,
@@ -95,6 +96,7 @@ CANONICAL_ENTITY_TYPES = {
 CANONICAL_NON_DATASET_URNS = {
     "urn:li:corpGroup:lineageguard-canonical.finance-analytics",
     "urn:li:corpGroup:lineageguard-canonical.risk-ml",
+    "urn:li:corpGroup:lineageguard-canonical.commerce-data-platform",
     "urn:li:dashboard:(looker,lineageguard-canonical.finance-revenue-dashboard)",
     "urn:li:glossaryTerm:lineageguard-canonical.CustomerIdentifier",
     "urn:li:mlModel:(urn:li:dataPlatform:mlflow,lineageguard-canonical.fraud-model-v3,PROD)",
@@ -102,6 +104,10 @@ CANONICAL_NON_DATASET_URNS = {
     "urn:li:tag:lineageguard-canonical.Critical",
     "urn:li:tag:lineageguard-canonical.Production",
     "urn:li:tag:lineageguard-canonical.Reviewed",
+    "urn:li:tag:lineageguard-canonical.Warehouse",
+    "urn:li:tag:lineageguard-canonical.AnalyticalDataProduct",
+    "urn:li:tag:lineageguard-canonical.CdcDerived",
+    "urn:li:domain:lineageguard-canonical.commerce-analytics",
 }
 CANONICAL_OWNER_SPECS = frozenset(
     {
@@ -111,6 +117,11 @@ CANONICAL_OWNER_SPECS = frozenset(
             "Finance Analytics",
         ),
         ("team.risk-ml", "urn:li:corpGroup:lineageguard-canonical.risk-ml", "Risk ML"),
+        (
+            "team.commerce-data-platform",
+            "urn:li:corpGroup:lineageguard-canonical.commerce-data-platform",
+            "Commerce Data Platform",
+        ),
     }
 )
 CANONICAL_TAG_SPECS = frozenset(
@@ -134,18 +145,50 @@ CANONICAL_TAG_SPECS = frozenset(
             "LineageGuard review status: a validated migration decision was written back "
             "through the approved effect gate.",
         ),
+        (
+            "warehouse",
+            "urn:li:tag:lineageguard-canonical.Warehouse",
+            "warehouse",
+            "Analytical warehouse asset, downstream of the ingestion boundary from operational "
+            "systems.",
+        ),
+        (
+            "analytical-data-product",
+            "urn:li:tag:lineageguard-canonical.AnalyticalDataProduct",
+            "analytical-data-product",
+            "A managed analytical data product, not an operational service database.",
+        ),
+        (
+            "cdc-derived",
+            "urn:li:tag:lineageguard-canonical.CdcDerived",
+            "cdc-derived",
+            "Populated from an upstream operational system via change-data-capture or event "
+            "ingestion.",
+        ),
     }
 )
 CANONICAL_NODE_SEMANTICS = frozenset(
     {
-        ("commerce.orders", "orders", (), None, ()),
-        ("analytics.stg_orders", "stg_orders", (), None, ()),
+        (
+            "commerce.orders",
+            "orders",
+            ("urn:li:corpGroup:lineageguard-canonical.commerce-data-platform",),
+            OwnershipType.TECHNICAL_OWNER,
+            (
+                "urn:li:tag:lineageguard-canonical.Warehouse",
+                "urn:li:tag:lineageguard-canonical.AnalyticalDataProduct",
+                "urn:li:tag:lineageguard-canonical.CdcDerived",
+            ),
+            "urn:li:domain:lineageguard-canonical.commerce-analytics",
+        ),
+        ("analytics.stg_orders", "stg_orders", (), None, (), None),
         (
             "analytics.customer_revenue",
             "customer_revenue",
             ("urn:li:corpGroup:lineageguard-canonical.finance-analytics",),
             OwnershipType.TECHNICAL_OWNER,
             ("urn:li:tag:lineageguard-canonical.Critical",),
+            None,
         ),
         (
             "fraud.customer_features",
@@ -153,6 +196,7 @@ CANONICAL_NODE_SEMANTICS = frozenset(
             ("urn:li:corpGroup:lineageguard-canonical.risk-ml",),
             OwnershipType.TECHNICAL_OWNER,
             ("urn:li:tag:lineageguard-canonical.Production",),
+            None,
         ),
         (
             "finance.revenue-dashboard",
@@ -163,6 +207,7 @@ CANONICAL_NODE_SEMANTICS = frozenset(
                 "urn:li:tag:lineageguard-canonical.Critical",
                 "urn:li:tag:lineageguard-canonical.Production",
             ),
+            None,
         ),
         (
             "fraud.model-v3",
@@ -173,6 +218,19 @@ CANONICAL_NODE_SEMANTICS = frozenset(
                 "urn:li:tag:lineageguard-canonical.Critical",
                 "urn:li:tag:lineageguard-canonical.Production",
             ),
+            None,
+        ),
+    }
+)
+CANONICAL_DOMAIN_SPECS = frozenset(
+    {
+        (
+            "commerce-analytics",
+            "urn:li:domain:lineageguard-canonical.commerce-analytics",
+            "Commerce Analytics",
+            "Analytical data-platform domain for commerce data products derived from "
+            "operational systems via CDC/event ingestion. Excludes operational (OLTP) "
+            "service databases.",
         ),
     }
 )
@@ -194,6 +252,7 @@ ROOT_KEYS = {
     "sourceField",
     "owners",
     "tags",
+    "domains",
     "nodes",
     "edges",
     "queryEvidence",
@@ -283,6 +342,16 @@ def _tag(raw: dict[str, Any]) -> Tag:
     )
 
 
+def _domain(raw: dict[str, Any]) -> Domain:
+    _exact_keys(raw, {"logicalKey", "urn", "displayName", "description"}, "domain")
+    return Domain(
+        logical_key=_string(raw["logicalKey"], "domain.logicalKey"),
+        urn=_string(raw["urn"], "domain.urn"),
+        display_name=_string(raw["displayName"], "domain.displayName"),
+        description=_string(raw["description"], "domain.description"),
+    )
+
+
 def _node(raw: dict[str, Any]) -> GraphNode:
     _exact_keys(
         raw,
@@ -294,6 +363,7 @@ def _node(raw: dict[str, Any]) -> GraphNode:
             "ownerUrns",
             "ownershipType",
             "tagUrns",
+            "domainUrn",
             "schemaFields",
         },
         "node",
@@ -322,6 +392,7 @@ def _node(raw: dict[str, Any]) -> GraphNode:
         owner_urns=owner_urns,
         ownership_type=ownership_type,
         tag_urns=_strings(raw["tagUrns"], "node.tagUrns"),
+        domain_urn=_optional_string(raw["domainUrn"], "node.domainUrn"),
         schema_fields=_strings(raw["schemaFields"], "node.schemaFields"),
     )
 
@@ -491,6 +562,12 @@ def _validate_canonical_allowlist(graph: ExpectedGraph) -> None:
     )
     if tag_specs != CANONICAL_TAG_SPECS:
         raise GraphContractError("canonical tag logical/name mapping mismatch")
+    domain_specs = frozenset(
+        (domain.logical_key, domain.urn, domain.display_name, domain.description)
+        for domain in graph.domains
+    )
+    if domain_specs != CANONICAL_DOMAIN_SPECS:
+        raise GraphContractError("canonical domain logical/name mapping mismatch")
     node_semantics = frozenset(
         (
             node.logical_key,
@@ -498,6 +575,7 @@ def _validate_canonical_allowlist(graph: ExpectedGraph) -> None:
             node.owner_urns,
             node.ownership_type,
             node.tag_urns,
+            node.domain_urn,
         )
         for node in graph.nodes
     )
@@ -561,6 +639,7 @@ def load_expected_graph(path: Path) -> ExpectedGraph:
         source_field=_source_field(raw["sourceField"]),
         owners=tuple(_owner(item) for item in _objects(raw["owners"], "owners")),
         tags=tuple(_tag(item) for item in _objects(raw["tags"], "tags")),
+        domains=tuple(_domain(item) for item in _objects(raw["domains"], "domains")),
         nodes=tuple(_node(item) for item in _objects(raw["nodes"], "nodes")),
         edges=tuple(_edge(item) for item in _objects(raw["edges"], "edges")),
         query_evidence=tuple(
@@ -572,11 +651,17 @@ def load_expected_graph(path: Path) -> ExpectedGraph:
     for values, key, context in (
         (graph.owners, lambda item: item.urn, "owners"),
         (graph.tags, lambda item: item.urn, "tags"),
+        (graph.domains, lambda item: item.urn, "domains"),
         (graph.nodes, lambda item: item.urn, "nodes"),
         (graph.edges, lambda item: item.logical_key, "edges"),
         (graph.query_evidence, lambda item: item.logical_key, "queryEvidence"),
     ):
         _unique(values, key, context)
+    for node in graph.nodes:
+        if node.domain_urn is not None and node.domain_urn not in {
+            domain.urn for domain in graph.domains
+        }:
+            raise GraphContractError(f"node {node.logical_key} references an unknown domain")
     _validate_references(graph)
     _validate_canonical_allowlist(graph)
     return graph

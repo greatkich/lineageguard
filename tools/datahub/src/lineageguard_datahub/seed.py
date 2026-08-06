@@ -17,6 +17,8 @@ from datahub.metadata.schema_classes import (
     DashboardInfoClass,
     DatasetLineageTypeClass,
     DatasetPropertiesClass,
+    DomainPropertiesClass,
+    DomainsClass,
     FineGrainedLineageClass,
     FineGrainedLineageDownstreamTypeClass,
     FineGrainedLineageUpstreamTypeClass,
@@ -205,6 +207,15 @@ def _node_aspects(
         upserts.append(
             _upsert(f"{node.logical_key}:tags", node.urn, _entity_name(node), _tags(node))
         )
+    if node.domain_urn is not None:
+        upserts.append(
+            _upsert(
+                f"{node.logical_key}:domains",
+                node.urn,
+                _entity_name(node),
+                DomainsClass(domains=[node.domain_urn]),
+            )
+        )
     return upserts
 
 
@@ -273,6 +284,19 @@ def build_seed_plan(
                 ),
             )
         )
+    for domain in graph.domains:
+        upserts.append(
+            _upsert(
+                f"{domain.logical_key}:properties",
+                domain.urn,
+                "domain",
+                DomainPropertiesClass(
+                    name=domain.display_name,
+                    description=domain.description,
+                    customProperties=_marker_properties(ownership_nonce),
+                ),
+            )
+        )
     upserts.append(
         _upsert(
             "customer-identifier:term-info",
@@ -322,6 +346,7 @@ def build_seed_plan(
         operation.proposal.entityUrn: operation.proposal.entityType
         for operation in upserts
         if operation.proposal.entityUrn in graph.owned_urns
+        and operation.proposal.entityType != "domain"
     }
     for urn, entity_type in sorted(seeded_entity_types.items()):
         if urn is None:
@@ -345,6 +370,7 @@ def _marker_aspect(entity_type: str) -> type[_Aspect]:
         "corpGroup": CorpGroupInfoClass,
         "dashboard": DashboardInfoClass,
         "dataset": DatasetPropertiesClass,
+        "domain": DomainPropertiesClass,
         "glossaryTerm": GlossaryTermInfoClass,
         "mlModel": MLModelPropertiesClass,
         "query": QueryPropertiesClass,

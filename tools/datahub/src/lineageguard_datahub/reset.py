@@ -149,6 +149,7 @@ def build_reset_plan(
             proposal_hash=created[urn].proposal_hash,
         )
         for urn in sorted(created, reverse=True)
+        if not urn.startswith("urn:li:domain:")
     )
     return ResetPlan(
         scenario_id=graph.scenario_id,
@@ -164,6 +165,7 @@ def _entity_type_from_urn(urn: str) -> str:
         ("urn:li:corpGroup:", "corpGroup"),
         ("urn:li:dashboard:", "dashboard"),
         ("urn:li:dataset:", "dataset"),
+        ("urn:li:domain:", "domain"),
         ("urn:li:glossaryTerm:", "glossaryTerm"),
         ("urn:li:mlModel:", "mlModel"),
         ("urn:li:query:", "query"),
