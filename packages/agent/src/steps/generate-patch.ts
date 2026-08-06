@@ -11,7 +11,10 @@ export interface GeneratePatchInput {
 }
 
 function extractJson(text: string): unknown {
-  const stripped = text.replace(/^```(?:json)?\n?/m, "").replace(/\n?```$/m, "").trim();
+  const stripped = text
+    .replace(/^```(?:json)?\n?/m, "")
+    .replace(/\n?```$/m, "")
+    .trim();
   try {
     return JSON.parse(stripped);
   } catch {}

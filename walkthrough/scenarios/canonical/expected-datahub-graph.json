@@ -20,6 +20,11 @@
       "logicalKey": "team.risk-ml",
       "urn": "urn:li:corpGroup:lineageguard-canonical.risk-ml",
       "displayName": "Risk ML"
+    },
+    {
+      "logicalKey": "team.commerce-data-platform",
+      "urn": "urn:li:corpGroup:lineageguard-canonical.commerce-data-platform",
+      "displayName": "Commerce Data Platform"
     }
   ],
   "tags": [
@@ -40,6 +45,32 @@
       "urn": "urn:li:tag:lineageguard-canonical.Reviewed",
       "displayName": "Reviewed",
       "description": "LineageGuard review status: a validated migration decision was written back through the approved effect gate."
+    },
+    {
+      "logicalKey": "warehouse",
+      "urn": "urn:li:tag:lineageguard-canonical.Warehouse",
+      "displayName": "warehouse",
+      "description": "Analytical warehouse asset, downstream of the ingestion boundary from operational systems."
+    },
+    {
+      "logicalKey": "analytical-data-product",
+      "urn": "urn:li:tag:lineageguard-canonical.AnalyticalDataProduct",
+      "displayName": "analytical-data-product",
+      "description": "A managed analytical data product, not an operational service database."
+    },
+    {
+      "logicalKey": "cdc-derived",
+      "urn": "urn:li:tag:lineageguard-canonical.CdcDerived",
+      "displayName": "cdc-derived",
+      "description": "Populated from an upstream operational system via change-data-capture or event ingestion."
+    }
+  ],
+  "domains": [
+    {
+      "logicalKey": "commerce-analytics",
+      "urn": "urn:li:domain:lineageguard-canonical.commerce-analytics",
+      "displayName": "Commerce Analytics",
+      "description": "Analytical data-platform domain for commerce data products derived from operational systems via CDC/event ingestion. Excludes operational (OLTP) service databases."
     }
   ],
   "nodes": [
@@ -48,9 +79,14 @@
       "urn": "urn:li:dataset:(urn:li:dataPlatform:postgres,lineageguard-canonical.lineageguard.commerce.orders,PROD)",
       "entityType": "DATASET",
       "name": "orders",
-      "ownerUrns": [],
-      "ownershipType": null,
-      "tagUrns": [],
+      "ownerUrns": ["urn:li:corpGroup:lineageguard-canonical.commerce-data-platform"],
+      "ownershipType": "TECHNICAL_OWNER",
+      "tagUrns": [
+        "urn:li:tag:lineageguard-canonical.Warehouse",
+        "urn:li:tag:lineageguard-canonical.AnalyticalDataProduct",
+        "urn:li:tag:lineageguard-canonical.CdcDerived"
+      ],
+      "domainUrn": "urn:li:domain:lineageguard-canonical.commerce-analytics",
       "schemaFields": ["order_id", "customer_id", "order_total", "ordered_at"]
     },
     {
@@ -61,6 +97,7 @@
       "ownerUrns": [],
       "ownershipType": null,
       "tagUrns": [],
+      "domainUrn": null,
       "schemaFields": ["order_id", "customer_id", "order_total", "ordered_at"]
     },
     {
@@ -71,6 +108,7 @@
       "ownerUrns": ["urn:li:corpGroup:lineageguard-canonical.finance-analytics"],
       "ownershipType": "TECHNICAL_OWNER",
       "tagUrns": ["urn:li:tag:lineageguard-canonical.Critical"],
+      "domainUrn": null,
       "schemaFields": ["customer_id", "lifetime_revenue"]
     },
     {
@@ -81,6 +119,7 @@
       "ownerUrns": ["urn:li:corpGroup:lineageguard-canonical.risk-ml"],
       "ownershipType": "TECHNICAL_OWNER",
       "tagUrns": ["urn:li:tag:lineageguard-canonical.Production"],
+      "domainUrn": null,
       "schemaFields": ["customer_id", "order_count", "max_order_total"]
     },
     {
@@ -94,6 +133,7 @@
         "urn:li:tag:lineageguard-canonical.Critical",
         "urn:li:tag:lineageguard-canonical.Production"
       ],
+      "domainUrn": null,
       "schemaFields": []
     },
     {
@@ -107,6 +147,7 @@
         "urn:li:tag:lineageguard-canonical.Critical",
         "urn:li:tag:lineageguard-canonical.Production"
       ],
+      "domainUrn": null,
       "schemaFields": []
     }
   ],

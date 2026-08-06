@@ -4,7 +4,8 @@ import { createAgentModel, agentLLMConfigFromEnv, createAgentPipeline } from "@l
 describe("Canonical Scenario E2E", () => {
   it("changes decision from ALLOW to BLOCK when DataHub reveals consumers", async () => {
     const llmConfig = agentLLMConfigFromEnv();
-    const hasLlm = llmConfig.baseURL !== "http://localhost:20128/v1" || process.env.OMNIROUTE_BASE_URL;
+    const hasLlm =
+      llmConfig.baseURL !== "http://localhost:20128/v1" || process.env.OMNIROUTE_BASE_URL;
 
     // Skip if no LLM available — this test requires OmniRoute running
     if (!hasLlm && !process.env.CI) {

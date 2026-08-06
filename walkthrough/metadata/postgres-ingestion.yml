@@ -6,7 +6,8 @@ source:
     username: "${WALKTHROUGH_INGEST_POSTGRES_USER}"
     password: "${WALKTHROUGH_INGEST_POSTGRES_PASSWORD}"
     options:
-      sslmode: "${WALKTHROUGH_POSTGRES_SSLMODE}"
+      connect_args:
+        sslmode: "${WALKTHROUGH_POSTGRES_SSLMODE}"
     platform_instance: lineageguard-canonical
     env: PROD
     include_usage_statistics: false

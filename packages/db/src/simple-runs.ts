@@ -50,7 +50,12 @@ export interface SimpleRunUpdateExtra {
 
 export interface SimpleRunStore {
   ensureSchema(): Promise<void>;
-  create(input: { id: string; repository: string; field: string; patch: string }): Promise<SimpleRun>;
+  create(input: {
+    id: string;
+    repository: string;
+    field: string;
+    patch: string;
+  }): Promise<SimpleRun>;
   update(id: string, status: string, extra?: Partial<SimpleRunUpdateExtra>): Promise<void>;
   get(id: string): Promise<SimpleRun | null>;
   list(limit?: number): Promise<SimpleRun[]>;
@@ -135,9 +140,7 @@ export function createSimpleRunStore(pool: pg.Pool): SimpleRunStore {
         "source_pr_url TEXT",
       ];
       for (const col of columns) {
-        await pool.query(
-          `ALTER TABLE lineageguard.simple_runs ADD COLUMN IF NOT EXISTS ${col}`
-        );
+        await pool.query(`ALTER TABLE lineageguard.simple_runs ADD COLUMN IF NOT EXISTS ${col}`);
       }
     },
 
@@ -224,10 +227,7 @@ export function createSimpleRunStore(pool: pg.Pool): SimpleRunStore {
     },
 
     async get(id): Promise<SimpleRun | null> {
-      const result = await pool.query(
-        "SELECT * FROM lineageguard.simple_runs WHERE id = $1",
-        [id],
-      );
+      const result = await pool.query("SELECT * FROM lineageguard.simple_runs WHERE id = $1", [id]);
       return result.rows[0] ? mapRow(result.rows[0]) : null;
     },
 

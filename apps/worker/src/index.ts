@@ -45,7 +45,9 @@ export async function runWorker(options: WorkerOptions = {}): Promise<PipelineRe
         token,
         prNumber: Number.parseInt(sourcePrNumber, 10),
       });
-      console.log(`[worker] Source PR: ${sourcePR.prUrl} (${sourcePR.baseSha.slice(0, 7)}..${sourcePR.headSha.slice(0, 7)})`);
+      console.log(
+        `[worker] Source PR: ${sourcePR.prUrl} (${sourcePR.baseSha.slice(0, 7)}..${sourcePR.headSha.slice(0, 7)})`,
+      );
     }
 
     const baseSha = sourcePR?.baseSha ?? process.env.LINEAGEGUARD_BASE_SHA;
@@ -54,7 +56,7 @@ export async function runWorker(options: WorkerOptions = {}): Promise<PipelineRe
     if (!baseSha || !headSha) {
       throw new Error(
         "LINEAGEGUARD_BASE_SHA and LINEAGEGUARD_HEAD_SHA are required in LIVE mode. " +
-        "Set these to real Git SHAs, or set SOURCE_PR_NUMBER to read from a GitHub PR."
+          "Set these to real Git SHAs, or set SOURCE_PR_NUMBER to read from a GitHub PR.",
       );
     }
 
@@ -68,24 +70,26 @@ export async function runWorker(options: WorkerOptions = {}): Promise<PipelineRe
       // Validate source PR contains the canonical rename
       const renamePattern = /RENAME\s+COLUMN\s+customer_id\s+TO\s+buyer_id/i;
       const sqlPatches = sourcePR.patches.filter(
-        (p) => p.filename.endsWith(".sql") && renamePattern.test(p.patch)
+        (p) => p.filename.endsWith(".sql") && renamePattern.test(p.patch),
       );
       if (sqlPatches.length === 0) {
         throw new Error(
           `Source PR #${sourcePR.prNumber} does not contain the canonical rename ` +
-          `(ALTER TABLE ... RENAME COLUMN customer_id TO buyer_id). ` +
-          `Changed files: ${sourcePR.changedFiles.join(", ")}`
+            `(ALTER TABLE ... RENAME COLUMN customer_id TO buyer_id). ` +
+            `Changed files: ${sourcePR.changedFiles.join(", ")}`,
         );
       }
       if (sqlPatches.length > 1) {
         throw new Error(
           `Source PR #${sourcePR.prNumber} contains multiple schema rename statements. ` +
-          `Only one canonical change is supported.`
+            `Only one canonical change is supported.`,
         );
       }
       // Use exact canonical SQL — domain parser validates this specific statement
       patch = "ALTER TABLE commerce.orders RENAME COLUMN customer_id TO buyer_id;";
-      console.log(`[worker] Source PR validated: canonical rename found in ${sqlPatches[0]!.filename}`);
+      console.log(
+        `[worker] Source PR validated: canonical rename found in ${sqlPatches[0]!.filename}`,
+      );
     }
 
     await store.create({
@@ -112,7 +116,9 @@ export async function runWorker(options: WorkerOptions = {}): Promise<PipelineRe
       field: "customer_id",
       newName: "buyer_id",
       source: sourceType,
-      sourcePath: sourcePR ? sourcePR.patches.find((p) => /RENAME\s+COLUMN\s+customer_id/i.test(p.patch))?.filename : undefined,
+      sourcePath: sourcePR
+        ? sourcePR.patches.find((p) => /RENAME\s+COLUMN\s+customer_id/i.test(p.patch))?.filename
+        : undefined,
     });
 
     console.log(`[worker] Run ${runId} finished: ${result.finalStatus}`);

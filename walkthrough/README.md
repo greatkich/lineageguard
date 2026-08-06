@@ -4,6 +4,13 @@ This directory defines the repeatable `commerce.orders.customer_id` impact graph
 LineageGuard's reference product walkthrough. All data, identifiers, timestamps, entity URNs, and
 query fingerprints are fixed in source control.
 
+`commerce.orders` here is an analytical warehouse data product — the Orders Data Product in the
+Commerce Warehouse — conceptually populated from an Orders Service operational (OLTP) database via
+events or CDC. That operational database is out of scope for LineageGuard and is not modeled by
+this directory; only the downstream analytical graph (warehouse table → dbt marts → dashboard,
+fraud feature/model, ad-hoc query) is. See
+[`docs/DECISIONS/ADR-003-data-platform-boundary.md`](../docs/DECISIONS/ADR-003-data-platform-boundary.md).
+
 ## Contents
 
 - `warehouse/init/` creates and seeds the PostgreSQL source relation.

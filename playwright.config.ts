@@ -12,7 +12,8 @@ export default defineConfig({
     viewport: { width: 1440, height: 900 },
   },
   webServer: {
-    command: "LINEAGEGUARD_DATABASE_URL=postgresql://lineageguard:lineageguard@127.0.0.1:5432/lineageguard pnpm --filter @lineageguard/web dev --port 3000",
+    command:
+      "LINEAGEGUARD_DATABASE_URL=postgresql://lineageguard:lineageguard@127.0.0.1:5432/lineageguard pnpm --filter @lineageguard/web dev --port 3000",
     reuseExistingServer: true,
     url: "http://127.0.0.1:3000",
     timeout: 15_000,

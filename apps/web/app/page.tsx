@@ -59,22 +59,45 @@ export default async function DashboardPage() {
       {/* Page header */}
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Dashboard</h1>
-        <p className="text-sm text-muted-foreground mt-1">Schema change safety analysis powered by DataHub lineage</p>
+        <p className="text-sm text-muted-foreground mt-1">
+          Warehouse schema change safety analysis powered by DataHub lineage
+        </p>
       </div>
 
       {/* Stats */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard label="Total Runs" value={runs.length} icon={<IconActivity className="w-5 h-5" />} />
-        <StatCard label="Blocked" value={blockedRuns.length} icon={<IconShieldAlert className="w-5 h-5" />} accent="danger" />
-        <StatCard label="Completed" value={completedRuns.length} icon={<IconShieldCheck className="w-5 h-5" />} accent="success" />
-        <StatCard label="Artifacts" value={totalArtifacts} icon={<IconLayers className="w-5 h-5" />} accent="info" />
+        <StatCard
+          label="Total Runs"
+          value={runs.length}
+          icon={<IconActivity className="w-5 h-5" />}
+        />
+        <StatCard
+          label="Blocked"
+          value={blockedRuns.length}
+          icon={<IconShieldAlert className="w-5 h-5" />}
+          accent="danger"
+        />
+        <StatCard
+          label="Completed"
+          value={completedRuns.length}
+          icon={<IconShieldCheck className="w-5 h-5" />}
+          accent="success"
+        />
+        <StatCard
+          label="Artifacts"
+          value={totalArtifacts}
+          icon={<IconLayers className="w-5 h-5" />}
+          accent="info"
+        />
       </div>
 
       {/* Pipeline overview */}
       <Card>
         <CardHeader>
           <h2 className="text-sm font-medium">Pipeline</h2>
-          <p className="text-xs text-muted-foreground mt-0.5">Each schema change passes through these stages</p>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Each warehouse schema change passes through these stages
+          </p>
         </CardHeader>
         <CardBody>
           <PipelineStepper steps={pipelineOverview} currentStatus="COMPLETED" />
@@ -95,7 +118,11 @@ export default async function DashboardPage() {
               <IconShield className="w-10 h-10 mb-3 opacity-30" />
               <p className="text-sm">No runs yet</p>
               <p className="text-xs mt-1">
-                Run <code className="font-mono bg-muted px-1.5 py-0.5 rounded text-[11px]">pnpm demo</code> to start
+                Run{" "}
+                <code className="font-mono bg-muted px-1.5 py-0.5 rounded text-[11px]">
+                  pnpm demo
+                </code>{" "}
+                to start
               </p>
             </div>
           </CardBody>
@@ -114,9 +141,11 @@ export default async function DashboardPage() {
                   className="flex items-center gap-4 px-5 py-3.5 hover:bg-accent/40 transition-colors group"
                 >
                   {/* Status indicator */}
-                  <div className={`w-2 h-2 rounded-full flex-shrink-0 ${
-                    isComplete ? "bg-status-pass" : isFailed ? "bg-status-fail" : "bg-status-info"
-                  }`} />
+                  <div
+                    className={`w-2 h-2 rounded-full flex-shrink-0 ${
+                      isComplete ? "bg-status-pass" : isFailed ? "bg-status-fail" : "bg-status-info"
+                    }`}
+                  />
 
                   {/* Main info */}
                   <div className="flex-1 min-w-0">
@@ -134,7 +163,9 @@ export default async function DashboardPage() {
                     <div className="hidden sm:flex items-center gap-1.5 text-xs flex-shrink-0">
                       <span className="text-status-allow font-mono">{run.baselineDecision}</span>
                       <IconArrowRight className="w-3 h-3 text-muted-foreground" />
-                      <span className={`font-mono font-medium ${run.groundedDecision === "BLOCK" ? "text-status-block" : "text-status-allow"}`}>
+                      <span
+                        className={`font-mono font-medium ${run.groundedDecision === "BLOCK" ? "text-status-block" : "text-status-allow"}`}
+                      >
                         {run.groundedDecision}
                       </span>
                     </div>
@@ -143,7 +174,7 @@ export default async function DashboardPage() {
                   {/* Meta */}
                   <div className="hidden md:flex items-center gap-4 text-xs text-muted-foreground flex-shrink-0">
                     {rules.length > 0 && <span>{rules.length} rules</span>}
-                    {run.consumersFound > 0 && <span>{run.consumersFound} consumers</span>}
+                    {run.consumersFound > 0 && <span>{run.consumersFound} data consumers</span>}
                     {run.artifactsGenerated > 0 && <span>{run.artifactsGenerated} artifacts</span>}
                   </div>
 

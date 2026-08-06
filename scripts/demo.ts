@@ -36,10 +36,16 @@ async function main() {
   console.log("Using the same worker path as production (no separate adapters).\n");
 
   console.log(`DataHub:     ${process.env.DATAHUB_GMS_URL ?? "http://127.0.0.1:8080"}`);
-  console.log(`Token:       ${(process.env.DATAHUB_READ_TOKEN ?? process.env.DATAHUB_TOKEN ?? "").length > 8 ? "✓ configured" : "✗ not configured"}`);
+  console.log(
+    `Token:       ${(process.env.DATAHUB_READ_TOKEN ?? process.env.DATAHUB_TOKEN ?? "").length > 8 ? "✓ configured" : "✗ not configured"}`,
+  );
   console.log(`GitHub:      ${process.env.GITHUB_TOKEN ? "✓ configured" : "✗ not configured"}`);
-  console.log(`Writeback:   ${process.env.DATAHUB_MUTATION_TOKEN ? "✓ configured" : "✗ not configured"}`);
-  console.log(`Validation:  ${process.env.VALIDATION_ENABLED !== "false" ? "✓ enabled" : "✗ disabled"}`);
+  console.log(
+    `Writeback:   ${process.env.DATAHUB_MUTATION_TOKEN ? "✓ configured" : "✗ not configured"}`,
+  );
+  console.log(
+    `Validation:  ${process.env.VALIDATION_ENABLED !== "false" ? "✓ enabled" : "✗ disabled"}`,
+  );
   console.log(`Base SHA:    ${process.env.LINEAGEGUARD_BASE_SHA ? "✓ set" : "✗ not set"}`);
   console.log(`Head SHA:    ${process.env.LINEAGEGUARD_HEAD_SHA ? "✓ set" : "✗ not set"}`);
   console.log("");

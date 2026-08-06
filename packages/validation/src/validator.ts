@@ -202,7 +202,7 @@ function dbt(
       "/work/bundle/project",
       "--profiles-dir",
       "/work/bundle/profiles",
-      ...(subcommand === "parse" ? [] : ["--select", "stg_orders+"])
+      ...(subcommand === "parse" ? [] : ["--select", "stg_orders+"]),
     ],
     cwd: checkout,
     timeoutMs,
