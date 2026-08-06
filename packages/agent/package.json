@@ -12,5 +12,12 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@ai-sdk/openai": "2.0.0",
+    "@ai-sdk/provider": "2.0.0",
+    "@lineageguard/domain": "workspace:*",
+    "ai": "5.0.0",
+    "zod": "4.4.3"
   }
 }
