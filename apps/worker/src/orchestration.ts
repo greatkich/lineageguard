@@ -225,9 +225,15 @@ function createGitHubPort(): AgentGitHubPort | undefined {
             draft: true,
           },
         }) as { html_url: string; number: number };
-      } catch {
+      } catch (createErr: unknown) {
+        // PR creation failed — check if one already exists (idempotency)
         const prs = await ghFetch(token, `${apiBase}/repos/${owner}/${repo}/pulls?state=open&head=${owner}:${branchName}`) as Array<{ html_url: string; number: number }>;
-        pr = prs[0] ?? { html_url: `https://github.com/${owner}/${repo}`, number: 0 };
+        if (prs.length > 0 && prs[0]!.number > 0) {
+          pr = prs[0]!;
+        } else {
+          const msg = createErr instanceof Error ? createErr.message : String(createErr);
+          throw new Error(`GitHub PR creation failed and no existing PR found: ${msg.slice(0, 200)}`);
+        }
       }
 
       const receiptFingerprint = createHash("sha256")
