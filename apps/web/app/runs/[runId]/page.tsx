@@ -1,43 +1,54 @@
 import { Badge } from "@/components/ui/badge";
+import { Card, CardBody, CardHeader } from "@/components/ui/card";
+import {
+  IconAlertCircle,
+  IconArrowRight,
+  IconCheck,
+  IconCheckCircle,
+  IconCode,
+  IconContainer,
+  IconCpu,
+  IconDatabase,
+  IconFileText,
+  IconGitPullRequest,
+  IconSearch,
+  IconShieldCheck,
+  IconUpload,
+  IconX,
+  IconZap,
+} from "@/components/ui/icons";
+import { PipelineStepper, type StepDef } from "@/components/ui/pipeline-stepper";
 import { fetchRun } from "@/lib/db";
-import { notFound } from "next/navigation";
 import Link from "next/link";
+import { notFound } from "next/navigation";
 
-const pipelineSteps = [
-  { key: "CREATED", label: "Created", icon: "○", description: "Run initialized" },
-  { key: "CHANGE_PARSED", label: "Parse Change", icon: "📝", description: "SQL diff analyzed" },
-  { key: "BASELINE_ASSESSED", label: "Baseline", icon: "🔍", description: "Repository-only assessment" },
-  { key: "CONTEXT_COLLECTED", label: "DataHub Context", icon: "🏛️", description: "Lineage & ownership collected" },
-  { key: "RISK_DECIDED", label: "Risk Decision", icon: "⚡", description: "5-rule policy engine" },
-  { key: "MIGRATION_PLANNED", label: "Migration Plan", icon: "🤖", description: "LLM generates strategy" },
-  { key: "PATCH_GENERATED", label: "Patch Generated", icon: "📦", description: "SQL + dbt artifacts" },
-  { key: "VALIDATED", label: "Validated", icon: "🐳", description: "Docker Postgres + 8 checks" },
-  { key: "REVIEW_ARTIFACT_CREATED", label: "GitHub PR", icon: "📋", description: "Draft PR created" },
-  { key: "COMPLETED", label: "Complete", icon: "✅", description: "Writeback to DataHub" },
+const pipelineSteps: StepDef[] = [
+  { key: "CREATED", label: "Created", icon: <IconCode className="w-4 h-4" /> },
+  { key: "CHANGE_PARSED", label: "Parsed", icon: <IconCode className="w-4 h-4" /> },
+  { key: "BASELINE_ASSESSED", label: "Baseline", icon: <IconSearch className="w-4 h-4" /> },
+  { key: "CONTEXT_COLLECTED", label: "DataHub", icon: <IconDatabase className="w-4 h-4" /> },
+  { key: "RISK_DECIDED", label: "Risk", icon: <IconZap className="w-4 h-4" /> },
+  { key: "MIGRATION_PLANNED", label: "Plan", icon: <IconCpu className="w-4 h-4" /> },
+  { key: "PATCH_GENERATED", label: "Generate", icon: <IconFileText className="w-4 h-4" /> },
+  { key: "VALIDATED", label: "Validate", icon: <IconContainer className="w-4 h-4" /> },
+  { key: "REVIEW_ARTIFACT_CREATED", label: "PR", icon: <IconGitPullRequest className="w-4 h-4" /> },
+  { key: "COMPLETED", label: "Done", icon: <IconCheckCircle className="w-4 h-4" /> },
 ];
 
-const failedSteps = new Set([
-  "FAILED_CONTEXT", "FAILED_GENERATION", "FAILED_VALIDATION", "FAILED_GITHUB", "FAILED_WRITEBACK",
-]);
+const failedStatusMap: Record<string, string> = {
+  FAILED_CONTEXT: "CONTEXT_COLLECTED",
+  FAILED_GENERATION: "PATCH_GENERATED",
+  FAILED_VALIDATION: "VALIDATED",
+  FAILED_GITHUB: "REVIEW_ARTIFACT_CREATED",
+  FAILED_WRITEBACK: "COMPLETED",
+};
 
-function getStepIndex(status: string): number {
-  if (failedSteps.has(status)) {
-    if (status === "FAILED_CONTEXT") return 3;
-    if (status === "FAILED_GENERATION") return 5;
-    if (status === "FAILED_VALIDATION") return 7;
-    if (status === "FAILED_GITHUB") return 8;
-    if (status === "FAILED_WRITEBACK") return 9;
-  }
-  const idx = pipelineSteps.findIndex((s) => s.key === status);
-  return idx >= 0 ? idx : 0;
-}
-
-const ruleDescriptions: Record<string, string> = {
-  LG001: "Downstream field-level lineage paths exist",
-  LG002: "Production ML model depends on renamed field",
-  LG003: "Observed system query references renamed field",
-  LG004: "Critical dashboard depends on field change",
-  LG005: "Affected critical asset has no recorded owner",
+const ruleDescriptions: Record<string, { title: string; severity: string }> = {
+  LG001: { title: "Downstream field-level lineage paths exist", severity: "CRITICAL" },
+  LG002: { title: "Production ML model depends on renamed field", severity: "CRITICAL" },
+  LG003: { title: "Observed system query references renamed field", severity: "HIGH" },
+  LG004: { title: "Critical dashboard depends on field change", severity: "CRITICAL" },
+  LG005: { title: "Affected critical asset has no recorded owner", severity: "HIGH" },
 };
 
 export const dynamic = "force-dynamic";
@@ -47,212 +58,240 @@ export default async function RunDetailPage({ params }: { params: Promise<{ runI
   const run = await fetchRun(runId);
   if (!run) notFound();
 
-  const currentIdx = getStepIndex(run.status);
-  const isFailed = failedSteps.has(run.status);
+  const isFailed = run.status.startsWith("FAILED");
   const isComplete = run.status === "COMPLETED";
+  const effectiveStatus = failedStatusMap[run.status] ?? run.status;
   const rules = run.triggeredRules?.split(",").filter(Boolean) ?? [];
 
   return (
-    <div className="mx-auto max-w-6xl px-6 py-6">
-      {/* Header */}
-      <div className="flex items-center gap-4 mb-6">
-        <Link href="/" className="text-muted-foreground hover:text-foreground transition-colors">← Runs</Link>
-        <div className="flex-1" />
+    <div className="mx-auto max-w-7xl px-6 py-6 space-y-6">
+      {/* Breadcrumb + header */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <Link href="/" className="text-sm text-muted-foreground hover:text-foreground transition-colors">
+            Dashboard
+          </Link>
+          <span className="text-muted-foreground/40">/</span>
+          <span className="text-sm font-medium">Run Detail</span>
+        </div>
         <Badge status={isComplete ? "pass" : isFailed ? "fail" : "info"}>
           {run.status.replace(/_/g, " ")}
         </Badge>
       </div>
 
-      {/* Title row */}
-      <div className="mb-8">
-        <h1 className="text-2xl font-semibold tracking-tight font-mono">{run.field}</h1>
-        <p className="text-sm text-muted-foreground mt-1">{run.repository} · {new Date(run.createdAt).toLocaleString()}</p>
+      {/* Title */}
+      <div>
+        <h1 className="text-xl font-semibold tracking-tight">
+          <span className="font-mono">{run.field}</span>
+        </h1>
+        <p className="text-sm text-muted-foreground mt-1">
+          {run.repository} &middot; {new Date(run.createdAt).toLocaleString()}
+        </p>
       </div>
 
-      {/* Pipeline visualization */}
-      <div className="mb-8 rounded-xl border border-border bg-card p-6">
-        <h2 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-5">Pipeline Progress</h2>
-        <div className="relative">
-          {/* Progress bar background */}
-          <div className="absolute top-5 left-5 right-5 h-0.5 bg-border" />
-          {/* Progress bar fill */}
-          <div
-            className={`absolute top-5 left-5 h-0.5 transition-all duration-500 ${isFailed ? "bg-status-fail" : "bg-status-pass"}`}
-            style={{ width: `${(currentIdx / (pipelineSteps.length - 1)) * 100}%`, maxWidth: "calc(100% - 40px)" }}
+      {/* Pipeline stepper */}
+      <Card>
+        <CardHeader>
+          <h2 className="text-sm font-medium">Pipeline Progress</h2>
+        </CardHeader>
+        <CardBody className="py-6">
+          <PipelineStepper
+            steps={pipelineSteps}
+            currentStatus={effectiveStatus}
+            failed={isFailed}
           />
+        </CardBody>
+      </Card>
 
-          <div className="relative flex justify-between">
-            {pipelineSteps.map((step, i) => {
-              const isPast = i < currentIdx;
-              const isCurrent = i === currentIdx;
-              const isFailedHere = isCurrent && isFailed;
-
-              return (
-                <div key={step.key} className="flex flex-col items-center w-0 flex-1">
-                  <div className={`
-                    w-10 h-10 rounded-full flex items-center justify-center text-base
-                    border-2 transition-all relative z-10
-                    ${isFailedHere ? "border-status-fail bg-status-fail/10" :
-                      isCurrent ? "border-status-info bg-status-info/10 ring-4 ring-status-info/20" :
-                      isPast ? "border-status-pass bg-status-pass/10" :
-                      "border-border bg-card"}
-                  `}>
-                    {isFailedHere ? "✗" : step.icon}
-                  </div>
-                  <span className={`text-[10px] mt-2 text-center leading-tight whitespace-nowrap ${
-                    isCurrent ? "font-semibold text-foreground" :
-                    isPast ? "text-muted-foreground" :
-                    "text-muted-foreground/50"
-                  }`}>
-                    {step.label}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      </div>
-
-      {/* Main content: 3-panel grid */}
-      <div className="grid grid-cols-3 gap-4 mb-6">
-        {/* Left: Proposed Change */}
-        <Panel title="Proposed Change" subtitle={`Repo-only: ${run.baselineDecision ?? "ALLOW"}`} accent="allow">
-          <pre className="text-xs font-mono leading-relaxed overflow-x-auto">
-            {(run.patch || "ALTER TABLE commerce.orders\n  RENAME COLUMN customer_id TO buyer_id;").split("\n").map((line, i) => (
-              <div key={i} className={
-                line.startsWith("+") ? "text-status-allow bg-status-allow/5 px-2 -mx-2" :
-                line.startsWith("-") ? "text-status-block bg-status-block/5 px-2 -mx-2" :
-                "text-muted-foreground"
-              }>
-                {line || " "}
-              </div>
-            ))}
-          </pre>
-          <div className="mt-4 pt-3 border-t border-border">
+      {/* 3-panel grid */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        {/* Panel 1: Proposed Change */}
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between">
             <div className="flex items-center gap-2">
-              <span className="text-xs text-muted-foreground">Without DataHub:</span>
-              <Badge status="allow">ALLOW</Badge>
+              <IconCode className="w-4 h-4 text-muted-foreground" />
+              <h3 className="text-sm font-medium">Proposed Change</h3>
             </div>
-            <p className="text-[11px] text-muted-foreground mt-1">No consumers visible from repository alone</p>
-          </div>
-        </Panel>
+            <Badge status="allow">ALLOW</Badge>
+          </CardHeader>
+          <CardBody>
+            <div className="rounded-md bg-muted/50 p-3 overflow-x-auto">
+              <pre className="text-xs font-mono leading-relaxed">
+                {(run.patch || "ALTER TABLE commerce.orders\n  RENAME COLUMN customer_id TO buyer_id;").split("\n").map((line, i) => (
+                  <div key={i} className={
+                    line.startsWith("+") ? "text-status-allow" :
+                    line.startsWith("-") ? "text-status-block" :
+                    "text-muted-foreground"
+                  }>
+                    {line || " "}
+                  </div>
+                ))}
+              </pre>
+            </div>
+            <div className="mt-4 flex items-center gap-2 text-xs text-muted-foreground">
+              <IconSearch className="w-3.5 h-3.5" />
+              <span>Repository-only analysis: no consumers detected</span>
+            </div>
+          </CardBody>
+        </Card>
 
-        {/* Center: DataHub Evidence */}
-        <Panel
-          title="DataHub Evidence"
-          subtitle={`${run.consumersFound} evidence items collected`}
-          accent={run.groundedDecision === "BLOCK" ? "block" : "allow"}
-        >
-          <div className="space-y-3">
-            {/* Decision change highlight */}
-            <div className={`rounded-lg p-3 ${run.groundedDecision === "BLOCK" ? "bg-status-block/5 border border-status-block/20" : "bg-status-allow/5 border border-status-allow/20"}`}>
-              <div className="flex items-center justify-between">
-                <span className="text-xs text-muted-foreground">Decision</span>
-                <div className="flex items-center gap-1.5">
-                  <Badge status="allow">{run.baselineDecision ?? "ALLOW"}</Badge>
-                  <span className="text-muted-foreground text-xs">→</span>
-                  <Badge status={run.groundedDecision === "BLOCK" ? "block" : "allow"}>{run.groundedDecision ?? "—"}</Badge>
-                </div>
+        {/* Panel 2: DataHub Evidence */}
+        <Card className={run.groundedDecision === "BLOCK" ? "ring-1 ring-status-block/20" : ""}>
+          <CardHeader className="flex flex-row items-center justify-between">
+            <div className="flex items-center gap-2">
+              <IconDatabase className="w-4 h-4 text-muted-foreground" />
+              <h3 className="text-sm font-medium">DataHub Evidence</h3>
+            </div>
+            <Badge status={run.groundedDecision === "BLOCK" ? "block" : "allow"}>
+              {run.groundedDecision ?? "PENDING"}
+            </Badge>
+          </CardHeader>
+          <CardBody className="space-y-4">
+            {/* Decision transition */}
+            <div className="flex items-center justify-between p-3 rounded-md bg-muted/50">
+              <span className="text-xs text-muted-foreground">Decision</span>
+              <div className="flex items-center gap-2">
+                <Badge status="allow">{run.baselineDecision ?? "ALLOW"}</Badge>
+                <IconArrowRight className="w-3.5 h-3.5 text-muted-foreground" />
+                <Badge status={run.groundedDecision === "BLOCK" ? "block" : "allow"}>
+                  {run.groundedDecision ?? "—"}
+                </Badge>
               </div>
             </div>
 
             {/* Triggered rules */}
             {rules.length > 0 && (
               <div>
-                <p className="text-xs text-muted-foreground mb-2">Triggered Rules</p>
-                <div className="space-y-1.5">
-                  {rules.map((rule) => (
-                    <div key={rule} className="flex items-start gap-2 text-xs">
-                      <span className="font-mono text-status-block font-medium shrink-0">{rule}</span>
-                      <span className="text-muted-foreground">{ruleDescriptions[rule] ?? "Policy rule triggered"}</span>
-                    </div>
-                  ))}
+                <p className="text-xs font-medium text-muted-foreground mb-2">Policy Rules Triggered</p>
+                <div className="space-y-2">
+                  {rules.map((rule) => {
+                    const desc = ruleDescriptions[rule];
+                    return (
+                      <div key={rule} className="flex items-start gap-2.5 p-2 rounded-md bg-status-block/5">
+                        <IconAlertCircle className="w-3.5 h-3.5 text-status-block mt-0.5 flex-shrink-0" />
+                        <div className="min-w-0">
+                          <span className="text-xs font-mono font-medium text-status-block">{rule}</span>
+                          {desc && <p className="text-[11px] text-muted-foreground mt-0.5">{desc.title}</p>}
+                        </div>
+                        {desc && (
+                          <Badge status={desc.severity === "CRITICAL" ? "fail" : "review"} className="ml-auto flex-shrink-0 text-[10px]">
+                            {desc.severity}
+                          </Badge>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             )}
 
-            {/* Evidence summary */}
-            <div className="grid grid-cols-2 gap-2 pt-2">
-              <MiniStat label="Consumers" value={String(run.consumersFound)} />
-              <MiniStat label="Rules fired" value={String(rules.length)} />
+            {/* Stats */}
+            <div className="grid grid-cols-2 gap-3">
+              <div className="p-2.5 rounded-md bg-muted/50">
+                <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Evidence</p>
+                <p className="text-lg font-semibold mt-0.5">{run.consumersFound}</p>
+              </div>
+              <div className="p-2.5 rounded-md bg-muted/50">
+                <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Rules</p>
+                <p className="text-lg font-semibold mt-0.5">{rules.length}/5</p>
+              </div>
             </div>
-          </div>
-        </Panel>
+          </CardBody>
+        </Card>
 
-        {/* Right: Migration Output */}
-        <Panel title="Safe Migration" subtitle={`${run.artifactsGenerated} artifacts generated`} accent={isComplete ? "pass" : "info"}>
-          <div className="space-y-3">
+        {/* Panel 3: Migration */}
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between">
+            <div className="flex items-center gap-2">
+              <IconFileText className="w-4 h-4 text-muted-foreground" />
+              <h3 className="text-sm font-medium">Safe Migration</h3>
+            </div>
+            {isComplete && <Badge status="pass">COMPLETE</Badge>}
+          </CardHeader>
+          <CardBody className="space-y-4">
             <div>
               <p className="text-xs text-muted-foreground mb-1">Strategy</p>
               <p className="text-sm font-medium">Expand → Migrate → Contract</p>
             </div>
 
-            <div>
-              <p className="text-xs text-muted-foreground mb-1">Artifacts</p>
-              <p className="text-2xl font-semibold">{run.artifactsGenerated}</p>
-              <p className="text-[11px] text-muted-foreground">SQL + dbt models + tests + docs</p>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="p-2.5 rounded-md bg-muted/50">
+                <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Artifacts</p>
+                <p className="text-lg font-semibold mt-0.5">{run.artifactsGenerated}</p>
+              </div>
+              <div className="p-2.5 rounded-md bg-muted/50">
+                <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Validation</p>
+                <p className="text-lg font-semibold mt-0.5 flex items-center gap-1">
+                  {isComplete ? (
+                    <><IconCheck className="w-4 h-4 text-status-pass" /> <span className="text-sm">8/8</span></>
+                  ) : isFailed && run.status === "FAILED_VALIDATION" ? (
+                    <><IconX className="w-4 h-4 text-status-fail" /> <span className="text-sm">FAIL</span></>
+                  ) : (
+                    <span className="text-sm text-muted-foreground">—</span>
+                  )}
+                </p>
+              </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-2">
-              <MiniStat label="Validation" value={run.status === "COMPLETED" || run.status === "VALIDATED" ? "8/8 ✓" : "—"} />
-              <MiniStat label="Writeback" value={run.writebackStatus ?? "—"} />
-            </div>
+            {/* Writeback */}
+            {run.writebackStatus && (
+              <div className="flex items-center gap-2 p-2.5 rounded-md bg-status-pass/5">
+                <IconUpload className="w-4 h-4 text-status-pass" />
+                <div>
+                  <p className="text-xs font-medium">DataHub Writeback</p>
+                  <p className="text-[11px] text-muted-foreground">{run.writebackStatus}</p>
+                </div>
+              </div>
+            )}
 
+            {/* PR link */}
             {run.prUrl && (
-              <a href={run.prUrl} target="_blank" rel="noopener noreferrer" className="block mt-2 text-xs text-status-info hover:underline">
-                → View PR on GitHub
+              <a
+                href={run.prUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-2 p-2.5 rounded-md bg-status-info/5 hover:bg-status-info/10 transition-colors"
+              >
+                <IconGitPullRequest className="w-4 h-4 text-status-info" />
+                <span className="text-xs font-medium text-status-info">View Pull Request</span>
               </a>
             )}
-          </div>
-        </Panel>
+          </CardBody>
+        </Card>
       </div>
 
-      {/* Bottom: Key insight */}
+      {/* Bottom insight banner */}
       {isComplete && (
-        <div className="rounded-xl border border-status-pass/30 bg-status-pass/5 p-4 flex items-center gap-4">
-          <span className="text-2xl">🛡️</span>
-          <div>
-            <p className="text-sm font-medium">Breaking change prevented</p>
-            <p className="text-xs text-muted-foreground">
-              DataHub lineage revealed {run.consumersFound} downstream dependencies invisible from the repository.
-              A safe expand-migrate-contract migration was generated and validated.
-            </p>
-          </div>
-        </div>
+        <Card className="border-status-pass/30 bg-status-pass/[0.03]">
+          <CardBody className="flex items-center gap-4">
+            <div className="w-10 h-10 rounded-full bg-status-pass/10 flex items-center justify-center flex-shrink-0">
+              <IconShieldCheck className="w-5 h-5 text-status-pass" />
+            </div>
+            <div>
+              <p className="text-sm font-medium">Breaking change prevented</p>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                DataHub lineage revealed {run.consumersFound} downstream dependencies invisible from the repository.
+                A safe expand-migrate-contract migration was generated, validated against Docker Postgres, and written back to DataHub.
+              </p>
+            </div>
+          </CardBody>
+        </Card>
       )}
       {isFailed && (
-        <div className="rounded-xl border border-status-fail/30 bg-status-fail/5 p-4 flex items-center gap-4">
-          <span className="text-2xl">⚠️</span>
-          <div>
-            <p className="text-sm font-medium">Pipeline stopped at: {run.status.replace(/_/g, " ").toLowerCase()}</p>
-            <p className="text-xs text-muted-foreground">
-              The issue was detected and the change was blocked before reaching production.
-            </p>
-          </div>
-        </div>
+        <Card className="border-status-fail/30 bg-status-fail/[0.03]">
+          <CardBody className="flex items-center gap-4">
+            <div className="w-10 h-10 rounded-full bg-status-fail/10 flex items-center justify-center flex-shrink-0">
+              <IconAlertCircle className="w-5 h-5 text-status-fail" />
+            </div>
+            <div>
+              <p className="text-sm font-medium">Pipeline halted: {run.status.replace(/^FAILED_/, "").toLowerCase()}</p>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                The change was blocked before reaching production. Review the pipeline step above for details.
+              </p>
+            </div>
+          </CardBody>
+        </Card>
       )}
-    </div>
-  );
-}
-
-function Panel({ title, subtitle, accent, children }: { title: string; subtitle: string; accent: "allow" | "block" | "pass" | "info"; children: React.ReactNode }) {
-  const accentColor = accent === "allow" ? "border-status-allow/30" : accent === "block" ? "border-status-block/30" : accent === "pass" ? "border-status-pass/30" : "border-status-info/30";
-  return (
-    <div className={`rounded-xl border ${accentColor} bg-card overflow-hidden`}>
-      <div className="px-4 py-3 border-b border-border bg-muted/30">
-        <h3 className="text-sm font-medium">{title}</h3>
-        <p className="text-[11px] text-muted-foreground">{subtitle}</p>
-      </div>
-      <div className="p-4">{children}</div>
-    </div>
-  );
-}
-
-function MiniStat({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-lg bg-muted/50 px-3 py-2">
-      <p className="text-[10px] text-muted-foreground uppercase tracking-wider">{label}</p>
-      <p className="text-sm font-semibold mt-0.5">{value}</p>
     </div>
   );
 }
