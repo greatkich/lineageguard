@@ -11,6 +11,7 @@ import { type AgentLLMConfig, agentLLMConfigFromEnv, directLLMCall } from "./llm
 import { migrationPlanPrompt } from "./llm/prompts.js";
 import { migrationPlanSchema } from "./llm/schemas.js";
 import { buildCanonicalCandidate } from "./steps/build-canonical-candidate.js";
+import { deriveImpactCards } from "./steps/derive-impact-cards.js";
 import type { AgentDataHubContextPort, StepContext } from "./steps/index.js";
 import {
   baselineAssess,
@@ -180,13 +181,12 @@ export function createAgentPipeline(config: AgentPipelineConfig) {
       try {
         const collectResult = await collectContext(ctx, change.id);
         context = collectResult.context;
-        // Compute impact consumers separately from total evidence count
-        const consumerKinds = new Set(["LINEAGE_PATH", "DASHBOARD", "ML_MODEL", "QUERY_USAGE"]);
-        const impactConsumers = context.evidence.filter((e) => consumerKinds.has(e.kind)).length;
-        result.consumersFound = impactConsumers;
-        console.log(`  [pipeline] Step 3: Collected ${context.evidence.length} evidence items (${impactConsumers} impact consumers)`);
+        // Derive exactly 4 canonical impact cards (not raw evidence count)
+        const impactCards = deriveImpactCards(context);
+        result.consumersFound = impactCards.length;
+        console.log(`  [pipeline] Step 3: Collected ${context.evidence.length} evidence items (${impactCards.length} impact cards)`);
         await notify(input.runId, "CONTEXT_COLLECTED", {
-          consumersFound: impactConsumers,
+          consumersFound: impactCards.length,
           evidenceItems: context.evidence.length,
           contextJson: context,
         });
