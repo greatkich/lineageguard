@@ -403,26 +403,76 @@ function createWritebackPort(): AgentWritebackPort | undefined {
       const datasetUrn =
         "urn:li:dataset:(urn:li:dataPlatform:postgres,lineageguard-canonical.lineageguard.commerce.orders,PROD)";
 
+      // Separate read/mutation credentials
+      const readToken = process.env.DATAHUB_READ_TOKEN ?? process.env.DATAHUB_TOKEN ?? mutationToken;
+      const readHeaders = { Authorization: `Bearer ${readToken}` };
+      const writeHeaders = { "Content-Type": "application/json", Authorization: `Bearer ${mutationToken}` };
+
+      async function gmsRead(path: string): Promise<unknown> {
+        const res = await fetch(`${gmsUrl}${path}`, { headers: readHeaders });
+        if (!res.ok) return null;
+        return res.json();
+      }
+
       const documentContent = [
         `Marker: lineageguard:decision:v1:lineageguard-${input.runId}`,
         `Decision: ${input.comparison.grounded.decision}`,
         `Run: ${input.runId}`,
+        `Source field: customer_id`,
+        `Replacement field: buyer_id`,
+        `Compatibility window: 30 days`,
         `Reasons: ${input.comparison.triggeredRuleIds.join(", ")}`,
         `Candidate: ${(input.candidate as { strategy?: string }).strategy ?? "EXPAND_MIGRATE_CONTRACT"}`,
+        `Validation receipt: ${input.validationReceiptFingerprint.slice(0, 16)}`,
         `GitHub review: ${input.githubPrUrl}`,
-        `Rollback: walkthrough/migrations/rollback.sql`,
+        `GitHub receipt: ${input.githubReceiptFingerprint.slice(0, 16)}`,
+        `Rollback: walkthrough/migrations/001_rollback.sql`,
       ].join("\n");
 
-      const authHeader = { "Content-Type": "application/json", Authorization: `Bearer ${mutationToken}` };
-
-      async function gmsGet(path: string): Promise<unknown> {
-        const res = await fetch(`${gmsUrl}${path}`, { headers: { Authorization: `Bearer ${mutationToken}` } });
-        if (!res.ok) throw new Error(`DataHub GET ${path} failed: HTTP ${res.status}`);
-        return res.json();
-      }
-
       try {
-        // --- Write 'Reviewed' tag ---
+        // --- Read existing state (before snapshot) ---
+        const beforeTags = await gmsRead(
+          `/aspects/${encodeURIComponent(datasetUrn)}?aspect=globalTags&version=0`
+        ) as { aspect?: { value?: string } } | null;
+        const beforeMemory = await gmsRead(
+          `/aspects/${encodeURIComponent(datasetUrn)}?aspect=institutionalMemory&version=0`
+        ) as { aspect?: { value?: string } } | null;
+
+        // Parse existing tags to preserve unrelated ones
+        const existingTagsRaw = beforeTags?.aspect?.value ?? "{}";
+        const existingTags = JSON.parse(typeof existingTagsRaw === "string" ? existingTagsRaw : JSON.stringify(existingTagsRaw)) as { tags?: Array<{ tag: string }> };
+        const existingTagList = existingTags.tags ?? [];
+
+        // Merge: keep existing tags, add/ensure LineageGuard tags
+        const lgTags = new Set([
+          "urn:li:tag:lineageguard-canonical.Reviewed",
+          "urn:li:tag:lineageguard-canonical.Critical",
+          "urn:li:tag:lineageguard-canonical.Production",
+        ]);
+        const mergedTags = [
+          ...existingTagList.filter((t) => !lgTags.has(t.tag)),
+          ...[...lgTags].map((tag) => ({ tag })),
+        ];
+
+        // Parse existing institutional memory to preserve unrelated elements
+        const existingMemoryRaw = beforeMemory?.aspect?.value ?? "{}";
+        const existingMemory = JSON.parse(typeof existingMemoryRaw === "string" ? existingMemoryRaw : JSON.stringify(existingMemoryRaw)) as { elements?: Array<{ url?: string; description?: string; createStamp?: unknown }> };
+        const existingElements = existingMemory.elements ?? [];
+
+        // Check idempotency: if our marker already exists, skip write
+        const markerPhrase = `lineageguard:decision:v1:lineageguard-${input.runId}`;
+        const alreadyWritten = existingElements.some((el) => el.description?.includes(markerPhrase));
+        const reviewedTagExists = existingTagList.some((t) => t.tag === "urn:li:tag:lineageguard-canonical.Reviewed");
+
+        if (alreadyWritten && reviewedTagExists) {
+          console.log("[orchestration] DataHub write-back: idempotent — already written");
+          const receiptFingerprint = createHash("sha256")
+            .update(JSON.stringify({ documentContent, datasetUrn, runId: input.runId, idempotent: true }))
+            .digest("hex");
+          return { status: "SUCCEEDED", receiptFingerprint };
+        }
+
+        // --- Write tags (preserving existing) ---
         const tagPayload = {
           proposal: {
             entityType: "dataset",
@@ -430,40 +480,31 @@ function createWritebackPort(): AgentWritebackPort | undefined {
             aspectName: "globalTags",
             changeType: "UPSERT",
             aspect: {
-              value: JSON.stringify({
-                tags: [
-                  { tag: "urn:li:tag:lineageguard-canonical.Reviewed" },
-                  { tag: "urn:li:tag:lineageguard-canonical.Critical" },
-                  { tag: "urn:li:tag:lineageguard-canonical.Production" },
-                ],
-              }),
+              value: JSON.stringify({ tags: mergedTags }),
               contentType: "application/json",
             },
           },
         };
         const tagRes = await fetch(`${gmsUrl}/aspects?action=ingestProposal`, {
           method: "POST",
-          headers: authHeader,
+          headers: writeHeaders,
           body: JSON.stringify(tagPayload),
         });
         if (!tagRes.ok) {
           throw new Error(`DataHub tag writeback failed: HTTP ${tagRes.status}`);
         }
 
-        // --- Read-back: verify 'Reviewed' tag was written ---
-        const tagReadback = await gmsGet(
-          `/aspects/${encodeURIComponent(datasetUrn)}?aspect=globalTags&version=0`
-        ) as { aspect?: { value?: string } };
-        const tagValue = tagReadback?.aspect?.value ?? "{}";
-        const tagData = JSON.parse(typeof tagValue === "string" ? tagValue : JSON.stringify(tagValue)) as { tags?: Array<{ tag: string }> };
-        const reviewedTagPresent = (tagData.tags ?? []).some(
-          (t) => t.tag === "urn:li:tag:lineageguard-canonical.Reviewed"
+        // --- Write decision document (preserving existing elements) ---
+        const newElement = {
+          url: input.githubPrUrl || `https://lineageguard.local/runs/${input.runId}`,
+          description: documentContent,
+          createStamp: { time: Date.now(), actor: "urn:li:corpuser:lineageguard" },
+        };
+        const preservedElements = existingElements.filter(
+          (el) => !el.description?.includes("lineageguard:decision:v1:")
         );
-        if (!reviewedTagPresent) {
-          throw new Error("DataHub write-back verification failed: 'Reviewed' tag not found on read-back");
-        }
+        const mergedElements = [...preservedElements, newElement];
 
-        // --- Write decision document (institutional memory) ---
         const docPayload = {
           proposal: {
             entityType: "dataset",
@@ -471,41 +512,49 @@ function createWritebackPort(): AgentWritebackPort | undefined {
             aspectName: "institutionalMemory",
             changeType: "UPSERT",
             aspect: {
-              value: JSON.stringify({
-                elements: [{
-                  url: input.githubPrUrl || `https://lineageguard.local/runs/${input.runId}`,
-                  description: documentContent,
-                  createStamp: { time: Date.now(), actor: "urn:li:corpuser:lineageguard" },
-                }],
-              }),
+              value: JSON.stringify({ elements: mergedElements }),
               contentType: "application/json",
             },
           },
         };
         const docRes = await fetch(`${gmsUrl}/aspects?action=ingestProposal`, {
           method: "POST",
-          headers: authHeader,
+          headers: writeHeaders,
           body: JSON.stringify(docPayload),
         });
         if (!docRes.ok) {
           throw new Error(`DataHub document writeback failed: HTTP ${docRes.status}`);
         }
 
-        // --- Read-back: verify decision document was written ---
-        const docReadback = await gmsGet(
+        // --- Exact read-back verification (using read token) ---
+        const afterTags = await gmsRead(
+          `/aspects/${encodeURIComponent(datasetUrn)}?aspect=globalTags&version=0`
+        ) as { aspect?: { value?: string } } | null;
+        const afterTagsRaw = afterTags?.aspect?.value ?? "{}";
+        const afterTagData = JSON.parse(typeof afterTagsRaw === "string" ? afterTagsRaw : JSON.stringify(afterTagsRaw)) as { tags?: Array<{ tag: string }> };
+        const reviewedPresent = (afterTagData.tags ?? []).some((t) => t.tag === "urn:li:tag:lineageguard-canonical.Reviewed");
+        if (!reviewedPresent) {
+          throw new Error("DataHub write-back verification failed: Reviewed tag not found on read-back");
+        }
+
+        const afterMemory = await gmsRead(
           `/aspects/${encodeURIComponent(datasetUrn)}?aspect=institutionalMemory&version=0`
-        ) as { aspect?: { value?: string } };
-        const docValue = docReadback?.aspect?.value ?? "{}";
-        const docData = JSON.parse(typeof docValue === "string" ? docValue : JSON.stringify(docValue)) as { elements?: Array<{ description?: string }> };
-        const markerPhrase = `lineageguard:decision:v1:lineageguard-${input.runId}`;
-        const docPresent = (docData.elements ?? []).some(
-          (el) => el.description?.includes(markerPhrase)
-        );
-        if (!docPresent) {
+        ) as { aspect?: { value?: string } } | null;
+        const afterMemoryRaw = afterMemory?.aspect?.value ?? "{}";
+        const afterMemoryData = JSON.parse(typeof afterMemoryRaw === "string" ? afterMemoryRaw : JSON.stringify(afterMemoryRaw)) as { elements?: Array<{ description?: string }> };
+        const docVerified = (afterMemoryData.elements ?? []).some((el) => el.description?.includes(markerPhrase));
+        if (!docVerified) {
           throw new Error("DataHub write-back verification failed: decision document not found on read-back");
         }
 
-        console.log("[orchestration] DataHub write-back verified: tag ✓, document ✓");
+        // Verify existing metadata preserved
+        const preservedTagCount = existingTagList.filter((t) => !lgTags.has(t.tag)).length;
+        const afterNonLgTags = (afterTagData.tags ?? []).filter((t) => !lgTags.has(t.tag)).length;
+        if (afterNonLgTags < preservedTagCount) {
+          throw new Error("DataHub write-back verification failed: existing tags were not preserved");
+        }
+
+        console.log("[orchestration] DataHub write-back verified: tag ✓, document ✓, preservation ✓");
 
         const receiptFingerprint = createHash("sha256")
           .update(JSON.stringify({ documentContent, datasetUrn, runId: input.runId, verified: true }))
@@ -514,8 +563,8 @@ function createWritebackPort(): AgentWritebackPort | undefined {
         return { status: "SUCCEEDED", receiptFingerprint };
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : String(err);
-        console.error(`[orchestration] Writeback error: ${message.slice(0, 100)}`);
-        throw new Error(`DataHub writeback failed: ${message.slice(0, 200)}`);
+        console.error(`[orchestration] Writeback error: ${message.slice(0, 200)}`);
+        throw new Error(`DataHub writeback failed: ${message.slice(0, 300)}`);
       }
     },
   };
