@@ -71,4 +71,6 @@ export {
 } from "./migration.js";
 export * from "./risk.js";
 export * from "./run.js";
+export type { SourceChange } from "./source-change.js";
+export { sourceChangeSchema, validateSourceChange } from "./source-change.js";
 export * from "./validation.js";

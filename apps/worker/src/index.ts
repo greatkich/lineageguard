@@ -3,7 +3,7 @@ import { createSimpleRunStore } from "@lineageguard/db";
 import pg from "pg";
 import { eventBus } from "./events.js";
 import { createOrchestrator } from "./orchestration.js";
-import { readSourcePR, type SourcePRInfo } from "./source-pr-reader.js";
+import { buildSourceChange, readSourcePR, type SourcePRInfo } from "./source-pr-reader.js";
 
 export interface WorkerOptions {
   once?: boolean;
@@ -60,9 +60,8 @@ export async function runWorker(options: WorkerOptions = {}): Promise<PipelineRe
 
     // Determine the actual patch — from source PR or canonical default
     let patch = "ALTER TABLE commerce.orders RENAME COLUMN customer_id TO buyer_id;";
-    // Source type stays FIXTURE because domain classifyGitDiff expects model diffs,
-    // not migration SQL. The real SHAs from the source PR are what bind the run.
-    const sourceType: "FIXTURE" = "FIXTURE";
+    let sourceType: "FIXTURE" | "GITHUB" = "FIXTURE";
+    let sourcePath: string | undefined;
 
     if (sourcePR) {
       // Validate source PR contains the canonical rename
@@ -83,9 +82,21 @@ export async function runWorker(options: WorkerOptions = {}): Promise<PipelineRe
           `Only one canonical change is supported.`
         );
       }
-      // Use exact canonical SQL — domain parser validates this specific statement
-      patch = "ALTER TABLE commerce.orders RENAME COLUMN customer_id TO buyer_id;";
-      console.log(`[worker] Source PR validated: canonical rename found in ${sqlPatches[0]!.filename}`);
+
+      // Build typed SourceChange with full unified diff for domain parser
+      const sourceChange = buildSourceChange(sourcePR, repository);
+      if (!sourceChange) {
+        throw new Error(
+          `Source PR #${sourcePR.prNumber} could not be converted to SourceChange — ` +
+          `expected exactly one SQL file with canonical rename.`
+        );
+      }
+
+      // Use the reconstructed unified diff — domain parser handles source=GITHUB
+      patch = sourceChange.unifiedDiff;
+      sourceType = "GITHUB";
+      sourcePath = sourceChange.filePath;
+      console.log(`[worker] Source PR validated: source=GITHUB, path=${sourcePath}`);
     }
 
     await store.create({
@@ -112,7 +123,7 @@ export async function runWorker(options: WorkerOptions = {}): Promise<PipelineRe
       field: "customer_id",
       newName: "buyer_id",
       source: sourceType,
-      sourcePath: sourcePR ? sourcePR.patches.find((p) => /RENAME\s+COLUMN\s+customer_id/i.test(p.patch))?.filename : undefined,
+      sourcePath: sourcePath ?? (sourcePR ? sourcePR.patches.find((p) => /RENAME\s+COLUMN\s+customer_id/i.test(p.patch))?.filename : undefined),
     });
 
     console.log(`[worker] Run ${runId} finished: ${result.finalStatus}`);
