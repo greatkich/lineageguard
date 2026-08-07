@@ -77,4 +77,22 @@ export * from "./risk.js";
 export * from "./run.js";
 export type { SourceChange } from "./source-change.js";
 export { sourceChangeSchema, validateSourceChange } from "./source-change.js";
+export type { SourceAllowlistInput, SourceFileInput } from "./source-allowlist.js";
+export { buildCanonicalSourceEnvelope } from "./source-allowlist.js";
+export type {
+  SourceChangeEnvelope,
+  SourceChangeEnvelopeIdentity,
+  SourceRejectionCode,
+} from "./source-envelope.js";
+export {
+  assertNoSourceDrift,
+  canonicalNormalizedChange,
+  computeSourceFingerprint,
+  createSourceChangeEnvelope,
+  normalizedChangeSchema,
+  SourceChangeRejectedError,
+  sourceChangeEnvelopeSchema,
+  SourceDriftError,
+  sourceRejectionCodes,
+} from "./source-envelope.js";
 export * from "./validation.js";

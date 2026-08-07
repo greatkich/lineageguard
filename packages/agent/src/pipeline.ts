@@ -1,12 +1,14 @@
 import type { LanguageModelV2 } from "@ai-sdk/provider";
 import {
   assertExactlyFourConsumers,
+  assertNoSourceDrift,
   bindMigrationCandidate,
   type ImpactContext,
   type MigrationCandidate,
   type ProposedChange,
   type RiskComparison,
   type RunStatus,
+  type SourceChangeEnvelope,
 } from "@lineageguard/domain";
 import { type AgentLLMConfig, agentLLMConfigFromEnv, directLLMCall } from "./llm/client.js";
 import { migrationPlanPrompt } from "./llm/prompts.js";
@@ -96,6 +98,10 @@ export interface RunInput {
   newName: string;
   source?: "GITHUB" | "FIXTURE" | undefined;
   sourcePath?: string | undefined;
+  /** The exact source identity this run analysed. Required to enforce drift checkpoints. */
+  sourceEnvelope?: SourceChangeEnvelope | undefined;
+  /** Re-reads the live source so a checkpoint can compare identities. */
+  reattestSource?: (() => Promise<SourceChangeEnvelope>) | undefined;
 }
 
 export interface PipelineResult {
@@ -126,6 +132,18 @@ function extractJson(text: string): unknown {
   const match = stripped.match(/\{[\s\S]*\}/);
   if (match) return JSON.parse(match[0]);
   throw new Error("No JSON in LLM response");
+}
+
+/**
+ * Re-attests the source identity at an authoritative boundary. A no-op when the run was not bound
+ * to a live PR; fatal when the live source moved, because later effects must never be produced from
+ * stale analysis.
+ */
+async function assertSourceUnchanged(input: RunInput, checkpoint: string): Promise<void> {
+  if (!input.sourceEnvelope || !input.reattestSource) return;
+  const observed = await input.reattestSource();
+  assertNoSourceDrift(checkpoint, input.sourceEnvelope, observed);
+  console.log(`  [pipeline] source re-attested at ${checkpoint}`);
 }
 
 /**
@@ -313,6 +331,7 @@ export function createAgentPipeline(config: AgentPipelineConfig) {
       if (config.validation) {
         console.log(`  [pipeline] Step 7: Running validation (8 checks)...`);
         try {
+          await assertSourceUnchanged(input, "BEFORE_VALIDATION");
           const validationOutput = await config.validation.validate(candidate, {
             runId: input.runId,
           });
@@ -352,6 +371,7 @@ export function createAgentPipeline(config: AgentPipelineConfig) {
       if (config.github) {
         console.log(`  [pipeline] Step 8: Creating GitHub PR...`);
         try {
+          await assertSourceUnchanged(input, "BEFORE_PUBLICATION");
           githubReceipt = await config.github.createReview({
             runId: input.runId,
             candidate,
