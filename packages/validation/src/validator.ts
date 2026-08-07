@@ -337,10 +337,12 @@ function boundedResult(error: unknown): { result: CommandResult; summary: string
 
 export type GeneratedSqlProgram = "EXPAND_MIGRATION" | "ROLLBACK";
 
-const canonicalExpandMigrationSql =
+/** The only expand program the validator will accept. Exported so recorded examples can be generated from it rather than maintained by hand. */
+export const canonicalExpandMigrationSql =
   "alter table commerce.orders add column buyer_id uuid; update commerce.orders set buyer_id = customer_id; create function commerce.sync_order_customer_buyer() returns trigger language plpgsql as $$ begin if tg_op = 'insert' then if new.buyer_id is null and new.customer_id is not null then new.buyer_id := new.customer_id; elsif new.customer_id is null and new.buyer_id is not null then new.customer_id := new.buyer_id; elsif new.customer_id is null and new.buyer_id is null then raise exception 'at least one identifier must be provided'; elsif new.customer_id is distinct from new.buyer_id then raise exception 'customer_id and buyer_id must match during compatibility window'; end if; elsif tg_op = 'update' then if new.customer_id is distinct from old.customer_id and new.buyer_id is not distinct from old.buyer_id then new.buyer_id := new.customer_id; elsif new.buyer_id is distinct from old.buyer_id and new.customer_id is not distinct from old.customer_id then new.customer_id := new.buyer_id; elsif new.customer_id is distinct from old.customer_id and new.buyer_id is distinct from old.buyer_id then if new.customer_id is distinct from new.buyer_id then raise exception 'customer_id and buyer_id must match during compatibility window'; end if; end if; end if; return new; end $$; create trigger orders_customer_buyer_compat before insert or update on commerce.orders for each row execute function commerce.sync_order_customer_buyer(); alter table commerce.orders alter column buyer_id set not null;";
-const canonicalRollbackSql =
-  "drop trigger orders_customer_buyer_compat on commerce.orders; drop function commerce.sync_order_customer_buyer(); alter table commerce.orders drop column buyer_id;";
+/** The only rollback program the validator will accept. */
+export const canonicalRollbackSql =
+  "drop trigger orders_customer_buyer_compat on commerce.orders; drop function commerce.sync_order_customer_buyer(); alter table commerce.orders drop column buyer_id cascade; do $$ begin if not exists (select 1 from information_schema.columns where table_schema = 'commerce' and table_name = 'orders' and column_name = 'customer_id') then raise exception 'rollback removed customer_id'; end if; if exists (select 1 from information_schema.columns where table_schema = 'commerce' and table_name = 'orders' and column_name = 'buyer_id') then raise exception 'rollback left buyer_id in place'; end if; end $$;";
 
 function canonicalSqlText(sql: string): string {
   if (
@@ -708,12 +710,24 @@ async function validateTool(path: string): Promise<{ path: string; digest: strin
   }
   const canonical = await realpath(path).catch(() => undefined);
   const stat = canonical ? await lstat(canonical).catch(() => undefined) : undefined;
+  // The executable must be owned by root or by us, and must not be writable by anyone outside that
+  // owner. Group- and world-writability are the real exposures: another account could swap the
+  // binary and take over validation.
+  //
+  // Owner-writability is deliberately NOT rejected. For a file we own, the owner bit grants us
+  // nothing we do not already have — the same uid runs this process and can chmod at will — so
+  // rejecting it defends against nothing while making every standard macOS Docker Desktop install
+  // (mode 0755, user-owned) unusable. Root-owned binaries were already judged by this same
+  // group/world rule; this aligns the two cases instead of holding user-owned files to a test that
+  // carries no threat-model value.
+  //
+  // The binary's digest is still recorded in the receipt, so a swap between runs remains visible.
   if (
     !canonical ||
     !stat?.isFile() ||
     stat.isSymbolicLink() ||
     (stat.uid !== 0 && stat.uid !== process.getuid?.()) ||
-    (stat.uid === 0 ? (stat.mode & 0o022) !== 0 : (stat.mode & 0o222) !== 0) ||
+    (stat.mode & 0o022) !== 0 ||
     (stat.mode & 0o111) === 0
   ) {
     throw new ValidationError("INVALID_PATH", "validator executable is not a trusted regular file");

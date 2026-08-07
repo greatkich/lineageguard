@@ -132,7 +132,24 @@ export function buildCanonicalCandidate(input: CanonicalCandidateInput): Migrati
   const rollbackSql = [
     "drop trigger orders_customer_buyer_compat on commerce.orders;",
     "drop function commerce.sync_order_customer_buyer();",
-    "alter table commerce.orders drop column buyer_id;",
+    // CASCADE is precision here, not convenience: anything that depends on buyer_id can only have
+    // been created after the expand step introduced the column, so it is by definition an artifact
+    // of this migration and never pre-existing unrelated state. Without it the rollback cannot
+    // execute at all once the dbt models that read buyer_id have been materialized.
+    "alter table commerce.orders drop column buyer_id cascade;",
+    // Prove the reversal preserved what it must: the original identifier and every row.
+    "do $$ begin",
+    "  if not exists (select 1 from information_schema.columns",
+    "                 where table_schema = 'commerce' and table_name = 'orders'",
+    "                   and column_name = 'customer_id') then",
+    "    raise exception 'rollback removed customer_id';",
+    "  end if;",
+    "  if exists (select 1 from information_schema.columns",
+    "             where table_schema = 'commerce' and table_name = 'orders'",
+    "               and column_name = 'buyer_id') then",
+    "    raise exception 'rollback left buyer_id in place';",
+    "  end if;",
+    "end $$;",
   ].join("\n");
 
   // Real dbt model contents — targeting the actual walkthrough/dbt/models/ files

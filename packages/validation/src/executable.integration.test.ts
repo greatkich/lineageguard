@@ -222,18 +222,32 @@ suite("public executable validation and attestation path", () => {
     root = await realpath(await mkdtemp(join(tmpdir(), "lineageguard-public-validation-")));
     repositoryPath = join(root, "repository");
     sandboxRoot = join(root, "sandboxes");
-    await mkdir(join(repositoryPath, "walkthrough/models"), { recursive: true });
+    // Mirror the layout buildCanonicalCandidate actually targets. The fixture previously used a
+    // flat walkthrough/models/ tree that matched only the hand-maintained recorded candidate, so the
+    // suite validated artifacts no live run would ever produce.
+    await mkdir(join(repositoryPath, "walkthrough/dbt/models/staging"), { recursive: true });
+    await mkdir(join(repositoryPath, "walkthrough/dbt/models/analytics"), { recursive: true });
+    await mkdir(join(repositoryPath, "walkthrough/dbt/models/fraud"), { recursive: true });
+    await mkdir(join(repositoryPath, "walkthrough/dbt/tests"), { recursive: true });
     await mkdir(sandboxRoot);
     await writeFile(
-      join(repositoryPath, "walkthrough/models/orders.sql"),
-      "select order_id, customer_id from commerce.orders\n",
+      join(repositoryPath, "walkthrough/dbt/models/staging/stg_orders.sql"),
+      "SELECT\n    order_id,\n    customer_id,\n    order_total,\n    ordered_at\nFROM {{ source('commerce', 'orders') }}\n",
     );
     await writeFile(
-      join(repositoryPath, "walkthrough/models/sources.yml"),
+      join(repositoryPath, "walkthrough/dbt/models/analytics/customer_revenue.sql"),
+      "SELECT\n    customer_id,\n    SUM(order_total) AS lifetime_revenue\nFROM {{ ref('stg_orders') }}\nGROUP BY customer_id\n",
+    );
+    await writeFile(
+      join(repositoryPath, "walkthrough/dbt/models/fraud/customer_features.sql"),
+      "SELECT\n    customer_id,\n    COUNT(*) AS order_count,\n    MAX(order_total) AS max_order_total\nFROM {{ ref('stg_orders') }}\nGROUP BY customer_id\n",
+    );
+    await writeFile(
+      join(repositoryPath, "walkthrough/dbt/models/sources.yml"),
       "version: 2\nsources:\n  - name: commerce\n    schema: commerce\n    tables:\n      - name: orders\n",
     );
     await writeFile(
-      join(repositoryPath, "walkthrough/dbt_project.yml"),
+      join(repositoryPath, "walkthrough/dbt/dbt_project.yml"),
       "name: lineageguard_validation\nversion: '1.0'\nconfig-version: 2\nprofile: lineageguard\nmodel-paths: [models]\ntest-paths: [tests]\n",
     );
     await executeFile("git", ["init", "-q"], { cwd: repositoryPath });
@@ -255,8 +269,10 @@ suite("public executable validation and attestation path", () => {
       throw new Error("content-addressed validation images and Docker path are required");
     }
     runtimePolicy = {
+      // Must carry every column the canonical dbt models select. A two-column fixture compiled fine
+      // but DBT_TEST materializes stg_orders, which reads order_total and ordered_at.
       baseFixtureSql:
-        "create schema commerce; create table commerce.orders (order_id uuid primary key, customer_id uuid not null); insert into commerce.orders values ('00000000-0000-4000-8000-000000000001','00000000-0000-4000-8000-0000000000a1'),('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-0000000000a2');",
+        "create schema commerce; create table commerce.orders (order_id uuid primary key, customer_id uuid not null, order_total numeric(10,2), ordered_at timestamptz default now()); insert into commerce.orders (order_id, customer_id, order_total, ordered_at) values ('00000000-0000-4000-8000-000000000001','00000000-0000-4000-8000-0000000000a1',49.99,'2024-01-15'),('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-0000000000a2',129.00,'2024-02-20'),('00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-0000000000a1',75.50,'2024-03-10');",
       dockerExecutable,
       validationRunnerImageId,
       postgresImageId,

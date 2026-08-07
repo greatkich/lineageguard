@@ -24,12 +24,15 @@
     "test:e2e": "playwright test",
     "typecheck": "pnpm --recursive --if-present typecheck && pnpm typecheck:scripts",
     "typecheck:scripts": "tsc -p tsconfig.scripts.json",
-    "walkthrough:verify": "pnpm check:environment && pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build && pnpm test:e2e"
+    "walkthrough:verify": "pnpm check:environment && pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build && pnpm test:e2e",
+    "regenerate:canonical-example": "node --import tsx scripts/regenerate-canonical-example.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.7",
+    "@lineageguard/agent": "workspace:*",
     "@lineageguard/db": "workspace:*",
     "@lineageguard/domain": "workspace:*",
+    "@lineageguard/validation": "workspace:*",
     "@playwright/test": "1.62.1",
     "@types/node": "24.13.3",
     "@types/pg": "^8.20.4",

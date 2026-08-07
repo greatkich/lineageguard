@@ -15,3 +15,4 @@ export {
   type WritebackOutput,
 } from "./pipeline.js";
 export * from "./steps/index.js";
+export { buildCanonicalCandidate } from "./steps/build-canonical-candidate.js";
