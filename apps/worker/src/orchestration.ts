@@ -21,7 +21,7 @@ import {
   type WritebackInput,
   type WritebackOutput,
 } from "@lineageguard/agent";
-import type { SimpleRunStore } from "@lineageguard/db";
+import type { SimpleRunStore, SimpleRunUpdateExtra } from "@lineageguard/db";
 
 // ---------------------------------------------------------------------------
 // Phase B: DataHub context port (MCP stdio → full ImpactContext)
@@ -574,6 +574,45 @@ function createWritebackPort(): AgentWritebackPort | undefined {
 // Main orchestrator factory
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Narrows the agent pipeline's untyped onStatusChange `extra` payload down to
+// the known, persistable SimpleRunUpdateExtra fields. Avoids an `as any` cast
+// on this store-write boundary: unrecognized keys are silently dropped rather
+// than blindly trusted.
+// ---------------------------------------------------------------------------
+const SIMPLE_RUN_UPDATE_EXTRA_KEYS = [
+  "baselineDecision",
+  "groundedDecision",
+  "consumersFound",
+  "evidenceItems",
+  "artifactsGenerated",
+  "triggeredRules",
+  "prUrl",
+  "prNumber",
+  "writebackStatus",
+  "validationReceiptFingerprint",
+  "githubReceiptFingerprint",
+  "writebackReceiptFingerprint",
+  "contextJson",
+  "candidateJson",
+  "comparisonJson",
+  "sourcePrUrl",
+  "failedChecks",
+] as const satisfies readonly (keyof SimpleRunUpdateExtra)[];
+
+function pickSimpleRunUpdateExtra(
+  extra: Record<string, unknown> | undefined,
+): Partial<SimpleRunUpdateExtra> | undefined {
+  if (!extra) return undefined;
+  const picked: Partial<SimpleRunUpdateExtra> = {};
+  for (const key of SIMPLE_RUN_UPDATE_EXTRA_KEYS) {
+    if (extra[key] !== undefined) {
+      (picked as Record<string, unknown>)[key] = extra[key];
+    }
+  }
+  return picked;
+}
+
 export async function createOrchestrator(workerId: string, store: SimpleRunStore) {
   const llmConfig = agentLLMConfigFromEnv();
   const llm = createAgentModel(llmConfig);
@@ -598,7 +637,7 @@ export async function createOrchestrator(workerId: string, store: SimpleRunStore
     github,
     writeback,
     onStatusChange: async (runId: string, status: string, extra?: Record<string, unknown>) => {
-      await store.update(runId, status, extra as any);
+      await store.update(runId, status, pickSimpleRunUpdateExtra(extra));
     },
   });
 }

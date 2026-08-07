@@ -104,12 +104,17 @@ export async function runWorker(options: WorkerOptions = {}): Promise<PipelineRe
       repository,
       field: "customer_id",
       patch,
+      ...(sourcePR
+        ? {
+            sourcePrUrl: sourcePR.prUrl,
+            sourcePrNumber: sourcePR.prNumber,
+            sourceBaseSha: sourcePR.baseSha,
+            sourceHeadSha: sourcePR.headSha,
+            sourceDiffFingerprint: sourcePR.diffFingerprint,
+            ...(sourcePath ? { sourceFilePath: sourcePath } : {}),
+          }
+        : {}),
     });
-
-    // Persist source PR info if available
-    if (sourcePR) {
-      await store.update(runId, "CREATED", { sourcePrUrl: sourcePR.prUrl });
-    }
 
     console.log(`[worker] Executing canonical run ${runId}... (source: ${sourceType})`);
 
