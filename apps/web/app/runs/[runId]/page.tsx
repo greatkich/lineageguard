@@ -77,6 +77,12 @@ export default async function RunDetailPage({ params }: { params: Promise<{ runI
     return deriveImpactConsumers(parsed.data);
   })();
 
+  // One count per page. Prefer derivation from the persisted context so the headline number, the
+  // stat tile, and the consumer list can never disagree; fall back to the stored scalar only when
+  // no context was persisted (an early-failure run).
+  const consumerCount: number | null =
+    impactConsumers.length > 0 ? impactConsumers.length : (run.consumersFound ?? null);
+
   const kindLabels: Record<ImpactConsumer["kind"], string> = {
     DATA_MODEL: "Data Model",
     DASHBOARD: "Dashboard",
@@ -226,14 +232,17 @@ export default async function RunDetailPage({ params }: { params: Promise<{ runI
 
             {/* Impact consumers from persisted context */}
             {impactConsumers.length > 0 && (
-              <div>
+              <div data-testid="downstream-consumers">
                 <p className="text-xs font-medium text-muted-foreground mb-2">
-                  Downstream Data Consumers ({impactConsumers.length})
+                  Downstream Data Consumers (
+                  <span data-testid="downstream-consumer-count">{impactConsumers.length}</span>)
                 </p>
                 <div className="space-y-1.5">
                   {impactConsumers.slice(0, 6).map((item) => (
                     <div
                       key={item.entityUrn}
+                      data-testid="downstream-consumer"
+                      data-consumer-kind={item.kind}
                       className="flex items-center gap-2 p-1.5 rounded bg-muted/30 text-xs"
                     >
                       <span className="font-mono text-[10px] text-muted-foreground">
@@ -290,7 +299,9 @@ export default async function RunDetailPage({ params }: { params: Promise<{ runI
                 <p className="text-[10px] text-muted-foreground uppercase tracking-wider">
                   Data Consumers
                 </p>
-                <p className="text-lg font-semibold mt-0.5">{run.consumersFound || "—"}</p>
+                <p className="text-lg font-semibold mt-0.5" data-testid="stat-data-consumers">
+                  {consumerCount ?? "—"}
+                </p>
               </div>
               <div className="p-2.5 rounded-md bg-muted/50">
                 <p className="text-[10px] text-muted-foreground uppercase tracking-wider">
@@ -413,8 +424,8 @@ export default async function RunDetailPage({ params }: { params: Promise<{ runI
             <div>
               <p className="text-sm font-medium">Breaking change prevented</p>
               <p className="text-xs text-muted-foreground mt-0.5">
-                DataHub lineage revealed {run.consumersFound} downstream data{" "}
-                {run.consumersFound === 1 ? "consumer" : "consumers"} invisible from the repository.
+                DataHub lineage revealed {consumerCount} downstream data{" "}
+                {consumerCount === 1 ? "consumer" : "consumers"} invisible from the repository.
                 {run.validationReceiptFingerprint && " A safe migration was validated"}
                 {run.writebackReceiptFingerprint && " and written back to DataHub"}.
               </p>

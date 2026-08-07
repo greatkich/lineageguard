@@ -22,7 +22,8 @@
     "setup:browsers": "sh scripts/setup-playwright.sh",
     "test": "node --test scripts/*.test.mjs && pnpm check:boundaries && vitest run",
     "test:e2e": "playwright test",
-    "typecheck": "pnpm --recursive --if-present typecheck",
+    "typecheck": "pnpm --recursive --if-present typecheck && pnpm typecheck:scripts",
+    "typecheck:scripts": "tsc -p tsconfig.scripts.json",
     "walkthrough:verify": "pnpm check:environment && pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build && pnpm test:e2e"
   },
   "devDependencies": {
