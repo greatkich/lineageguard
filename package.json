@@ -13,6 +13,7 @@
     "check:boundaries": "node scripts/check-boundaries.mjs",
     "check:environment": "sh scripts/check-environment.sh",
     "demo": "pnpm build && node --import tsx scripts/demo.ts",
+    "demo:bootstrap": "node --import tsx scripts/demo-bootstrap.ts",
     "demo:golden": "node --import tsx scripts/demo-golden.ts",
     "demo:preflight": "node --import tsx scripts/demo-preflight.ts",
     "demo:repeat": "node --import tsx scripts/demo-repeat.ts",
