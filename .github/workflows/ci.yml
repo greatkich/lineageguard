@@ -1,20 +1,9 @@
 name: CI
-# TEMPORARILY DISABLED while the canonical live demo is being completed on
-# fix/demo-readiness-final. The gates are being run locally on Node 24 against real
-# DataHub, PostgreSQL, and Docker, which this hosted runner cannot provide, so the
-# automatic runs on every push and PR were reporting on an environment that is not
-# the one the work is verified against.
-#
-# The job below is unchanged. To restore automatic runs, delete the workflow_dispatch
-# line and reinstate:
-#
-#   push:
-#     branches: [main, fix/mvp-audit-recovery]
-#   pull_request:
-#     branches: [main]
-#
-# Until then it can still be triggered by hand from the Actions tab.
 on:
+  push:
+    branches: [main, fix/demo-readiness-final]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 jobs:
