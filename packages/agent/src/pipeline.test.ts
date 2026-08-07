@@ -117,14 +117,14 @@ function liveCanonicalContext(changeId: string): ImpactContext {
     sourceUrn: canonicalDatasetUrn,
     fieldPath: canonicalFieldPath,
     title: "orders.customer_id schema",
-    summary: "The source field is a non-null bigint in PostgreSQL.",
+    summary: "The source field is a non-null uuid in PostgreSQL.",
     criticality: "HIGH",
     relatedEvidenceIds: [],
     provenance: [provenanceEntry("SCHEMA", "list_schema_fields", "schema")],
     payload: {
       schemaFieldUrn: canonicalSchemaFieldUrn,
       nativeFieldPath: canonicalNativeFieldPath,
-      nativeType: "bigint",
+      nativeType: "uuid",
       nullable: false,
     },
   });

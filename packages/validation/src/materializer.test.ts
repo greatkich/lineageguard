@@ -137,7 +137,7 @@ function candidate(baseSha: string): MigrationCandidate {
           kind: "SQL_MIGRATION",
           operation: "CREATE",
           path: "walkthrough/migrations/add-buyer-id.sql",
-          content: "alter table commerce.orders add column buyer_id bigint;\n",
+          content: "alter table commerce.orders add column buyer_id uuid;\n",
         },
       ] satisfies MigrationCandidate["artifacts"]
     ).sort((left, right) => left.path.localeCompare(right.path)),

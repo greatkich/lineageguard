@@ -631,14 +631,14 @@ export function normalizeCanonicalLiveCollection(
     sourceUrn: canonicalDatasetUrn,
     fieldPath: canonicalFieldPath,
     title: "orders.customer_id schema",
-    summary: "The source field is a non-null bigint in PostgreSQL.",
+    summary: "The source field is a non-null uuid in PostgreSQL.",
     criticality: "HIGH",
     relatedEvidenceIds: [],
     provenance: pagedProvenance(observations.schemaFieldPages, "SCHEMA"),
     payload: {
       schemaFieldUrn: canonicalSchemaFieldUrn,
       nativeFieldPath: canonicalNativeFieldPath,
-      nativeType: "bigint",
+      nativeType: "uuid",
       nullable: false,
     },
   });

@@ -122,14 +122,15 @@ const checkOrder = canonicalValidationChecks;
 const backfillEqualitySql = [
   "begin;",
   "do $$",
-  "declare next_order_id bigint;",
+  "declare",
+  "  probe_order_id uuid := '00000000-0000-4000-8000-0000000f0001';",
+  "  probe_customer_id uuid := '00000000-0000-4000-8000-0000000f0002';",
   "begin",
   "  if exists (select 1 from commerce.orders where customer_id is distinct from buyer_id) then",
   "    raise exception 'existing customer_id/buyer_id mismatch';",
   "  end if;",
-  "  select coalesce(max(order_id), 0) + 1 into next_order_id from commerce.orders;",
-  "  insert into commerce.orders (order_id, customer_id) values (next_order_id, 990001);",
-  "  if exists (select 1 from commerce.orders where order_id = next_order_id and customer_id is distinct from buyer_id) then",
+  "  insert into commerce.orders (order_id, customer_id) values (probe_order_id, probe_customer_id);",
+  "  if exists (select 1 from commerce.orders where order_id = probe_order_id and customer_id is distinct from buyer_id) then",
   "    raise exception 'new customer_id/buyer_id mismatch';",
   "  end if;",
   "end $$;",
@@ -337,7 +338,7 @@ function boundedResult(error: unknown): { result: CommandResult; summary: string
 export type GeneratedSqlProgram = "EXPAND_MIGRATION" | "ROLLBACK";
 
 const canonicalExpandMigrationSql =
-  "alter table commerce.orders add column buyer_id bigint; update commerce.orders set buyer_id = customer_id; create function commerce.sync_order_customer_buyer() returns trigger language plpgsql as $$ begin if tg_op = 'insert' then if new.buyer_id is null and new.customer_id is not null then new.buyer_id := new.customer_id; elsif new.customer_id is null and new.buyer_id is not null then new.customer_id := new.buyer_id; elsif new.customer_id is null and new.buyer_id is null then raise exception 'at least one identifier must be provided'; elsif new.customer_id is distinct from new.buyer_id then raise exception 'customer_id and buyer_id must match during compatibility window'; end if; elsif tg_op = 'update' then if new.customer_id is distinct from old.customer_id and new.buyer_id is not distinct from old.buyer_id then new.buyer_id := new.customer_id; elsif new.buyer_id is distinct from old.buyer_id and new.customer_id is not distinct from old.customer_id then new.customer_id := new.buyer_id; elsif new.customer_id is distinct from old.customer_id and new.buyer_id is distinct from old.buyer_id then if new.customer_id is distinct from new.buyer_id then raise exception 'customer_id and buyer_id must match during compatibility window'; end if; end if; end if; return new; end $$; create trigger orders_customer_buyer_compat before insert or update on commerce.orders for each row execute function commerce.sync_order_customer_buyer(); alter table commerce.orders alter column buyer_id set not null;";
+  "alter table commerce.orders add column buyer_id uuid; update commerce.orders set buyer_id = customer_id; create function commerce.sync_order_customer_buyer() returns trigger language plpgsql as $$ begin if tg_op = 'insert' then if new.buyer_id is null and new.customer_id is not null then new.buyer_id := new.customer_id; elsif new.customer_id is null and new.buyer_id is not null then new.customer_id := new.buyer_id; elsif new.customer_id is null and new.buyer_id is null then raise exception 'at least one identifier must be provided'; elsif new.customer_id is distinct from new.buyer_id then raise exception 'customer_id and buyer_id must match during compatibility window'; end if; elsif tg_op = 'update' then if new.customer_id is distinct from old.customer_id and new.buyer_id is not distinct from old.buyer_id then new.buyer_id := new.customer_id; elsif new.buyer_id is distinct from old.buyer_id and new.customer_id is not distinct from old.customer_id then new.customer_id := new.buyer_id; elsif new.customer_id is distinct from old.customer_id and new.buyer_id is distinct from old.buyer_id then if new.customer_id is distinct from new.buyer_id then raise exception 'customer_id and buyer_id must match during compatibility window'; end if; end if; end if; return new; end $$; create trigger orders_customer_buyer_compat before insert or update on commerce.orders for each row execute function commerce.sync_order_customer_buyer(); alter table commerce.orders alter column buyer_id set not null;";
 const canonicalRollbackSql =
   "drop trigger orders_customer_buyer_compat on commerce.orders; drop function commerce.sync_order_customer_buyer(); alter table commerce.orders drop column buyer_id;";
 

@@ -96,7 +96,7 @@ export function buildCanonicalCandidate(input: CanonicalCandidateInput): Migrati
 
   // Canonical expand-migrate-contract SQL
   const expandSql = [
-    "alter table commerce.orders add column buyer_id bigint;",
+    "alter table commerce.orders add column buyer_id uuid;",
     "update commerce.orders set buyer_id = customer_id;",
     "create function commerce.sync_order_customer_buyer() returns trigger language plpgsql as $$",
     "begin",

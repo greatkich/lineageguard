@@ -48,7 +48,7 @@ const canonicalImpactContextData: Omit<ImpactContextData, "changeId" | "collecti
         "urn:li:dataset:(urn:li:dataPlatform:postgres,lineageguard-canonical.lineageguard.commerce.orders,PROD)",
       fieldPath: "commerce.orders.customer_id",
       title: "orders.customer_id schema",
-      summary: "The source field is a non-null bigint in PostgreSQL.",
+      summary: "The source field is a non-null uuid in PostgreSQL.",
       criticality: "HIGH",
       provenance: [
         {
@@ -66,7 +66,7 @@ const canonicalImpactContextData: Omit<ImpactContextData, "changeId" | "collecti
         schemaFieldUrn:
           "urn:li:schemaField:(urn:li:dataset:(urn:li:dataPlatform:postgres,lineageguard-canonical.lineageguard.commerce.orders,PROD),customer_id)",
         nativeFieldPath: "customer_id",
-        nativeType: "bigint",
+        nativeType: "uuid",
         nullable: false,
       },
     },

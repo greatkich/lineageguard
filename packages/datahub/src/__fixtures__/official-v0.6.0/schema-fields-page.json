@@ -4,7 +4,7 @@
     {
       "fieldPath": "customer_id",
       "type": "NUMBER",
-      "nativeDataType": "bigint",
+      "nativeDataType": "uuid",
       "nullable": false,
       "description": "Example identifier",
       "glossaryTerms": ["Customer Identifier"]

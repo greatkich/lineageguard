@@ -31,8 +31,8 @@ function gitPatch(options: { index?: boolean; header?: string; body?: string } =
     options.header ?? "@@ -1,3 +1,3 @@",
     ...(options.body?.split("\n") ?? [
       " select",
-      "-  customer_id::bigint as customer_id,",
-      "+  buyer_id::bigint as buyer_id,",
+      "-  customer_id::uuid as customer_id,",
+      "+  buyer_id::uuid as buyer_id,",
       "   order_total",
     ]),
   ].join("\n");
@@ -125,7 +125,7 @@ describe("strict canonical change parser", () => {
     expectParseError(
       gitPatch({
         header: "@@ -1,2 +1,2 @@",
-        body: "-customer_id::bigint as customer_id,\n-customer_id::bigint as customer_id,\n+buyer_id::bigint as buyer_id,\n+buyer_id::bigint as buyer_id,",
+        body: "-customer_id::uuid as customer_id,\n-customer_id::uuid as customer_id,\n+buyer_id::uuid as buyer_id,\n+buyer_id::uuid as buyer_id,",
       }),
       "MULTIPLE_SUPPORTED_CHANGES",
       "GITHUB",
@@ -133,7 +133,7 @@ describe("strict canonical change parser", () => {
     expectParseError(
       gitPatch({
         header: "@@ -1,2 +1,2 @@",
-        body: "-customer_id::bigint as customer_id,\n-old_extra\n+buyer_id::bigint as buyer_id,\n+new_extra",
+        body: "-customer_id::uuid as customer_id,\n-old_extra\n+buyer_id::uuid as buyer_id,\n+new_extra",
       }),
       "AMBIGUOUS_CHANGE",
       "GITHUB",
@@ -178,13 +178,13 @@ describe("strict canonical change parser", () => {
     [
       "uppercase related edit",
       gitPatch({
-        body: " select\n-  CUSTOMER_ID::bigint as CUSTOMER_ID,\n+  BUYER_ID::bigint as BUYER_ID,\n next",
+        body: " select\n-  CUSTOMER_ID::uuid as CUSTOMER_ID,\n+  BUYER_ID::uuid as BUYER_ID,\n next",
       }),
     ],
     [
       "mixed-case related edit",
       gitPatch({
-        body: " select\n-  Customer_Id::bigint as Customer_Id,\n+  Buyer_Id::bigint as Buyer_Id,\n next",
+        body: " select\n-  Customer_Id::uuid as Customer_Id,\n+  Buyer_Id::uuid as Buyer_Id,\n next",
       }),
     ],
     ["malformed line", gitPatch({ body: "select\n-customer_id\n+buyer_id" })],

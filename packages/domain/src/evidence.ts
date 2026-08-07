@@ -954,7 +954,7 @@ export const impactContextSchema = z
         schemas.length !== 1 ||
         schemas[0]?.payload.schemaFieldUrn !== canonicalSchemaFieldUrn ||
         schemas[0]?.payload.nativeFieldPath !== canonicalNativeFieldPath ||
-        schemas[0]?.payload.nativeType !== "bigint" ||
+        schemas[0]?.payload.nativeType !== "uuid" ||
         schemas[0]?.payload.nullable !== false ||
         paths.length !== 2 ||
         !dashboardPath ||
@@ -1153,14 +1153,14 @@ export function createCanonicalImpactContextFixture(changeId: string): ImpactCon
     sourceUrn: canonicalDatasetUrn,
     fieldPath: canonicalFieldPath,
     title: "orders.customer_id schema",
-    summary: "The source field is a non-null bigint in PostgreSQL.",
+    summary: "The source field is a non-null uuid in PostgreSQL.",
     criticality: "HIGH",
     relatedEvidenceIds: [],
     provenance: [provenance("SCHEMA", "list_schema_fields", "canonical-schema")],
     payload: {
       schemaFieldUrn: canonicalSchemaFieldUrn,
       nativeFieldPath: canonicalNativeFieldPath,
-      nativeType: "bigint",
+      nativeType: "uuid",
       nullable: false,
     },
   });

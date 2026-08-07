@@ -82,7 +82,7 @@ function payloadFor(tool: ReadToolName, call: number): RawToolInvocation["payloa
   }
   if (tool === "list_schema_fields") {
     return {
-      fields: [{ fieldPath: "customer_id", nativeDataType: "bigint", nullable: false }],
+      fields: [{ fieldPath: "customer_id", nativeDataType: "uuid", nullable: false }],
       matchingCount: 1,
       offset: 0,
       remainingCount: 0,
@@ -268,7 +268,7 @@ describe("canonical official MCP reader", () => {
     [[], "NOT_FOUND"],
     [
       [
-        { fieldPath: "customer_id", nativeDataType: "bigint", nullable: false },
+        { fieldPath: "customer_id", nativeDataType: "uuid", nullable: false },
         { fieldPath: "customer_id", nativeDataType: "text", nullable: true },
       ],
       "AMBIGUOUS",
@@ -339,7 +339,7 @@ describe("canonical official MCP reader", () => {
         tool === "search"
           ? payloadFor(tool, call)
           : {
-              fields: [{ fieldPath: "customer_id", nativeDataType: "bigint", nullable: false }],
+              fields: [{ fieldPath: "customer_id", nativeDataType: "uuid", nullable: false }],
               matchingCount: 2,
               offset: 0,
               remainingCount: 99,
@@ -511,7 +511,7 @@ describe("canonical official MCP reader", () => {
             {
               fieldPath: "customer_id",
               glossaryTerms: ["Customer Identifier"],
-              nativeDataType: "bigint",
+              nativeDataType: "uuid",
               nullable: false,
             },
           ],
@@ -572,7 +572,7 @@ describe("canonical official MCP reader", () => {
       {
         tool: "list_schema_fields",
         payload: {
-          fields: [{ fieldPath: "customer_id", nativeDataType: "bigint", nullable: false }],
+          fields: [{ fieldPath: "customer_id", nativeDataType: "uuid", nullable: false }],
           matchingCount: 1,
           offset: 1,
           remainingCount: 1,
@@ -597,7 +597,7 @@ describe("canonical official MCP reader", () => {
       {
         tool: "list_schema_fields",
         payload: {
-          fields: [{ fieldPath: "customer_id", nativeDataType: "bigint", nullable: false }],
+          fields: [{ fieldPath: "customer_id", nativeDataType: "uuid", nullable: false }],
           matchingCount: 1,
           offset: 0,
           remainingCount: 0,
@@ -622,7 +622,7 @@ describe("canonical official MCP reader", () => {
       {
         tool: "list_schema_fields",
         payload: {
-          fields: [{ fieldPath: "customer_id", nativeDataType: "bigint", nullable: false }],
+          fields: [{ fieldPath: "customer_id", nativeDataType: "uuid", nullable: false }],
           matchingCount: 1,
           offset: 1,
           remainingCount: 0,

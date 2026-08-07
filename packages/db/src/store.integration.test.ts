@@ -279,7 +279,7 @@ function validationCandidate(
         operation: "CREATE",
         path: "walkthrough/migrations/001_expand.sql",
         kind: "SQL_MIGRATION",
-        content: "alter table commerce.orders add column buyer_id bigint;",
+        content: "alter table commerce.orders add column buyer_id uuid;",
       },
       {
         operation: "CREATE",

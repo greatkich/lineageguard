@@ -19,7 +19,7 @@ describe("official DataHub MCP v0.6.0 response contracts", () => {
     expect(parseSearchPage(fixture("search-page")).searchResults).toHaveLength(1);
     expect(parseSchemaFieldsPage(fixture("schema-fields-page")).fields[0]).toMatchObject({
       fieldPath: "customer_id",
-      nativeDataType: "bigint",
+      nativeDataType: "uuid",
       nullable: false,
     });
     expect(parseLineagePage(fixture("lineage-page")).downstreams?.searchResults).toHaveLength(1);

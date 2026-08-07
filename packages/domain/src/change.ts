@@ -279,8 +279,8 @@ function classifyGitDiff(path: string, patch: string): ChangeClassification {
   let canonicalCount = 0;
   for (let index = 0; index < Math.min(removed.length, added.length); index += 1) {
     if (
-      removed[index]?.slice(1).trim() === "customer_id::bigint as customer_id," &&
-      added[index]?.slice(1).trim() === "buyer_id::bigint as buyer_id,"
+      removed[index]?.slice(1).trim() === "customer_id::uuid as customer_id," &&
+      added[index]?.slice(1).trim() === "buyer_id::uuid as buyer_id,"
     )
       canonicalCount += 1;
   }

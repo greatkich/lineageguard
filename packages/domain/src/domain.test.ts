@@ -220,14 +220,14 @@ describe("canonical impact evidence", () => {
       }).success,
     ).toBe(false);
     expect(first.impactContextFingerprint).toBe(
-      "14e335290bf5f7123e0cc44037182541b8938acd9500e9760fff28ef0bdd04ff",
+      "429fc360ad9c7e30fd247bd90814796ea5de930fd92cdf528e032a11c7ff6148",
     );
     expect(first.collectionFingerprint).toBe(
-      "146bd20828068b3df98ef0ddfd61dff66cc13f59d97b7feee9836143c1ac0431",
+      "fac7d3112fd76d1166bf04c3a3eb3058c19d3099eb18e39ae2b3d77afe8202c7",
     );
     expect(first.evidence.map((item) => `${item.kind}:${item.id}`)).toEqual([
-      "SCHEMA:ev_09d0ce72de399bd52bd82247",
       "QUERY_USAGE:ev_171e9e739d3d518e46aad9ee",
+      "SCHEMA:ev_1f112a8ac95df55ff9bab339",
       "OWNER:ev_3c7004115fc0597e35a9af8e",
       "DASHBOARD:ev_59eb5c12bc8d30556ca933fe",
       "LINEAGE_PATH:ev_9e907158dba3dd3b5ea635af",
@@ -1128,7 +1128,7 @@ function candidateInput(bundle = canonicalBundle()) {
         operation: "CREATE",
         path: "walkthrough/migrations/001_expand.sql",
         kind: "SQL_MIGRATION",
-        content: "alter table commerce.orders add column buyer_id bigint;",
+        content: "alter table commerce.orders add column buyer_id uuid;",
       },
       {
         operation: "CREATE",

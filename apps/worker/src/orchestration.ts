@@ -22,6 +22,7 @@ import {
   type WritebackOutput,
 } from "@lineageguard/agent";
 import type { SimpleRunStore, SimpleRunUpdateExtra } from "@lineageguard/db";
+import { canonicalBaseFixtureSql } from "./canonical-base-fixture.js";
 
 // ---------------------------------------------------------------------------
 // Phase B: DataHub context port (MCP stdio → full ImpactContext)
@@ -127,9 +128,8 @@ function createValidationPort(workerId: string): AgentValidationPort | undefined
         const sandboxId = `validation-${Date.now()}`;
         const worktreeId = `lineageguard/validation/${sandboxId}`;
 
-        // Read base fixture SQL — must include existing rows for backfill verification
-        let baseFixtureSql =
-          "CREATE SCHEMA IF NOT EXISTS commerce; CREATE TABLE commerce.orders (order_id BIGINT PRIMARY KEY, customer_id BIGINT NOT NULL, order_total NUMERIC(10,2), ordered_at TIMESTAMPTZ DEFAULT now()); INSERT INTO commerce.orders (order_id, customer_id, order_total, ordered_at) VALUES (1, 100, 49.99, '2024-01-15'), (2, 200, 129.00, '2024-02-20'), (3, 100, 75.50, '2024-03-10');";
+        // Read base fixture SQL — must include existing rows for backfill verification.
+        let baseFixtureSql = canonicalBaseFixtureSql;
         if (baseFixturePath) {
           try {
             baseFixtureSql = await readFile(baseFixturePath, "utf8");

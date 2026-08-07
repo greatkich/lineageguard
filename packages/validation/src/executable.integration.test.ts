@@ -256,7 +256,7 @@ suite("public executable validation and attestation path", () => {
     }
     runtimePolicy = {
       baseFixtureSql:
-        "create schema commerce; create table commerce.orders (order_id bigint primary key, customer_id bigint not null); insert into commerce.orders values (1,10),(2,20);",
+        "create schema commerce; create table commerce.orders (order_id uuid primary key, customer_id uuid not null); insert into commerce.orders values ('00000000-0000-4000-8000-000000000001','00000000-0000-4000-8000-0000000000a1'),('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-0000000000a2');",
       dockerExecutable,
       validationRunnerImageId,
       postgresImageId,
