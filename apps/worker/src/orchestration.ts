@@ -235,7 +235,7 @@ function createValidationPort(workerId: string): AgentValidationPort | undefined
 // Phase E: GitHub PR port adapter
 // ---------------------------------------------------------------------------
 
-function createGitHubPort(): AgentGitHubPort | undefined {
+export function createGitHubPort(): AgentGitHubPort | undefined {
   const token = process.env.GITHUB_TOKEN;
   const owner = process.env.GITHUB_OWNER;
   const repo = process.env.GITHUB_REPO;
@@ -387,7 +387,7 @@ function buildPrBody(input: GitHubReviewInput): string {
 // Phase F: DataHub writeback port adapter
 // ---------------------------------------------------------------------------
 
-function createWritebackPort(): AgentWritebackPort | undefined {
+export function createWritebackPort(): AgentWritebackPort | undefined {
   const mutationToken = process.env.DATAHUB_MUTATION_TOKEN;
   const gmsUrl = process.env.DATAHUB_GMS_URL ?? "http://127.0.0.1:8080";
   const writebackEnabled = process.env.WRITEBACK_ENABLED !== "false";
@@ -403,8 +403,25 @@ function createWritebackPort(): AgentWritebackPort | undefined {
       const datasetUrn =
         "urn:li:dataset:(urn:li:dataPlatform:postgres,lineageguard-canonical.lineageguard.commerce.orders,PROD)";
 
-      // Separate read/mutation credentials
-      const readToken = process.env.DATAHUB_READ_TOKEN ?? process.env.DATAHUB_TOKEN ?? mutationToken;
+      // Separate read/mutation credentials — the read token must be genuinely
+      // distinct from the mutation token (least-privilege: a read-only
+      // credential must never be silently promoted to mutation-token scope,
+      // and reads must never run under a fallback that is actually the
+      // mutation token). See AGENTS.md: "Keep DataHub MCP mutations off by
+      // default" / README: "separate read/mutation tokens".
+      const readToken = process.env.DATAHUB_READ_TOKEN ?? process.env.DATAHUB_TOKEN;
+      if (!readToken) {
+        throw new Error(
+          "DataHub writeback requires DATAHUB_READ_TOKEN (or DATAHUB_TOKEN) to be set separately " +
+            "from DATAHUB_MUTATION_TOKEN — refusing to read using the mutation credential.",
+        );
+      }
+      if (readToken === mutationToken) {
+        throw new Error(
+          "DataHub writeback requires DATAHUB_READ_TOKEN to differ from DATAHUB_MUTATION_TOKEN " +
+            "(least-privilege credential separation) — refusing to proceed with a shared token.",
+        );
+      }
       const readHeaders = { Authorization: `Bearer ${readToken}` };
       const writeHeaders = { "Content-Type": "application/json", Authorization: `Bearer ${mutationToken}` };
 
