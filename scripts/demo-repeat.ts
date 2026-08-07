@@ -2,15 +2,30 @@
  * demo:repeat --count N — the repeatability proof.
  *
  * Runs the same canonical input N times with no manual repair between runs and proves that repeated
- * rehearsals converge rather than accumulate: distinct run ids, but one generated PR identity, one
- * DataHub decision identity, and no leaked containers or worktrees.
+ * rehearsals *converge* rather than accumulate: distinct run ids, but one derived candidate identity,
+ * one generated PR, one DataHub decision identity, and no leaked sandbox state.
+ *
+ * Every claim is derived from evidence:
+ *   - fingerprints are re-derived from each run's persisted candidate, not read from a log line;
+ *   - the DataHub decision identity is re-read from institutional memory after the runs;
+ *   - duplicate documents and duplicate LineageGuard tags are counted, not assumed absent;
+ *   - Docker and worktree inspection failures are failed checks, not empty lists.
  *
  * Usage: pnpm demo:repeat -- --count 3
  */
+import { canonicalCandidateFingerprint, type MigrationCandidate } from "@lineageguard/domain";
+import {
+  candidateView,
+  expectedDecisionMarker,
+  listValidationWorktrees,
+  listValidatorContainers,
+  readDataHubDecisionState,
+} from "./acceptance-inspect.js";
 import {
   argValue,
   type CheckResult,
   fail,
+  latestLiveRun,
   loadEnv,
   pass,
   printUsage,
@@ -30,29 +45,13 @@ type RunOutcome = Readonly<{
   prUrl: string | null;
   writeback: string | null;
   validationReceipt: string | null;
+  /** Derived from the persisted candidate, so identity claims are recomputed rather than trusted. */
+  candidateFingerprint: string | null;
+  sourceFingerprint: string | null;
+  impactContextFingerprint: string | null;
+  validationCheckCount: number | null;
+  validationAllPass: boolean | null;
 }>;
-
-async function containerNames(): Promise<string[]> {
-  try {
-    const { stdout } = await run("docker", ["ps", "-a", "--format", "{{.Names}}"]);
-    return stdout.split("\n").filter((name) => name.startsWith("lineageguard"));
-  } catch {
-    return [];
-  }
-}
-
-async function worktreePaths(): Promise<string[]> {
-  try {
-    const { stdout } = await run("git", ["worktree", "list", "--porcelain"]);
-    return stdout
-      .split("\n")
-      .filter((line) => line.startsWith("worktree "))
-      .map((line) => line.slice("worktree ".length))
-      .filter((path) => path.includes("validation") || path.includes("sandbox"));
-  } catch {
-    return [];
-  }
-}
 
 async function executeOnce(index: number): Promise<RunOutcome> {
   console.log(`\n--- run ${String(index)} ---`);
@@ -64,9 +63,15 @@ async function executeOnce(index: number): Promise<RunOutcome> {
     console.log(`  demo:run exited non-zero: ${message.slice(0, 160)}`);
   }
   return withRunStore(async (store) => {
-    const latest = (await store.list(1))[0];
-    if (!latest) throw new Error("demo:run produced no run record");
+    const latest = await latestLiveRun(store);
+    if (!latest) throw new Error("demo:run produced no LIVE run record");
     console.log(`  ${latest.id} → ${latest.status}`);
+
+    const candidate = candidateView(latest.candidateJson);
+    const receipt = latest.validationReceiptJson as
+      | { allPass?: boolean; checks?: unknown[] }
+      | null
+      | undefined;
     return {
       index,
       runId: latest.id,
@@ -75,8 +80,34 @@ async function executeOnce(index: number): Promise<RunOutcome> {
       prUrl: latest.prUrl,
       writeback: latest.writebackStatus,
       validationReceipt: latest.validationReceiptFingerprint,
+      candidateFingerprint: candidate.ok
+        ? canonicalCandidateFingerprint(latest.candidateJson as MigrationCandidate)
+        : null,
+      sourceFingerprint: latest.sourceDiffFingerprint,
+      impactContextFingerprint: candidate.ok
+        ? candidate.value.sourceImpactContextFingerprint
+        : null,
+      validationCheckCount: Array.isArray(receipt?.checks) ? receipt.checks.length : null,
+      validationAllPass: typeof receipt?.allPass === "boolean" ? receipt.allPass : null,
     };
   });
+}
+
+/** Asserts that a value is identical across every run, reporting the distinct values when not. */
+function invariant(
+  name: string,
+  outcomes: readonly RunOutcome[],
+  select: (outcome: RunOutcome) => string | null,
+  describe: (value: string) => string,
+): CheckResult {
+  const values = outcomes.map(select);
+  if (values.some((value) => value === null || value.length === 0)) {
+    return fail(name, "at least one run did not record this value");
+  }
+  const distinct = [...new Set(values as string[])];
+  return distinct.length === 1 && distinct[0] !== undefined
+    ? pass(name, describe(distinct[0]))
+    : fail(name, `${String(distinct.length)} distinct values across runs — not convergent`);
 }
 
 function summarise(outcomes: readonly RunOutcome[]): CheckResult[] {
@@ -98,14 +129,37 @@ function summarise(outcomes: readonly RunOutcome[]): CheckResult[] {
       : fail("distinct run ids", `${String(runIds.size)} for ${String(outcomes.length)} runs`),
   );
 
-  const prUrls = new Set(outcomes.map((outcome) => outcome.prUrl).filter(Boolean));
   results.push(
-    prUrls.size === 1
-      ? pass("generated pr identity", `1 stable PR: ${[...prUrls][0] ?? ""}`)
-      : fail(
-          "generated pr identity",
-          `${String(prUrls.size)} distinct PRs — identity is not stable`,
-        ),
+    invariant(
+      "source fingerprint",
+      outcomes,
+      (outcome) => outcome.sourceFingerprint,
+      (value) => `identical across runs (${value.slice(0, 16)})`,
+    ),
+  );
+  results.push(
+    invariant(
+      "impact context fingerprint",
+      outcomes,
+      (outcome) => outcome.impactContextFingerprint,
+      (value) => `identical across runs (${value.slice(0, 16)})`,
+    ),
+  );
+  results.push(
+    invariant(
+      "candidate fingerprint",
+      outcomes,
+      (outcome) => outcome.candidateFingerprint,
+      (value) => `identical across runs (${value.slice(0, 16)})`,
+    ),
+  );
+  results.push(
+    invariant(
+      "generated pr identity",
+      outcomes,
+      (outcome) => outcome.prUrl,
+      (value) => `1 stable PR: ${value}`,
+    ),
   );
 
   const consumerCounts = new Set(outcomes.map((outcome) => outcome.consumers));
@@ -113,6 +167,23 @@ function summarise(outcomes: readonly RunOutcome[]): CheckResult[] {
     consumerCounts.size === 1 && consumerCounts.has(4)
       ? pass("consumer count", "4 on every run")
       : fail("consumer count", `observed ${[...consumerCounts].join(", ")}`),
+  );
+
+  const badValidation = outcomes.filter(
+    (outcome) => outcome.validationCheckCount !== 8 || outcome.validationAllPass !== true,
+  );
+  results.push(
+    badValidation.length === 0
+      ? pass("validation 8/8 every run", "eight canonical checks passed on every run")
+      : fail(
+          "validation 8/8 every run",
+          badValidation
+            .map(
+              (outcome) =>
+                `${outcome.runId}=${String(outcome.validationCheckCount)} checks/allPass=${String(outcome.validationAllPass)}`,
+            )
+            .join(", "),
+        ),
   );
 
   const receipts = new Set(outcomes.map((outcome) => outcome.validationReceipt).filter(Boolean));
@@ -135,12 +206,100 @@ function summarise(outcomes: readonly RunOutcome[]): CheckResult[] {
   return results;
 }
 
+/**
+ * Re-reads DataHub after the runs and proves the decision converged onto exactly one identity that
+ * matches the candidate every run derived.
+ */
+async function verifyConvergedDecision(outcomes: readonly RunOutcome[]): Promise<CheckResult[]> {
+  const state = await readDataHubDecisionState();
+  if (!state.ok) {
+    return [
+      fail("datahub decision identity", state.reason),
+      fail("datahub decision documents", "DataHub could not be inspected"),
+      fail("datahub duplicate metadata", "DataHub could not be inspected"),
+    ];
+  }
+
+  const results: CheckResult[] = [
+    state.value.markers.length === 1
+      ? pass("datahub decision identity", `exactly one: ${state.value.markers[0] ?? ""}`)
+      : fail(
+          "datahub decision identity",
+          `${String(state.value.markers.length)} decision identities after ${String(outcomes.length)} runs`,
+        ),
+    state.value.decisionElementCount === 1
+      ? pass("datahub decision documents", "exactly one LineageGuard decision document")
+      : fail(
+          "datahub decision documents",
+          `${String(state.value.decisionElementCount)} LineageGuard decision documents`,
+        ),
+    state.value.duplicateTags
+      ? fail("datahub duplicate metadata", "a LineageGuard tag is attached more than once")
+      : pass(
+          "datahub duplicate metadata",
+          `${String(state.value.lineageguardTags.length)} LineageGuard tags, none duplicated`,
+        ),
+  ];
+
+  const fingerprints = [
+    ...new Set(outcomes.map((outcome) => outcome.candidateFingerprint).filter(Boolean)),
+  ] as string[];
+  if (fingerprints.length !== 1 || fingerprints[0] === undefined) {
+    results.push(
+      fail("datahub decision matches candidate", "runs did not converge on one candidate identity"),
+    );
+    return results;
+  }
+  const expected = expectedDecisionMarker(fingerprints[0]);
+  results.push(
+    state.value.markers[0] === expected
+      ? pass("datahub decision matches candidate", `${expected} derived from every run's candidate`)
+      : fail(
+          "datahub decision matches candidate",
+          `DataHub holds ${String(state.value.markers[0])} but the runs derive ${expected}`,
+        ),
+  );
+  return results;
+}
+
+/** Sandbox hygiene, with inspection failure treated as a failed check. */
+async function verifySandboxHygiene(
+  containersBefore: readonly string[],
+  worktreesBefore: readonly string[],
+): Promise<CheckResult[]> {
+  const results: CheckResult[] = [];
+  const containersAfter = await listValidatorContainers();
+  if (!containersAfter.ok) {
+    results.push(fail("leaked containers", containersAfter.reason));
+  } else {
+    const leaked = containersAfter.value.filter((name) => !containersBefore.includes(name));
+    results.push(
+      leaked.length === 0
+        ? pass("leaked containers", "0")
+        : fail("leaked containers", leaked.join(", ")),
+    );
+  }
+
+  const worktreesAfter = await listValidationWorktrees();
+  if (!worktreesAfter.ok) {
+    results.push(fail("leaked worktrees", worktreesAfter.reason));
+  } else {
+    const leaked = worktreesAfter.value.filter((path) => !worktreesBefore.includes(path));
+    results.push(
+      leaked.length === 0
+        ? pass("leaked worktrees", "0")
+        : fail("leaked worktrees", leaked.join(", ")),
+    );
+  }
+  return results;
+}
+
 async function main(): Promise<void> {
   if (wantsHelp()) {
     printUsage("demo:repeat -- --count 3", [
       "Runs the canonical demo N times with no manual repair and proves that",
-      "repeated rehearsals converge: distinct run ids, one generated PR, one",
-      "DataHub decision, no leaked containers or worktrees.",
+      "repeated rehearsals converge: distinct run ids, one candidate identity,",
+      "one generated PR, one DataHub decision, and no leaked sandbox state.",
     ]);
     return;
   }
@@ -152,37 +311,57 @@ async function main(): Promise<void> {
     return;
   }
 
-  const containersBefore = await containerNames();
-  const worktreesBefore = await worktreePaths();
+  // A pre-run inspection that fails is fatal: without a baseline we cannot claim zero leaks.
+  const containersBefore = await listValidatorContainers();
+  const worktreesBefore = await listValidationWorktrees();
+  if (!containersBefore.ok || !worktreesBefore.ok) {
+    const reason = !containersBefore.ok
+      ? containersBefore.reason
+      : !worktreesBefore.ok
+        ? worktreesBefore.reason
+        : "unknown";
+    console.error(`cannot establish a sandbox baseline: ${reason}`);
+    console.log("\nrepeat: FAIL\n");
+    process.exitCode = 1;
+    return;
+  }
 
   const outcomes: RunOutcome[] = [];
   for (let index = 1; index <= count; index += 1) {
     outcomes.push(await executeOnce(index));
   }
 
-  const containersAfter = await containerNames();
-  const worktreesAfter = await worktreePaths();
-  const leakedContainers = containersAfter.filter((name) => !containersBefore.includes(name));
-  const leakedWorktrees = worktreesAfter.filter((path) => !worktreesBefore.includes(path));
-
   const results = [
     ...summarise(outcomes),
-    leakedContainers.length === 0
-      ? pass("leaked containers", "0")
-      : fail("leaked containers", leakedContainers.join(", ")),
-    leakedWorktrees.length === 0
-      ? pass("leaked worktrees", "0")
-      : fail("leaked worktrees", leakedWorktrees.join(", ")),
+    ...(await verifyConvergedDecision(outcomes)),
+    ...(await verifySandboxHygiene(containersBefore.value, worktreesBefore.value)),
   ];
 
   console.log("");
   for (const outcome of outcomes) {
     console.log(
-      `run ${String(outcome.index)}: ${outcome.status.padEnd(10)} consumers=${String(outcome.consumers)} pr=${outcome.prUrl ?? "-"}`,
+      `  run ${String(outcome.index)}: ${outcome.runId} → ${outcome.status}` +
+        ` (candidate ${outcome.candidateFingerprint?.slice(0, 12) ?? "none"})`,
     );
   }
 
-  const ok = reportMatrix(`demo:repeat --count ${String(count)}`, results);
+  const ok = reportMatrix(`demo:repeat ×${String(count)}`, results);
+
+  console.log("\nstable identities");
+  const prUrls = [...new Set(outcomes.map((outcome) => outcome.prUrl).filter(Boolean))];
+  const candidates = [
+    ...new Set(outcomes.map((outcome) => outcome.candidateFingerprint).filter(Boolean)),
+  ];
+  console.log(`  run ids:              ${outcomes.map((outcome) => outcome.runId).join(", ")}`);
+  console.log(`  candidate identity:   ${candidates.join(", ") || "none"}`);
+  console.log(`  generated pr:         ${prUrls.join(", ") || "none"}`);
+  const state = await readDataHubDecisionState();
+  console.log(
+    `  datahub decision:     ${
+      state.ok ? state.value.markers.join(", ") || "none" : `uninspectable (${state.reason})`
+    }`,
+  );
+
   console.log(ok ? "\nrepeat: PASS\n" : "\nrepeat: FAIL\n");
   process.exitCode = ok ? 0 : 1;
 }

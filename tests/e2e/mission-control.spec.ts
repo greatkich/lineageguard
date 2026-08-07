@@ -409,14 +409,21 @@ test.beforeAll(async () => {
 });
 
 test.afterAll(async () => {
-  // Remove the E2E fixture row so it does not interfere with demo:verify
-  // (which picks the most recent simple_run by default).
+  // Fail-closed cleanup. The fixture row lives in the same store the acceptance harness reads, so
+  // leaving it behind is a correctness problem, not cosmetic. Swallowing the failure would let a
+  // stale fixture survive into a later demo:verify, which is exactly the confusion this removes.
   try {
     await pool.query("DELETE FROM lineageguard.simple_runs WHERE id = $1", [FIXTURE_RUN_ID]);
-  } catch {
-    // Best-effort cleanup; the row may not exist if seeding was skipped.
+    const { rows } = await pool.query<{ count: string }>(
+      "SELECT count(*)::text AS count FROM lineageguard.simple_runs WHERE id = $1",
+      [FIXTURE_RUN_ID],
+    );
+    if (rows[0]?.count !== "0") {
+      throw new Error(`fixture run ${FIXTURE_RUN_ID} is still present after cleanup`);
+    }
+  } finally {
+    await pool.end();
   }
-  await pool.end();
 });
 
 test.describe("Mission Control — Dashboard", () => {
@@ -526,10 +533,13 @@ test.describe("API Routes", () => {
   });
 });
 
-test.describe("Demo readiness screenshots", () => {
+test.describe("Fixture UI screenshots (not golden evidence)", () => {
   test("captures dashboard and run-detail states at 1440x900", async ({ page }) => {
     const { mkdirSync } = await import("node:fs");
-    const dir = "artifacts/demo-readiness/screenshots";
+    // Deliberately NOT artifacts/demo-readiness/: these are fixture renders for deterministic UI
+    // regression review. Golden recording evidence comes from tests/e2e/golden-recording.spec.ts,
+    // which captures a real LIVE run.
+    const dir = "artifacts/test-fixtures/screenshots";
     mkdirSync(dir, { recursive: true });
 
     await page.goto("/");

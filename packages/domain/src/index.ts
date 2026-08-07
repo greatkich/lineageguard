@@ -1,4 +1,10 @@
 export * from "./change.js";
+export {
+  canonicalCandidateFingerprint,
+  decisionMarker,
+  generatedBranchName,
+  sha256Bytes,
+} from "./candidate-identity.js";
 export type {
   CanonicalImpactRequest,
   Criticality,

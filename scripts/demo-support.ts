@@ -85,6 +85,30 @@ export function expectedRepository(): string {
   return process.env.LINEAGEGUARD_REPOSITORY ?? "greatkich/lineageguard";
 }
 
+/**
+ * Run ids that acceptance must never treat as canonical LIVE evidence.
+ *
+ * E2E and integration suites seed rows into the same store so the UI can be exercised without live
+ * infrastructure. Those rows are deliberately shaped like completed runs, so selecting "the most
+ * recent run" once let a fixture stand in for the golden run. Acceptance selects on this namespace
+ * boundary rather than on recency alone.
+ */
+const nonLiveRunIdPattern = /^(?:test_|fixture_)|e2efixture/;
+
+export function isFixtureRunId(runId: string): boolean {
+  return nonLiveRunIdPattern.test(runId);
+}
+
+/** The most recent run that is genuinely a LIVE canonical run, skipping seeded fixtures. */
+export async function latestLiveRun<T extends { id: string; executionMode: string }>(store: {
+  list(limit?: number): Promise<T[]>;
+}): Promise<T | null> {
+  const recent = await store.list(50);
+  return (
+    recent.find((record) => !isFixtureRunId(record.id) && record.executionMode === "LIVE") ?? null
+  );
+}
+
 /** Opens the run store, runs the body, and always closes the pool. */
 export async function withRunStore<T>(
   body: (store: Awaited<ReturnType<typeof openRunStore>>["store"]) => Promise<T>,

@@ -435,6 +435,7 @@ export function createGitHubPort(): AgentGitHubPort | undefined {
         prNumber: pr.number,
         headSha: commit.sha,
         headBranch: branchName,
+        baseSha,
         receiptFingerprint,
       };
     },

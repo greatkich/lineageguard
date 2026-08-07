@@ -3,11 +3,13 @@ import {
   assertExactlyFourConsumers,
   assertNoSourceDrift,
   bindMigrationCandidate,
+  canonicalCandidateFingerprint,
   type ImpactContext,
   type MigrationCandidate,
   type ProposedChange,
   type RiskComparison,
   type RunStatus,
+  sha256Bytes,
   type SourceChangeEnvelope,
 } from "@lineageguard/domain";
 import { type AgentLLMConfig, agentLLMConfigFromEnv, directLLMCall } from "./llm/client.js";
@@ -39,6 +41,8 @@ export interface GitHubReviewOutput {
   headSha: string;
   headBranch: string;
   receiptFingerprint: string;
+  /** The base commit the generated commit was parented on. */
+  baseSha?: string | undefined;
 }
 
 export interface AgentValidationPort {
@@ -352,6 +356,22 @@ export function createAgentPipeline(config: AgentPipelineConfig) {
           await notify(input.runId, "VALIDATED", {
             artifactsGenerated: result.artifactsGenerated,
             validationReceiptFingerprint,
+            // Persist the receipt body, not just its digest, so acceptance can independently
+            // re-inspect that exactly the eight canonical checks ran and every one passed.
+            validationReceiptJson: {
+              receiptFingerprint: validationReceiptFingerprint,
+              allPass: validationOutput.allPass,
+              checks: validationOutput.checks.map((check) => ({
+                check: check.check,
+                status: check.status,
+                summary: check.summary,
+              })),
+              artifacts: candidate.artifacts.map((artifact) => ({
+                path: artifact.path,
+                sha256: sha256Bytes(artifact.content),
+              })),
+              candidateFingerprint: canonicalCandidateFingerprint(candidate),
+            },
           });
         } catch (err: any) {
           console.error(`  [pipeline] Step 7 FAILED: ${err.message?.slice(0, 150)}`);
@@ -384,6 +404,13 @@ export function createAgentPipeline(config: AgentPipelineConfig) {
             prUrl: githubReceipt.prUrl,
             prNumber: githubReceipt.prNumber,
             githubReceiptFingerprint: githubReceipt.receiptFingerprint,
+            // Bind the published commit identity so acceptance can prove the remote branch still
+            // points at exactly the commit this run created.
+            githubHeadSha: githubReceipt.headSha,
+            githubHeadBranch: githubReceipt.headBranch,
+            ...(githubReceipt.baseSha === undefined
+              ? {}
+              : { githubBaseSha: githubReceipt.baseSha }),
           });
         } catch (err: any) {
           console.error(`  [pipeline] Step 8 FAILED: ${err.message?.slice(0, 150)}`);

@@ -22,6 +22,18 @@ export interface SimpleRun {
   contextJson: unknown | null;
   candidateJson: unknown | null;
   comparisonJson: unknown | null;
+  /**
+   * The full validation receipt: every executed check with its status, plus the artifact
+   * observations the validator recorded. Persisted so acceptance can re-inspect the eight
+   * canonical checks instead of trusting a bare fingerprint.
+   */
+  validationReceiptJson: unknown | null;
+  /** The commit the generated PR was published at, so acceptance can detect later tampering. */
+  githubHeadSha: string | null;
+  /** The content-addressed branch the generated PR was published onto. */
+  githubHeadBranch: string | null;
+  /** The base commit the generated commit was parented on. */
+  githubBaseSha: string | null;
   executionMode: string;
   sourcePrUrl: string | null;
   sourcePrNumber: number | null;
@@ -49,6 +61,10 @@ export interface SimpleRunUpdateExtra {
   contextJson: unknown;
   candidateJson: unknown;
   comparisonJson: unknown;
+  validationReceiptJson: unknown;
+  githubHeadSha: string;
+  githubHeadBranch: string;
+  githubBaseSha: string;
   sourcePrUrl: string;
   sourcePrNumber: number;
   sourceBaseSha: string;
@@ -101,6 +117,10 @@ function mapRow(row: Record<string, unknown>): SimpleRun {
     contextJson: (row.context_json as unknown) ?? null,
     candidateJson: (row.candidate_json as unknown) ?? null,
     comparisonJson: (row.comparison_json as unknown) ?? null,
+    validationReceiptJson: (row.validation_receipt_json as unknown) ?? null,
+    githubHeadSha: (row.github_head_sha as string) ?? null,
+    githubHeadBranch: (row.github_head_branch as string) ?? null,
+    githubBaseSha: (row.github_base_sha as string) ?? null,
     executionMode: (row.execution_mode as string) ?? "LIVE",
     sourcePrUrl: (row.source_pr_url as string) ?? null,
     sourcePrNumber: (row.source_pr_number as number) ?? null,
@@ -139,6 +159,10 @@ export function createSimpleRunStore(pool: pg.Pool): SimpleRunStore {
           context_json JSONB,
           candidate_json JSONB,
           comparison_json JSONB,
+          validation_receipt_json JSONB,
+          github_head_sha TEXT,
+          github_head_branch TEXT,
+          github_base_sha TEXT,
           execution_mode TEXT NOT NULL DEFAULT 'LIVE',
           source_pr_url TEXT,
           source_pr_number INTEGER,
@@ -162,6 +186,10 @@ export function createSimpleRunStore(pool: pg.Pool): SimpleRunStore {
         "context_json JSONB",
         "candidate_json JSONB",
         "comparison_json JSONB",
+        "validation_receipt_json JSONB",
+        "github_head_sha TEXT",
+        "github_head_branch TEXT",
+        "github_base_sha TEXT",
         "execution_mode TEXT DEFAULT 'LIVE'",
         "source_pr_url TEXT",
         "source_pr_number INTEGER",
@@ -258,6 +286,22 @@ export function createSimpleRunStore(pool: pg.Pool): SimpleRunStore {
       if (extra?.comparisonJson !== undefined) {
         sets.push(`comparison_json = $${idx++}`);
         values.push(JSON.stringify(extra.comparisonJson));
+      }
+      if (extra?.validationReceiptJson !== undefined) {
+        sets.push(`validation_receipt_json = $${idx++}`);
+        values.push(JSON.stringify(extra.validationReceiptJson));
+      }
+      if (extra?.githubHeadSha !== undefined) {
+        sets.push(`github_head_sha = $${idx++}`);
+        values.push(extra.githubHeadSha);
+      }
+      if (extra?.githubHeadBranch !== undefined) {
+        sets.push(`github_head_branch = $${idx++}`);
+        values.push(extra.githubHeadBranch);
+      }
+      if (extra?.githubBaseSha !== undefined) {
+        sets.push(`github_base_sha = $${idx++}`);
+        values.push(extra.githubBaseSha);
       }
       if (extra?.sourcePrUrl !== undefined) {
         sets.push(`source_pr_url = $${idx++}`);

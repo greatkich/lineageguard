@@ -187,7 +187,10 @@ export default async function RunDetailPage({ params }: { params: Promise<{ runI
                 ))}
               </pre>
             </div>
-            <div className="mt-4 flex items-center gap-2 text-xs text-muted-foreground">
+            <div
+              className="mt-4 flex items-center gap-2 text-xs text-muted-foreground"
+              data-testid="baseline-assessment"
+            >
               <IconSearch className="w-3.5 h-3.5" />
               <span>
                 {run.baselineDecision === "ALLOW"
@@ -218,7 +221,10 @@ export default async function RunDetailPage({ params }: { params: Promise<{ runI
           <CardBody className="space-y-4">
             {/* Decision transition */}
             {run.baselineDecision && run.groundedDecision && (
-              <div className="flex items-center justify-between p-3 rounded-md bg-muted/50">
+              <div
+                className="flex items-center justify-between p-3 rounded-md bg-muted/50"
+                data-testid="decision-transition"
+              >
                 <span className="text-xs text-muted-foreground">Decision</span>
                 <div className="flex items-center gap-2">
                   <Badge status="allow">{run.baselineDecision}</Badge>
@@ -325,7 +331,7 @@ export default async function RunDetailPage({ params }: { params: Promise<{ runI
           <CardBody className="space-y-4">
             <div>
               <p className="text-xs text-muted-foreground mb-1">Strategy</p>
-              <p className="text-sm font-medium">
+              <p className="text-sm font-medium" data-testid="migration-strategy">
                 {candidate?.strategy
                   ? candidate.strategy
                       .replace(/_/g, " → ")
@@ -345,7 +351,10 @@ export default async function RunDetailPage({ params }: { params: Promise<{ runI
                 <p className="text-[10px] text-muted-foreground uppercase tracking-wider">
                   Validation
                 </p>
-                <p className="text-lg font-semibold mt-0.5 flex items-center gap-1">
+                <p
+                  className="text-lg font-semibold mt-0.5 flex items-center gap-1"
+                  data-testid="validation-status"
+                >
                   {run.validationReceiptFingerprint ? (
                     <>
                       <IconCheck className="w-4 h-4 text-status-pass" />{" "}
@@ -382,7 +391,10 @@ export default async function RunDetailPage({ params }: { params: Promise<{ runI
 
             {/* Writeback */}
             {run.writebackStatus && (
-              <div className="flex items-center gap-2 p-2.5 rounded-md bg-status-pass/5">
+              <div
+                className="flex items-center gap-2 p-2.5 rounded-md bg-status-pass/5"
+                data-testid="datahub-writeback"
+              >
                 <IconUpload className="w-4 h-4 text-status-pass" />
                 <div>
                   <p className="text-xs font-medium">DataHub Writeback</p>
@@ -405,6 +417,7 @@ export default async function RunDetailPage({ params }: { params: Promise<{ runI
                 target="_blank"
                 rel="noopener noreferrer"
                 className="flex items-center gap-2 p-2.5 rounded-md bg-status-info/5 hover:bg-status-info/10 transition-colors"
+                data-testid="generated-pr-link"
               >
                 <IconGitPullRequest className="w-4 h-4 text-status-info" />
                 <span className="text-xs font-medium text-status-info">View Pull Request</span>
@@ -416,7 +429,10 @@ export default async function RunDetailPage({ params }: { params: Promise<{ runI
 
       {/* Bottom insight banner */}
       {isComplete && (
-        <Card className="border-status-pass/30 bg-status-pass/[0.03]">
+        <Card
+          className="border-status-pass/30 bg-status-pass/[0.03]"
+          data-testid="run-summary-banner"
+        >
           <CardBody className="flex items-center gap-4">
             <div className="w-10 h-10 rounded-full bg-status-pass/10 flex items-center justify-center flex-shrink-0">
               <IconShieldCheck className="w-5 h-5 text-status-pass" />
