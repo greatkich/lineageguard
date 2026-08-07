@@ -167,10 +167,10 @@ describe("canonical live DataHub normalization", () => {
         {
           editedGlossaryTerms: ["Customer Identifier"],
           fieldPath: "customer_id",
-          nativeDataType: "bigint",
+          nativeDataType: "uuid",
           nullable: false,
         },
-        { fieldPath: "order_id", nativeDataType: "bigint", nullable: false },
+        { fieldPath: "order_id", nativeDataType: "uuid", nullable: false },
         { fieldPath: "amount", nativeDataType: "numeric", nullable: false },
         { fieldPath: "created_at", nativeDataType: "timestamp", nullable: false },
       ],
