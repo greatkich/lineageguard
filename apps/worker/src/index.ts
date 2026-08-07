@@ -3,7 +3,7 @@ import { createSimpleRunStore } from "@lineageguard/db";
 import pg from "pg";
 import { eventBus } from "./events.js";
 import { createOrchestrator } from "./orchestration.js";
-import { readSourcePR, type SourcePRInfo } from "./source-pr-reader.js";
+import { buildSourceChange, readSourcePR, type SourcePRInfo } from "./source-pr-reader.js";
 
 export interface WorkerOptions {
   once?: boolean;
@@ -45,7 +45,9 @@ export async function runWorker(options: WorkerOptions = {}): Promise<PipelineRe
         token,
         prNumber: Number.parseInt(sourcePrNumber, 10),
       });
-      console.log(`[worker] Source PR: ${sourcePR.prUrl} (${sourcePR.baseSha.slice(0, 7)}..${sourcePR.headSha.slice(0, 7)})`);
+      console.log(
+        `[worker] Source PR: ${sourcePR.prUrl} (${sourcePR.baseSha.slice(0, 7)}..${sourcePR.headSha.slice(0, 7)})`,
+      );
     }
 
     const baseSha = sourcePR?.baseSha ?? process.env.LINEAGEGUARD_BASE_SHA;
@@ -54,38 +56,49 @@ export async function runWorker(options: WorkerOptions = {}): Promise<PipelineRe
     if (!baseSha || !headSha) {
       throw new Error(
         "LINEAGEGUARD_BASE_SHA and LINEAGEGUARD_HEAD_SHA are required in LIVE mode. " +
-        "Set these to real Git SHAs, or set SOURCE_PR_NUMBER to read from a GitHub PR."
+          "Set these to real Git SHAs, or set SOURCE_PR_NUMBER to read from a GitHub PR.",
       );
     }
 
     // Determine the actual patch — from source PR or canonical default
     let patch = "ALTER TABLE commerce.orders RENAME COLUMN customer_id TO buyer_id;";
-    // Source type stays FIXTURE because domain classifyGitDiff expects model diffs,
-    // not migration SQL. The real SHAs from the source PR are what bind the run.
-    const sourceType: "FIXTURE" = "FIXTURE";
+    let sourceType: "FIXTURE" | "GITHUB" = "FIXTURE";
+    let sourcePath: string | undefined;
 
     if (sourcePR) {
       // Validate source PR contains the canonical rename
       const renamePattern = /RENAME\s+COLUMN\s+customer_id\s+TO\s+buyer_id/i;
       const sqlPatches = sourcePR.patches.filter(
-        (p) => p.filename.endsWith(".sql") && renamePattern.test(p.patch)
+        (p) => p.filename.endsWith(".sql") && renamePattern.test(p.patch),
       );
       if (sqlPatches.length === 0) {
         throw new Error(
           `Source PR #${sourcePR.prNumber} does not contain the canonical rename ` +
-          `(ALTER TABLE ... RENAME COLUMN customer_id TO buyer_id). ` +
-          `Changed files: ${sourcePR.changedFiles.join(", ")}`
+            `(ALTER TABLE ... RENAME COLUMN customer_id TO buyer_id). ` +
+            `Changed files: ${sourcePR.changedFiles.join(", ")}`,
         );
       }
       if (sqlPatches.length > 1) {
         throw new Error(
           `Source PR #${sourcePR.prNumber} contains multiple schema rename statements. ` +
-          `Only one canonical change is supported.`
+            `Only one canonical change is supported.`,
         );
       }
-      // Use exact canonical SQL — domain parser validates this specific statement
-      patch = "ALTER TABLE commerce.orders RENAME COLUMN customer_id TO buyer_id;";
-      console.log(`[worker] Source PR validated: canonical rename found in ${sqlPatches[0]!.filename}`);
+
+      // Build typed SourceChange with full unified diff for domain parser
+      const sourceChange = buildSourceChange(sourcePR, repository);
+      if (!sourceChange) {
+        throw new Error(
+          `Source PR #${sourcePR.prNumber} could not be converted to SourceChange — ` +
+            `expected exactly one SQL file with canonical rename.`,
+        );
+      }
+
+      // Use the reconstructed unified diff — domain parser handles source=GITHUB
+      patch = sourceChange.unifiedDiff;
+      sourceType = "GITHUB";
+      sourcePath = sourceChange.filePath;
+      console.log(`[worker] Source PR validated: source=GITHUB, path=${sourcePath}`);
     }
 
     await store.create({
@@ -93,12 +106,17 @@ export async function runWorker(options: WorkerOptions = {}): Promise<PipelineRe
       repository,
       field: "customer_id",
       patch,
+      ...(sourcePR
+        ? {
+            sourcePrUrl: sourcePR.prUrl,
+            sourcePrNumber: sourcePR.prNumber,
+            sourceBaseSha: sourcePR.baseSha,
+            sourceHeadSha: sourcePR.headSha,
+            sourceDiffFingerprint: sourcePR.diffFingerprint,
+            ...(sourcePath ? { sourceFilePath: sourcePath } : {}),
+          }
+        : {}),
     });
-
-    // Persist source PR info if available
-    if (sourcePR) {
-      await store.update(runId, "CREATED", { sourcePrUrl: sourcePR.prUrl });
-    }
 
     console.log(`[worker] Executing canonical run ${runId}... (source: ${sourceType})`);
 
@@ -112,7 +130,11 @@ export async function runWorker(options: WorkerOptions = {}): Promise<PipelineRe
       field: "customer_id",
       newName: "buyer_id",
       source: sourceType,
-      sourcePath: sourcePR ? sourcePR.patches.find((p) => /RENAME\s+COLUMN\s+customer_id/i.test(p.patch))?.filename : undefined,
+      sourcePath:
+        sourcePath ??
+        (sourcePR
+          ? sourcePR.patches.find((p) => /RENAME\s+COLUMN\s+customer_id/i.test(p.patch))?.filename
+          : undefined),
     });
 
     console.log(`[worker] Run ${runId} finished: ${result.finalStatus}`);

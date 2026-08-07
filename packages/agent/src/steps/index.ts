@@ -3,7 +3,6 @@ import type {
   CanonicalImpactRequest,
   ImpactCollectionResult,
   ImpactContext,
-  MigrationCandidate,
   ProposedChange,
   RiskAssessment,
   RiskComparison,
@@ -49,16 +48,10 @@ export interface PlanMigrationResult {
   plan: MigrationPlan;
 }
 
-export interface GeneratePatchResult {
-  candidate: MigrationCandidate;
-}
-
 export { baselineAssess } from "./baseline-assess.js";
 export { collectContext } from "./collect-context.js";
 export type { DecideRiskInput } from "./decide-risk.js";
 export { decideRisk } from "./decide-risk.js";
-export type { GeneratePatchInput } from "./generate-patch.js";
-export { generatePatch } from "./generate-patch.js";
 export type { ParseChangeInput } from "./parse-change.js";
 export { parseChange } from "./parse-change.js";
 export type { PlanMigrationInput } from "./plan-migration.js";

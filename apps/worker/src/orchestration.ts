@@ -21,7 +21,7 @@ import {
   type WritebackInput,
   type WritebackOutput,
 } from "@lineageguard/agent";
-import type { SimpleRunStore } from "@lineageguard/db";
+import type { SimpleRunStore, SimpleRunUpdateExtra } from "@lineageguard/db";
 
 // ---------------------------------------------------------------------------
 // Phase B: DataHub context port (MCP stdio → full ImpactContext)
@@ -34,10 +34,14 @@ async function createDataHubPort() {
   const uvCacheDir = process.env.UV_CACHE_DIR ?? process.env.HOME + "/.cache/uv";
 
   if (readToken.length <= 8) {
-    console.warn("[orchestration] DataHub not configured (token missing or too short) — collection will fail at runtime");
+    console.warn(
+      "[orchestration] DataHub not configured (token missing or too short) — collection will fail at runtime",
+    );
     return {
       async collect(_input: { changeId: string; request?: unknown }) {
-        throw new Error("DataHub is not configured: DATAHUB_READ_TOKEN (or DATAHUB_TOKEN) must be set and longer than 8 characters");
+        throw new Error(
+          "DataHub is not configured: DATAHUB_READ_TOKEN (or DATAHUB_TOKEN) must be set and longer than 8 characters",
+        );
       },
     };
   }
@@ -98,7 +102,7 @@ function createValidationPort(workerId: string): AgentValidationPort | undefined
       } catch {
         throw new Error(
           `Validation runtime unavailable: Docker executable not found at ${dockerExecutable}. ` +
-          `Set VALIDATION_DOCKER_EXECUTABLE or install Docker.`
+            `Set VALIDATION_DOCKER_EXECUTABLE or install Docker.`,
         );
       }
 
@@ -106,7 +110,7 @@ function createValidationPort(workerId: string): AgentValidationPort | undefined
       if (!runnerImageId || !postgresImageId) {
         throw new Error(
           "Validation runtime unavailable: VALIDATION_RUNNER_IMAGE_ID and VALIDATION_POSTGRES_IMAGE_ID must be set. " +
-          "These are content-addressed image digests (sha256:...) for the validation containers."
+            "These are content-addressed image digests (sha256:...) for the validation containers.",
         );
       }
 
@@ -118,17 +122,21 @@ function createValidationPort(workerId: string): AgentValidationPort | undefined
 
         const repositoryPath = resolve(process.cwd());
         const sandboxRoot = process.env.VALIDATION_SANDBOX_ROOT ?? "/tmp";
-        const baseSha = parsed.artifacts.find((a) => a.operation === "MODIFY")?.expectedBaseSha ?? "HEAD";
+        const baseSha =
+          parsed.artifacts.find((a) => a.operation === "MODIFY")?.expectedBaseSha ?? "HEAD";
         const sandboxId = `validation-${Date.now()}`;
         const worktreeId = `lineageguard/validation/${sandboxId}`;
 
         // Read base fixture SQL — must include existing rows for backfill verification
-        let baseFixtureSql = "CREATE SCHEMA IF NOT EXISTS commerce; CREATE TABLE commerce.orders (order_id BIGINT PRIMARY KEY, customer_id BIGINT NOT NULL, order_total NUMERIC(10,2), ordered_at TIMESTAMPTZ DEFAULT now()); INSERT INTO commerce.orders (order_id, customer_id, order_total, ordered_at) VALUES (1, 100, 49.99, '2024-01-15'), (2, 200, 129.00, '2024-02-20'), (3, 100, 75.50, '2024-03-10');";
+        let baseFixtureSql =
+          "CREATE SCHEMA IF NOT EXISTS commerce; CREATE TABLE commerce.orders (order_id BIGINT PRIMARY KEY, customer_id BIGINT NOT NULL, order_total NUMERIC(10,2), ordered_at TIMESTAMPTZ DEFAULT now()); INSERT INTO commerce.orders (order_id, customer_id, order_total, ordered_at) VALUES (1, 100, 49.99, '2024-01-15'), (2, 200, 129.00, '2024-02-20'), (3, 100, 75.50, '2024-03-10');";
         if (baseFixturePath) {
           try {
             baseFixtureSql = await readFile(baseFixturePath, "utf8");
           } catch {
-            console.warn(`[orchestration] Could not read base fixture from ${baseFixturePath}, using default`);
+            console.warn(
+              `[orchestration] Could not read base fixture from ${baseFixturePath}, using default`,
+            );
           }
         }
 
@@ -147,17 +155,67 @@ function createValidationPort(workerId: string): AgentValidationPort | undefined
           const sqlDriverVer = "8.16.3";
           const dbtImpl = "lineageguard:dbt-runner:v1";
           const dbtVer = "1.8.0";
-          const dbtDigest = runnerImageId.startsWith("sha256:") ? runnerImageId.slice("sha256:".length) : createHash("sha256").update(runnerImageId).digest("hex");
+          const dbtDigest = runnerImageId.startsWith("sha256:")
+            ? runnerImageId.slice("sha256:".length)
+            : createHash("sha256").update(runnerImageId).digest("hex");
 
           const validators = [
-            { check: "SQL_MIGRATION", commandId: "VALIDATE_SQL_MIGRATION_V1", impl: sqlDriverImpl, ver: sqlDriverVer, dig: sqlDriverDigest },
-            { check: "BACKFILL_EQUALITY", commandId: "VALIDATE_BACKFILL_EQUALITY_V1", impl: sqlDriverImpl, ver: sqlDriverVer, dig: sqlDriverDigest },
-            { check: "DBT_PARSE", commandId: "VALIDATE_DBT_PARSE_V1", impl: dbtImpl, ver: dbtVer, dig: dbtDigest },
-            { check: "DBT_COMPILE", commandId: "VALIDATE_DBT_COMPILE_V1", impl: dbtImpl, ver: dbtVer, dig: dbtDigest },
-            { check: "DBT_TEST", commandId: "VALIDATE_DBT_TEST_V1", impl: dbtImpl, ver: dbtVer, dig: dbtDigest },
-            { check: "OLD_CONSUMER_COMPATIBILITY", commandId: "VALIDATE_OLD_CONSUMER_V1", impl: sqlDriverImpl, ver: sqlDriverVer, dig: sqlDriverDigest },
-            { check: "NEW_CONSUMER_COMPATIBILITY", commandId: "VALIDATE_NEW_CONSUMER_V1", impl: sqlDriverImpl, ver: sqlDriverVer, dig: sqlDriverDigest },
-            { check: "ROLLBACK", commandId: "VALIDATE_ROLLBACK_V1", impl: sqlDriverImpl, ver: sqlDriverVer, dig: sqlDriverDigest },
+            {
+              check: "SQL_MIGRATION",
+              commandId: "VALIDATE_SQL_MIGRATION_V1",
+              impl: sqlDriverImpl,
+              ver: sqlDriverVer,
+              dig: sqlDriverDigest,
+            },
+            {
+              check: "BACKFILL_EQUALITY",
+              commandId: "VALIDATE_BACKFILL_EQUALITY_V1",
+              impl: sqlDriverImpl,
+              ver: sqlDriverVer,
+              dig: sqlDriverDigest,
+            },
+            {
+              check: "DBT_PARSE",
+              commandId: "VALIDATE_DBT_PARSE_V1",
+              impl: dbtImpl,
+              ver: dbtVer,
+              dig: dbtDigest,
+            },
+            {
+              check: "DBT_COMPILE",
+              commandId: "VALIDATE_DBT_COMPILE_V1",
+              impl: dbtImpl,
+              ver: dbtVer,
+              dig: dbtDigest,
+            },
+            {
+              check: "DBT_TEST",
+              commandId: "VALIDATE_DBT_TEST_V1",
+              impl: dbtImpl,
+              ver: dbtVer,
+              dig: dbtDigest,
+            },
+            {
+              check: "OLD_CONSUMER_COMPATIBILITY",
+              commandId: "VALIDATE_OLD_CONSUMER_V1",
+              impl: sqlDriverImpl,
+              ver: sqlDriverVer,
+              dig: sqlDriverDigest,
+            },
+            {
+              check: "NEW_CONSUMER_COMPATIBILITY",
+              commandId: "VALIDATE_NEW_CONSUMER_V1",
+              impl: sqlDriverImpl,
+              ver: sqlDriverVer,
+              dig: sqlDriverDigest,
+            },
+            {
+              check: "ROLLBACK",
+              commandId: "VALIDATE_ROLLBACK_V1",
+              impl: sqlDriverImpl,
+              ver: sqlDriverVer,
+              dig: sqlDriverDigest,
+            },
           ] as const;
 
           const evidence = await executeValidationInOwnedDatabase(
@@ -169,7 +227,10 @@ function createValidationPort(workerId: string): AgentValidationPort | undefined
               runId: runId as any,
               sandboxId,
               worktreeId,
-              leaseId: `lease_${createHash("sha256").update(runId + sandboxId).digest("hex").slice(0, 24)}` as any,
+              leaseId: `lease_${createHash("sha256")
+                .update(runId + sandboxId)
+                .digest("hex")
+                .slice(0, 24)}` as any,
               workerId,
               generation: 1,
               validators: validators.map((v) => ({
@@ -235,7 +296,7 @@ function createValidationPort(workerId: string): AgentValidationPort | undefined
 // Phase E: GitHub PR port adapter
 // ---------------------------------------------------------------------------
 
-function createGitHubPort(): AgentGitHubPort | undefined {
+export function createGitHubPort(): AgentGitHubPort | undefined {
   const token = process.env.GITHUB_TOKEN;
   const owner = process.env.GITHUB_OWNER;
   const repo = process.env.GITHUB_REPO;
@@ -253,37 +314,45 @@ function createGitHubPort(): AgentGitHubPort | undefined {
       const apiBase = "https://api.github.com";
 
       // Get current base SHA
-      const baseRef = await ghFetch(token, `${apiBase}/repos/${owner}/${repo}/git/ref/heads/${baseBranch}`);
+      const baseRef = await ghFetch(
+        token,
+        `${apiBase}/repos/${owner}/${repo}/git/ref/heads/${baseBranch}`,
+      );
       const baseSha = (baseRef as { object?: { sha?: string } })?.object?.sha;
       if (!baseSha) throw new Error("Cannot resolve base branch SHA");
 
       // Create tree with artifacts
       const treeEntries: Array<{ path: string; mode: string; type: string; sha: string }> = [];
-      const artifacts = (input.candidate as { artifacts?: Array<{ path: string; content: string }> }).artifacts ?? [];
+      const artifacts =
+        (input.candidate as { artifacts?: Array<{ path: string; content: string }> }).artifacts ??
+        [];
       for (const artifact of artifacts) {
-        const blob = await ghFetch(token, `${apiBase}/repos/${owner}/${repo}/git/blobs`, {
+        const blob = (await ghFetch(token, `${apiBase}/repos/${owner}/${repo}/git/blobs`, {
           method: "POST",
           body: { content: artifact.content, encoding: "utf-8" },
-        }) as { sha: string };
+        })) as { sha: string };
         treeEntries.push({ path: artifact.path, mode: "100644", type: "blob", sha: blob.sha });
       }
 
       // Create tree
-      const baseCommit = await ghFetch(token, `${apiBase}/repos/${owner}/${repo}/git/commits/${baseSha}`) as { tree: { sha: string } };
-      const tree = await ghFetch(token, `${apiBase}/repos/${owner}/${repo}/git/trees`, {
+      const baseCommit = (await ghFetch(
+        token,
+        `${apiBase}/repos/${owner}/${repo}/git/commits/${baseSha}`,
+      )) as { tree: { sha: string } };
+      const tree = (await ghFetch(token, `${apiBase}/repos/${owner}/${repo}/git/trees`, {
         method: "POST",
         body: { base_tree: baseCommit.tree.sha, tree: treeEntries },
-      }) as { sha: string };
+      })) as { sha: string };
 
       // Create commit
-      const commit = await ghFetch(token, `${apiBase}/repos/${owner}/${repo}/git/commits`, {
+      const commit = (await ghFetch(token, `${apiBase}/repos/${owner}/${repo}/git/commits`, {
         method: "POST",
         body: {
           message: `LineageGuard migration for ${input.runId}\n\nSafe migration: customer_id → buyer_id (expand-migrate-contract)`,
           tree: tree.sha,
           parents: [baseSha],
         },
-      }) as { sha: string };
+      })) as { sha: string };
 
       // Create or update branch
       try {
@@ -301,7 +370,7 @@ function createGitHubPort(): AgentGitHubPort | undefined {
       // Create draft PR
       let pr: { html_url: string; number: number };
       try {
-        pr = await ghFetch(token, `${apiBase}/repos/${owner}/${repo}/pulls`, {
+        pr = (await ghFetch(token, `${apiBase}/repos/${owner}/${repo}/pulls`, {
           method: "POST",
           body: {
             title: `LineageGuard: safe migration for customer_id → buyer_id`,
@@ -310,15 +379,20 @@ function createGitHubPort(): AgentGitHubPort | undefined {
             base: baseBranch,
             draft: true,
           },
-        }) as { html_url: string; number: number };
+        })) as { html_url: string; number: number };
       } catch (createErr: unknown) {
         // PR creation failed — check if one already exists (idempotency)
-        const prs = await ghFetch(token, `${apiBase}/repos/${owner}/${repo}/pulls?state=open&head=${owner}:${branchName}`) as Array<{ html_url: string; number: number }>;
+        const prs = (await ghFetch(
+          token,
+          `${apiBase}/repos/${owner}/${repo}/pulls?state=open&head=${owner}:${branchName}`,
+        )) as Array<{ html_url: string; number: number }>;
         if (prs.length > 0 && prs[0]!.number > 0) {
           pr = prs[0]!;
         } else {
           const msg = createErr instanceof Error ? createErr.message : String(createErr);
-          throw new Error(`GitHub PR creation failed and no existing PR found: ${msg.slice(0, 200)}`);
+          throw new Error(
+            `GitHub PR creation failed and no existing PR found: ${msg.slice(0, 200)}`,
+          );
         }
       }
 
@@ -337,7 +411,11 @@ function createGitHubPort(): AgentGitHubPort | undefined {
   };
 }
 
-async function ghFetch(token: string, url: string, options?: { method?: string; body?: unknown }): Promise<unknown> {
+async function ghFetch(
+  token: string,
+  url: string,
+  options?: { method?: string; body?: unknown },
+): Promise<unknown> {
   const res = await fetch(url, {
     method: options?.method ?? "GET",
     headers: {
@@ -376,7 +454,9 @@ function buildPrBody(input: GitHubReviewInput): string {
     "",
     "### Generated Artifacts",
     "",
-    ...((input.candidate as { artifacts?: Array<{ path: string; kind: string }> }).artifacts ?? []).map((a) => `- \`${a.path}\` (${a.kind})`),
+    ...(
+      (input.candidate as { artifacts?: Array<{ path: string; kind: string }> }).artifacts ?? []
+    ).map((a) => `- \`${a.path}\` (${a.kind})`),
     "",
     "---",
     "_Generated by LineageGuard_",
@@ -387,13 +467,15 @@ function buildPrBody(input: GitHubReviewInput): string {
 // Phase F: DataHub writeback port adapter
 // ---------------------------------------------------------------------------
 
-function createWritebackPort(): AgentWritebackPort | undefined {
+export function createWritebackPort(): AgentWritebackPort | undefined {
   const mutationToken = process.env.DATAHUB_MUTATION_TOKEN;
   const gmsUrl = process.env.DATAHUB_GMS_URL ?? "http://127.0.0.1:8080";
   const writebackEnabled = process.env.WRITEBACK_ENABLED !== "false";
 
   if (!mutationToken || !writebackEnabled) {
-    console.log("[orchestration] DataHub writeback disabled (DATAHUB_MUTATION_TOKEN not set or WRITEBACK_ENABLED=false)");
+    console.log(
+      "[orchestration] DataHub writeback disabled (DATAHUB_MUTATION_TOKEN not set or WRITEBACK_ENABLED=false)",
+    );
     return undefined;
   }
 
@@ -403,10 +485,30 @@ function createWritebackPort(): AgentWritebackPort | undefined {
       const datasetUrn =
         "urn:li:dataset:(urn:li:dataPlatform:postgres,lineageguard-canonical.lineageguard.commerce.orders,PROD)";
 
-      // Separate read/mutation credentials
-      const readToken = process.env.DATAHUB_READ_TOKEN ?? process.env.DATAHUB_TOKEN ?? mutationToken;
+      // Separate read/mutation credentials — the read token must be genuinely
+      // distinct from the mutation token (least-privilege: a read-only
+      // credential must never be silently promoted to mutation-token scope,
+      // and reads must never run under a fallback that is actually the
+      // mutation token). See AGENTS.md: "Keep DataHub MCP mutations off by
+      // default" / README: "separate read/mutation tokens".
+      const readToken = process.env.DATAHUB_READ_TOKEN ?? process.env.DATAHUB_TOKEN;
+      if (!readToken) {
+        throw new Error(
+          "DataHub writeback requires DATAHUB_READ_TOKEN (or DATAHUB_TOKEN) to be set separately " +
+            "from DATAHUB_MUTATION_TOKEN — refusing to read using the mutation credential.",
+        );
+      }
+      if (readToken === mutationToken) {
+        throw new Error(
+          "DataHub writeback requires DATAHUB_READ_TOKEN to differ from DATAHUB_MUTATION_TOKEN " +
+            "(least-privilege credential separation) — refusing to proceed with a shared token.",
+        );
+      }
       const readHeaders = { Authorization: `Bearer ${readToken}` };
-      const writeHeaders = { "Content-Type": "application/json", Authorization: `Bearer ${mutationToken}` };
+      const writeHeaders = {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${mutationToken}`,
+      };
 
       async function gmsRead(path: string): Promise<unknown> {
         const res = await fetch(`${gmsUrl}${path}`, { headers: readHeaders });
@@ -431,16 +533,18 @@ function createWritebackPort(): AgentWritebackPort | undefined {
 
       try {
         // --- Read existing state (before snapshot) ---
-        const beforeTags = await gmsRead(
-          `/aspects/${encodeURIComponent(datasetUrn)}?aspect=globalTags&version=0`
-        ) as { aspect?: { value?: string } } | null;
-        const beforeMemory = await gmsRead(
-          `/aspects/${encodeURIComponent(datasetUrn)}?aspect=institutionalMemory&version=0`
-        ) as { aspect?: { value?: string } } | null;
+        const beforeTags = (await gmsRead(
+          `/aspects/${encodeURIComponent(datasetUrn)}?aspect=globalTags&version=0`,
+        )) as { aspect?: { value?: string } } | null;
+        const beforeMemory = (await gmsRead(
+          `/aspects/${encodeURIComponent(datasetUrn)}?aspect=institutionalMemory&version=0`,
+        )) as { aspect?: { value?: string } } | null;
 
         // Parse existing tags to preserve unrelated ones
         const existingTagsRaw = beforeTags?.aspect?.value ?? "{}";
-        const existingTags = JSON.parse(typeof existingTagsRaw === "string" ? existingTagsRaw : JSON.stringify(existingTagsRaw)) as { tags?: Array<{ tag: string }> };
+        const existingTags = JSON.parse(
+          typeof existingTagsRaw === "string" ? existingTagsRaw : JSON.stringify(existingTagsRaw),
+        ) as { tags?: Array<{ tag: string }> };
         const existingTagList = existingTags.tags ?? [];
 
         // Merge: keep existing tags, add/ensure LineageGuard tags
@@ -456,18 +560,28 @@ function createWritebackPort(): AgentWritebackPort | undefined {
 
         // Parse existing institutional memory to preserve unrelated elements
         const existingMemoryRaw = beforeMemory?.aspect?.value ?? "{}";
-        const existingMemory = JSON.parse(typeof existingMemoryRaw === "string" ? existingMemoryRaw : JSON.stringify(existingMemoryRaw)) as { elements?: Array<{ url?: string; description?: string; createStamp?: unknown }> };
+        const existingMemory = JSON.parse(
+          typeof existingMemoryRaw === "string"
+            ? existingMemoryRaw
+            : JSON.stringify(existingMemoryRaw),
+        ) as { elements?: Array<{ url?: string; description?: string; createStamp?: unknown }> };
         const existingElements = existingMemory.elements ?? [];
 
         // Check idempotency: if our marker already exists, skip write
         const markerPhrase = `lineageguard:decision:v1:lineageguard-${input.runId}`;
-        const alreadyWritten = existingElements.some((el) => el.description?.includes(markerPhrase));
-        const reviewedTagExists = existingTagList.some((t) => t.tag === "urn:li:tag:lineageguard-canonical.Reviewed");
+        const alreadyWritten = existingElements.some((el) =>
+          el.description?.includes(markerPhrase),
+        );
+        const reviewedTagExists = existingTagList.some(
+          (t) => t.tag === "urn:li:tag:lineageguard-canonical.Reviewed",
+        );
 
         if (alreadyWritten && reviewedTagExists) {
           console.log("[orchestration] DataHub write-back: idempotent — already written");
           const receiptFingerprint = createHash("sha256")
-            .update(JSON.stringify({ documentContent, datasetUrn, runId: input.runId, idempotent: true }))
+            .update(
+              JSON.stringify({ documentContent, datasetUrn, runId: input.runId, idempotent: true }),
+            )
             .digest("hex");
           return { status: "SUCCEEDED", receiptFingerprint };
         }
@@ -501,7 +615,7 @@ function createWritebackPort(): AgentWritebackPort | undefined {
           createStamp: { time: Date.now(), actor: "urn:li:corpuser:lineageguard" },
         };
         const preservedElements = existingElements.filter(
-          (el) => !el.description?.includes("lineageguard:decision:v1:")
+          (el) => !el.description?.includes("lineageguard:decision:v1:"),
         );
         const mergedElements = [...preservedElements, newElement];
 
@@ -527,37 +641,55 @@ function createWritebackPort(): AgentWritebackPort | undefined {
         }
 
         // --- Exact read-back verification (using read token) ---
-        const afterTags = await gmsRead(
-          `/aspects/${encodeURIComponent(datasetUrn)}?aspect=globalTags&version=0`
-        ) as { aspect?: { value?: string } } | null;
+        const afterTags = (await gmsRead(
+          `/aspects/${encodeURIComponent(datasetUrn)}?aspect=globalTags&version=0`,
+        )) as { aspect?: { value?: string } } | null;
         const afterTagsRaw = afterTags?.aspect?.value ?? "{}";
-        const afterTagData = JSON.parse(typeof afterTagsRaw === "string" ? afterTagsRaw : JSON.stringify(afterTagsRaw)) as { tags?: Array<{ tag: string }> };
-        const reviewedPresent = (afterTagData.tags ?? []).some((t) => t.tag === "urn:li:tag:lineageguard-canonical.Reviewed");
+        const afterTagData = JSON.parse(
+          typeof afterTagsRaw === "string" ? afterTagsRaw : JSON.stringify(afterTagsRaw),
+        ) as { tags?: Array<{ tag: string }> };
+        const reviewedPresent = (afterTagData.tags ?? []).some(
+          (t) => t.tag === "urn:li:tag:lineageguard-canonical.Reviewed",
+        );
         if (!reviewedPresent) {
-          throw new Error("DataHub write-back verification failed: Reviewed tag not found on read-back");
+          throw new Error(
+            "DataHub write-back verification failed: Reviewed tag not found on read-back",
+          );
         }
 
-        const afterMemory = await gmsRead(
-          `/aspects/${encodeURIComponent(datasetUrn)}?aspect=institutionalMemory&version=0`
-        ) as { aspect?: { value?: string } } | null;
+        const afterMemory = (await gmsRead(
+          `/aspects/${encodeURIComponent(datasetUrn)}?aspect=institutionalMemory&version=0`,
+        )) as { aspect?: { value?: string } } | null;
         const afterMemoryRaw = afterMemory?.aspect?.value ?? "{}";
-        const afterMemoryData = JSON.parse(typeof afterMemoryRaw === "string" ? afterMemoryRaw : JSON.stringify(afterMemoryRaw)) as { elements?: Array<{ description?: string }> };
-        const docVerified = (afterMemoryData.elements ?? []).some((el) => el.description?.includes(markerPhrase));
+        const afterMemoryData = JSON.parse(
+          typeof afterMemoryRaw === "string" ? afterMemoryRaw : JSON.stringify(afterMemoryRaw),
+        ) as { elements?: Array<{ description?: string }> };
+        const docVerified = (afterMemoryData.elements ?? []).some((el) =>
+          el.description?.includes(markerPhrase),
+        );
         if (!docVerified) {
-          throw new Error("DataHub write-back verification failed: decision document not found on read-back");
+          throw new Error(
+            "DataHub write-back verification failed: decision document not found on read-back",
+          );
         }
 
         // Verify existing metadata preserved
         const preservedTagCount = existingTagList.filter((t) => !lgTags.has(t.tag)).length;
         const afterNonLgTags = (afterTagData.tags ?? []).filter((t) => !lgTags.has(t.tag)).length;
         if (afterNonLgTags < preservedTagCount) {
-          throw new Error("DataHub write-back verification failed: existing tags were not preserved");
+          throw new Error(
+            "DataHub write-back verification failed: existing tags were not preserved",
+          );
         }
 
-        console.log("[orchestration] DataHub write-back verified: tag ✓, document ✓, preservation ✓");
+        console.log(
+          "[orchestration] DataHub write-back verified: tag ✓, document ✓, preservation ✓",
+        );
 
         const receiptFingerprint = createHash("sha256")
-          .update(JSON.stringify({ documentContent, datasetUrn, runId: input.runId, verified: true }))
+          .update(
+            JSON.stringify({ documentContent, datasetUrn, runId: input.runId, verified: true }),
+          )
           .digest("hex");
 
         return { status: "SUCCEEDED", receiptFingerprint };
@@ -573,6 +705,45 @@ function createWritebackPort(): AgentWritebackPort | undefined {
 // ---------------------------------------------------------------------------
 // Main orchestrator factory
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Narrows the agent pipeline's untyped onStatusChange `extra` payload down to
+// the known, persistable SimpleRunUpdateExtra fields. Avoids an `as any` cast
+// on this store-write boundary: unrecognized keys are silently dropped rather
+// than blindly trusted.
+// ---------------------------------------------------------------------------
+const SIMPLE_RUN_UPDATE_EXTRA_KEYS = [
+  "baselineDecision",
+  "groundedDecision",
+  "consumersFound",
+  "evidenceItems",
+  "artifactsGenerated",
+  "triggeredRules",
+  "prUrl",
+  "prNumber",
+  "writebackStatus",
+  "validationReceiptFingerprint",
+  "githubReceiptFingerprint",
+  "writebackReceiptFingerprint",
+  "contextJson",
+  "candidateJson",
+  "comparisonJson",
+  "sourcePrUrl",
+  "failedChecks",
+] as const satisfies readonly (keyof SimpleRunUpdateExtra)[];
+
+function pickSimpleRunUpdateExtra(
+  extra: Record<string, unknown> | undefined,
+): Partial<SimpleRunUpdateExtra> | undefined {
+  if (!extra) return undefined;
+  const picked: Partial<SimpleRunUpdateExtra> = {};
+  for (const key of SIMPLE_RUN_UPDATE_EXTRA_KEYS) {
+    if (extra[key] !== undefined) {
+      (picked as Record<string, unknown>)[key] = extra[key];
+    }
+  }
+  return picked;
+}
 
 export async function createOrchestrator(workerId: string, store: SimpleRunStore) {
   const llmConfig = agentLLMConfigFromEnv();
@@ -598,7 +769,7 @@ export async function createOrchestrator(workerId: string, store: SimpleRunStore
     github,
     writeback,
     onStatusChange: async (runId: string, status: string, extra?: Record<string, unknown>) => {
-      await store.update(runId, status, extra as any);
+      await store.update(runId, status, pickSimpleRunUpdateExtra(extra));
     },
   });
 }

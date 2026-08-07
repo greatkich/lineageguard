@@ -41,7 +41,9 @@ export function buildCanonicalCandidate(input: CanonicalCandidateInput): Migrati
   ].sort();
 
   if (sourceEvidenceIds.length === 0) {
-    throw new Error("Cannot build migration candidate: no triggered evidence (decision should be BLOCK)");
+    throw new Error(
+      "Cannot build migration candidate: no triggered evidence (decision should be BLOCK)",
+    );
   }
 
   // Build reviewers from ownership evidence
@@ -204,7 +206,7 @@ export function buildCanonicalCandidate(input: CanonicalCandidateInput): Migrati
     ...requiredReviewers.map((r) =>
       r.kind === "OWNER"
         ? `- ${r.ownerUrn} (owner of ${r.affectedAssetUrns.join(", ")})`
-        : `- Escalation: ${r.affectedAssetUrn} (${r.reason})`
+        : `- Escalation: ${r.affectedAssetUrn} (${r.reason})`,
     ),
   ].join("\n");
 
@@ -217,7 +219,9 @@ export function buildCanonicalCandidate(input: CanonicalCandidateInput): Migrati
   const contractEvidence = [sourceEvidenceIds[0]!];
 
   // Ensure all evidence is covered exactly once across steps
-  const allStepEvidence = [...new Set([...expandEvidence, ...migrateEvidence, ...contractEvidence])].sort();
+  const allStepEvidence = [
+    ...new Set([...expandEvidence, ...migrateEvidence, ...contractEvidence]),
+  ].sort();
   if (JSON.stringify(allStepEvidence) !== JSON.stringify(sourceEvidenceIds)) {
     throw new Error("Evidence distribution failed — all source evidence must be covered by steps");
   }
@@ -229,7 +233,9 @@ export function buildCanonicalCandidate(input: CanonicalCandidateInput): Migrati
     sourceImpactContextFingerprint: context.impactContextFingerprint,
     sourceDecision: "BLOCK",
     sourceEvidenceIds,
-    summary: input.rationale ?? "Add buyer_id, migrate readers, then retire customer_id after compatibility window.",
+    summary:
+      input.rationale ??
+      "Add buyer_id, migrate readers, then retire customer_id after compatibility window.",
     steps: [
       {
         id: "step_expand",
@@ -320,7 +326,8 @@ export function buildCanonicalCandidate(input: CanonicalCandidateInput): Migrati
     ] as MigrationCandidate["artifacts"],
     requiredReviewers: requiredReviewers as MigrationCandidate["requiredReviewers"],
     compatibilityWindowDays: 30,
-    rollbackPlan: "Run walkthrough/migrations/001_rollback.sql while customer_id remains the source of truth.",
+    rollbackPlan:
+      "Run walkthrough/migrations/001_rollback.sql while customer_id remains the source of truth.",
   };
 
   return candidate;

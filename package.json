@@ -15,6 +15,7 @@
     "demo": "pnpm build && node --import tsx scripts/demo.ts",
     "dev": "pnpm --filter @lineageguard/web dev",
     "dev:worker": "pnpm --filter @lineageguard/worker build && pnpm --filter @lineageguard/worker start",
+    "export-evidence": "node --import tsx scripts/export-evidence.ts",
     "format": "biome format --write .",
     "format:check": "biome format .",
     "lint": "biome lint .",
@@ -26,11 +27,14 @@
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.7",
+    "@lineageguard/db": "workspace:*",
+    "@lineageguard/domain": "workspace:*",
     "@playwright/test": "1.62.1",
     "@types/node": "24.13.3",
     "@types/pg": "^8.20.4",
     "@types/react": "19.2.18",
     "@types/react-dom": "19.2.4",
+    "pg": "8.22.0",
     "tsx": "^4.23.7",
     "typescript": "5.9.3",
     "vitest": "4.1.10"

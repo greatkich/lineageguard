@@ -1,0 +1,2587 @@
+Scope: all 10 workspace projects
+Already up to date
+Done in 233ms using pnpm v11.20.0
+$ biome format .
+apps/web/app/globals.css:3:2 parse ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Tailwind-specific syntax is disabled.
+  
+     1 │ @import "tailwindcss";
+     2 │ 
+   > 3 │ @theme {
+       │  ^^^^^^^
+   > 4 │   --color-background: oklch(1 0 0);
+        ...
+  > 26 │   --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  > 27 │ }
+       │ ^
+    28 │ 
+    29 │ @media (prefers-color-scheme: dark) {
+  
+  i Enable `tailwindDirectives` in the css parser options, or remove this if you are not using Tailwind CSS.
+  
+
+apps/web/app/globals.css format ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Code formatting aborted due to parsing errors. To format code with errors, enable the 'formatter.formatWithErrors' option.
+  
+
+apps/web/app/page.tsx format ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+  
+     60  60 │         <div>
+     61  61 │           <h1 className="text-2xl font-semibold tracking-tight">Dashboard</h1>
+     62     │ - ········<p·className="text-sm·text-muted-foreground·mt-1">Schema·change·safety·analysis·powered·by·DataHub·lineage</p>
+         62 │ + ········<p·className="text-sm·text-muted-foreground·mt-1">
+         63 │ + ··········Schema·change·safety·analysis·powered·by·DataHub·lineage
+         64 │ + ········</p>
+     63  65 │         </div>
+     64  66 │   
+     65  67 │         {/* Stats */}
+     66  68 │         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+     67     │ - ········<StatCard·label="Total·Runs"·value={runs.length}·icon={<IconActivity·className="w-5·h-5"·/>}·/>
+     68     │ - ········<StatCard·label="Blocked"·value={blockedRuns.length}·icon={<IconShieldAlert·className="w-5·h-5"·/>}·accent="danger"·/>
+     69     │ - ········<StatCard·label="Completed"·value={completedRuns.length}·icon={<IconShieldCheck·className="w-5·h-5"·/>}·accent="success"·/>
+     70     │ - ········<StatCard·label="Artifacts"·value={totalArtifacts}·icon={<IconLayers·className="w-5·h-5"·/>}·accent="info"·/>
+         69 │ + ········<StatCard
+         70 │ + ··········label="Total·Runs"
+         71 │ + ··········value={runs.length}
+         72 │ + ··········icon={<IconActivity·className="w-5·h-5"·/>}
+         73 │ + ········/>
+         74 │ + ········<StatCard
+         75 │ + ··········label="Blocked"
+         76 │ + ··········value={blockedRuns.length}
+         77 │ + ··········icon={<IconShieldAlert·className="w-5·h-5"·/>}
+         78 │ + ··········accent="danger"
+         79 │ + ········/>
+         80 │ + ········<StatCard
+         81 │ + ··········label="Completed"
+         82 │ + ··········value={completedRuns.length}
+         83 │ + ··········icon={<IconShieldCheck·className="w-5·h-5"·/>}
+         84 │ + ··········accent="success"
+         85 │ + ········/>
+         86 │ + ········<StatCard
+         87 │ + ··········label="Artifacts"
+         88 │ + ··········value={totalArtifacts}
+         89 │ + ··········icon={<IconLayers·className="w-5·h-5"·/>}
+         90 │ + ··········accent="info"
+         91 │ + ········/>
+     71  92 │         </div>
+     72  93 │   
+    ······· │ 
+     75  96 │           <CardHeader>
+     76  97 │             <h2 className="text-sm font-medium">Pipeline</h2>
+     77     │ - ··········<p·className="text-xs·text-muted-foreground·mt-0.5">Each·schema·change·passes·through·these·stages</p>
+         98 │ + ··········<p·className="text-xs·text-muted-foreground·mt-0.5">
+         99 │ + ············Each·schema·change·passes·through·these·stages
+        100 │ + ··········</p>
+     78 101 │           </CardHeader>
+     79 102 │           <CardBody>
+    ······· │ 
+     96 119 │                 <p className="text-sm">No runs yet</p>
+     97 120 │                 <p className="text-xs mt-1">
+     98     │ - ················Run·<code·className="font-mono·bg-muted·px-1.5·py-0.5·rounded·text-[11px]">pnpm·demo</code>·to·start
+        121 │ + ················Run{"·"}
+        122 │ + ················<code·className="font-mono·bg-muted·px-1.5·py-0.5·rounded·text-[11px]">
+        123 │ + ··················pnpm·demo
+        124 │ + ················</code>{"·"}
+        125 │ + ················to·start
+     99 126 │                 </p>
+    100 127 │               </div>
+    ······· │ 
+    115 142 │                   >
+    116 143 │                     {/* Status indicator */}
+    117     │ - ··················<div·className={`w-2·h-2·rounded-full·flex-shrink-0·${
+    118     │ - ····················isComplete·?·"bg-status-pass"·:·isFailed·?·"bg-status-fail"·:·"bg-status-info"
+    119     │ - ··················}`}·/>
+        144 │ + ··················<div
+        145 │ + ····················className={`w-2·h-2·rounded-full·flex-shrink-0·${
+        146 │ + ······················isComplete·?·"bg-status-pass"·:·isFailed·?·"bg-status-fail"·:·"bg-status-info"
+        147 │ + ····················}`}
+        148 │ + ··················/>
+    120 149 │   
+    121 150 │                     {/* Main info */}
+    ······· │ 
+    135 164 │                         <span className="text-status-allow font-mono">{run.baselineDecision}</span>
+    136 165 │                         <IconArrowRight className="w-3 h-3 text-muted-foreground" />
+    137     │ - ······················<span·className={`font-mono·font-medium·${run.groundedDecision·===·"BLOCK"·?·"text-status-block"·:·"text-status-allow"}`}>
+        166 │ + ······················<span
+        167 │ + ························className={`font-mono·font-medium·${run.groundedDecision·===·"BLOCK"·?·"text-status-block"·:·"text-status-allow"}`}
+        168 │ + ······················>
+    138 169 │                           {run.groundedDecision}
+    139 170 │                         </span>
+  
+
+apps/web/app/runs/[runId]/page.tsx format ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+  
+     87  87 │   
+     88  88 │     // Extract candidate info from persisted data
+     89     │ - ··const·candidate·=·run.candidateJson·as·{·strategy?:·string;·artifacts?:·Array<{·path:·string;·kind:·string·}>·}·|·null;
+         89 │ + ··const·candidate·=·run.candidateJson·as·{
+         90 │ + ····strategy?:·string;
+         91 │ + ····artifacts?:·Array<{·path:·string;·kind:·string·}>;
+         92 │ + ··}·|·null;
+     90  93 │   
+     91  94 │     return (
+    ······· │ 
+     94  97 │         <div className="flex items-center justify-between">
+     95  98 │           <div className="flex items-center gap-3">
+     96     │ - ··········<Link·href="/"·className="text-sm·text-muted-foreground·hover:text-foreground·transition-colors">
+         99 │ + ··········<Link
+        100 │ + ············href="/"
+        101 │ + ············className="text-sm·text-muted-foreground·hover:text-foreground·transition-colors"
+        102 │ + ··········>
+     97 103 │               Dashboard
+     98 104 │             </Link>
+    ······· │ 
+    116 122 │             {run.repository} &middot; {new Date(run.createdAt).toLocaleString()}
+    117 123 │             {run.sourcePrUrl && (
+    118     │ - ············<>·&middot;·<a·href={run.sourcePrUrl}·target="_blank"·rel="noopener·noreferrer"·className="text-status-info·hover:underline">Source·PR</a></>
+        124 │ + ············<>
+        125 │ + ··············{"·"}
+        126 │ + ··············&middot;{"·"}
+        127 │ + ··············<a
+        128 │ + ················href={run.sourcePrUrl}
+        129 │ + ················target="_blank"
+        130 │ + ················rel="noopener·noreferrer"
+        131 │ + ················className="text-status-info·hover:underline"
+        132 │ + ··············>
+        133 │ + ················Source·PR
+        134 │ + ··············</a>
+        135 │ + ············</>
+    119 136 │             )}
+    120 137 │           </p>
+    ······· │ 
+    144 161 │                 <h3 className="text-sm font-medium">Proposed Change</h3>
+    145 162 │               </div>
+    146     │ - ············{run.baselineDecision·&&·(
+    147     │ - ··············<Badge·status="allow">{run.baselineDecision}</Badge>
+    148     │ - ············)}
+        163 │ + ············{run.baselineDecision·&&·<Badge·status="allow">{run.baselineDecision}</Badge>}
+    149 164 │             </CardHeader>
+    150 165 │             <CardBody>
+    ······· │ 
+    152 167 │                 <pre className="text-xs font-mono leading-relaxed">
+    153 168 │                   {(run.patch || "No patch data available").split("\n").map((line, i) => (
+    154     │ - ··················<div·key={i}·className={
+    155     │ - ····················line.startsWith("+")·?·"text-status-allow"·:
+    156     │ - ····················line.startsWith("-")·?·"text-status-block"·:
+    157     │ - ····················"text-muted-foreground"
+    158     │ - ··················}>
+        169 │ + ··················<div
+        170 │ + ····················key={i}
+        171 │ + ····················className={
+        172 │ + ······················line.startsWith("+")
+        173 │ + ························?·"text-status-allow"
+        174 │ + ························:·line.startsWith("-")
+        175 │ + ··························?·"text-status-block"
+        176 │ + ··························:·"text-muted-foreground"
+        177 │ + ····················}
+        178 │ + ··················>
+    159 179 │                       {line || " "}
+    160 180 │                     </div>
+    ······· │ 
+    208 228 │               {impactConsumers.length > 0 && (
+    209 229 │                 <div>
+    210     │ - ················<p·className="text-xs·font-medium·text-muted-foreground·mb-2">Impact·Consumers·({impactConsumers.length})</p>
+        230 │ + ················<p·className="text-xs·font-medium·text-muted-foreground·mb-2">
+        231 │ + ··················Impact·Consumers·({impactConsumers.length})
+        232 │ + ················</p>
+    211 233 │                   <div className="space-y-1.5">
+    212 234 │                     {impactConsumers.slice(0, 6).map((item) => (
+    213     │ - ····················<div·key={item.entityUrn}·className="flex·items-center·gap-2·p-1.5·rounded·bg-muted/30·text-xs">
+    214     │ - ······················<span·className="font-mono·text-[10px]·text-muted-foreground">{kindLabels[item.kind]}</span>
+        235 │ + ····················<div
+        236 │ + ······················key={item.entityUrn}
+        237 │ + ······················className="flex·items-center·gap-2·p-1.5·rounded·bg-muted/30·text-xs"
+        238 │ + ····················>
+        239 │ + ······················<span·className="font-mono·text-[10px]·text-muted-foreground">
+        240 │ + ························{kindLabels[item.kind]}
+        241 │ + ······················</span>
+    215 242 │                         <span className="truncate">{item.title}</span>
+    216 243 │                       </div>
+    ······· │ 
+    223 250 │               {rules.length > 0 && (
+    224 251 │                 <div>
+    225     │ - ················<p·className="text-xs·font-medium·text-muted-foreground·mb-2">Policy·Rules·Triggered</p>
+        252 │ + ················<p·className="text-xs·font-medium·text-muted-foreground·mb-2">
+        253 │ + ··················Policy·Rules·Triggered
+        254 │ + ················</p>
+    226 255 │                   <div className="space-y-2">
+    227 256 │                     {rules.map((rule) => {
+    228 257 │                       const desc = ruleDescriptions[rule];
+    229 258 │                       return (
+    230     │ - ······················<div·key={rule}·className="flex·items-start·gap-2.5·p-2·rounded-md·bg-status-block/5">
+        259 │ + ······················<div
+        260 │ + ························key={rule}
+        261 │ + ························className="flex·items-start·gap-2.5·p-2·rounded-md·bg-status-block/5"
+        262 │ + ······················>
+    231 263 │                           <IconAlertCircle className="w-3.5 h-3.5 text-status-block mt-0.5 flex-shrink-0" />
+    232 264 │                           <div className="min-w-0">
+    233     │ - ··························<span·className="text-xs·font-mono·font-medium·text-status-block">{rule}</span>
+    234     │ - ··························{desc·&&·<p·className="text-[11px]·text-muted-foreground·mt-0.5">{desc.title}</p>}
+        265 │ + ··························<span·className="text-xs·font-mono·font-medium·text-status-block">
+        266 │ + ····························{rule}
+        267 │ + ··························</span>
+        268 │ + ··························{desc·&&·(
+        269 │ + ····························<p·className="text-[11px]·text-muted-foreground·mt-0.5">{desc.title}</p>
+        270 │ + ··························)}
+    235 271 │                           </div>
+    236 272 │                           {desc && (
+    237     │ - ··························<Badge·status={desc.severity·===·"CRITICAL"·?·"fail"·:·"review"}·className="ml-auto·flex-shrink-0·text-[10px]">
+        273 │ + ··························<Badge
+        274 │ + ····························status={desc.severity·===·"CRITICAL"·?·"fail"·:·"review"}
+        275 │ + ····························className="ml-auto·flex-shrink-0·text-[10px]"
+        276 │ + ··························>
+    238 277 │                               {desc.severity}
+    239 278 │                             </Badge>
+    ······· │ 
+    249 288 │               <div className="grid grid-cols-2 gap-3">
+    250 289 │                 <div className="p-2.5 rounded-md bg-muted/50">
+    251     │ - ················<p·className="text-[10px]·text-muted-foreground·uppercase·tracking-wider">Consumers</p>
+        290 │ + ················<p·className="text-[10px]·text-muted-foreground·uppercase·tracking-wider">
+        291 │ + ··················Consumers
+        292 │ + ················</p>
+    252 293 │                   <p className="text-lg font-semibold mt-0.5">{run.consumersFound || "—"}</p>
+    253 294 │                 </div>
+    254 295 │                 <div className="p-2.5 rounded-md bg-muted/50">
+    255     │ - ················<p·className="text-[10px]·text-muted-foreground·uppercase·tracking-wider">Evidence</p>
+        296 │ + ················<p·className="text-[10px]·text-muted-foreground·uppercase·tracking-wider">
+        297 │ + ··················Evidence
+        298 │ + ················</p>
+    256 299 │                   <p className="text-lg font-semibold mt-0.5">{run.evidenceItems || "—"}</p>
+    257 300 │                 </div>
+    ······· │ 
+    274 317 │                 <p className="text-sm font-medium">
+    275 318 │                   {candidate?.strategy
+    276     │ - ··················?·candidate.strategy.replace(/_/g,·"·→·").replace("EXPAND·→·MIGRATE·→·CONTRACT",·"Expand·→·Migrate·→·Contract")
+        319 │ + ··················?·candidate.strategy
+        320 │ + ······················.replace(/_/g,·"·→·")
+        321 │ + ······················.replace("EXPAND·→·MIGRATE·→·CONTRACT",·"Expand·→·Migrate·→·Contract")
+    277 322 │                     : "—"}
+    278 323 │                 </p>
+    ······· │ 
+    281 326 │               <div className="grid grid-cols-2 gap-3">
+    282 327 │                 <div className="p-2.5 rounded-md bg-muted/50">
+    283     │ - ················<p·className="text-[10px]·text-muted-foreground·uppercase·tracking-wider">Artifacts</p>
+        328 │ + ················<p·className="text-[10px]·text-muted-foreground·uppercase·tracking-wider">
+        329 │ + ··················Artifacts
+        330 │ + ················</p>
+    284 331 │                   <p className="text-lg font-semibold mt-0.5">{run.artifactsGenerated || "—"}</p>
+    285 332 │                 </div>
+    286 333 │                 <div className="p-2.5 rounded-md bg-muted/50">
+    287     │ - ················<p·className="text-[10px]·text-muted-foreground·uppercase·tracking-wider">Validation</p>
+        334 │ + ················<p·className="text-[10px]·text-muted-foreground·uppercase·tracking-wider">
+        335 │ + ··················Validation
+  53 more lines truncated
+  
+
+apps/web/components/ui/card.tsx format ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+  
+    11 11 │   
+    12 12 │   export function CardHeader({ className, children }: { className?: string; children: ReactNode }) {
+    13    │ - ··return·(
+    14    │ - ····<div·className={cn("px-5·py-4·border-b·border-border",·className)}>
+    15    │ - ······{children}
+    16    │ - ····</div>
+    17    │ - ··);
+       13 │ + ··return·<div·className={cn("px-5·py-4·border-b·border-border",·className)}>{children}</div>;
+    18 14 │   }
+    19 15 │   
+    20 16 │   export function CardBody({ className, children }: { className?: string; children: ReactNode }) {
+    21    │ - ··return·(
+    22    │ - ····<div·className={cn("px-5·py-4",·className)}>
+    23    │ - ······{children}
+    24    │ - ····</div>
+    25    │ - ··);
+       17 │ + ··return·<div·className={cn("px-5·py-4",·className)}>{children}</div>;
+    26 18 │   }
+    27 19 │   
+    28    │ - export·function·StatCard({·label,·value,·icon,·accent·}:·{
+       20 │ + export·function·StatCard({
+       21 │ + ··label,
+       22 │ + ··value,
+       23 │ + ··icon,
+       24 │ + ··accent,
+       25 │ + }:·{
+    29 26 │     label: string;
+    30 27 │     value: string | number;
+    ····· │ 
+    47 44 │           </div>
+    48 45 │           <div>
+    49    │ - ··········<p·className="text-xs·text-muted-foreground·font-medium·uppercase·tracking-wide">{label}</p>
+       46 │ + ··········<p·className="text-xs·text-muted-foreground·font-medium·uppercase·tracking-wide">
+       47 │ + ············{label}
+       48 │ + ··········</p>
+    50 49 │             <p className="text-2xl font-semibold tracking-tight mt-0.5">{value}</p>
+    51 50 │           </div>
+  
+
+apps/web/components/ui/icons.tsx format ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+  
+      5   5 │   export function IconDatabase(props: IconProps) {
+      6   6 │     return (
+      7     │ - ····<svg·xmlns="http://www.w3.org/2000/svg"·viewBox="0·0·24·24"·fill="none"·stroke="currentColor"·strokeWidth="1.5"·strokeLinecap="round"·strokeLinejoin="round"·{...props}>
+          7 │ + ····<svg
+          8 │ + ······xmlns="http://www.w3.org/2000/svg"
+          9 │ + ······viewBox="0·0·24·24"
+         10 │ + ······fill="none"
+         11 │ + ······stroke="currentColor"
+         12 │ + ······strokeWidth="1.5"
+         13 │ + ······strokeLinecap="round"
+         14 │ + ······strokeLinejoin="round"
+         15 │ + ······{...props}
+         16 │ + ····>
+      8  17 │         <ellipse cx="12" cy="5" rx="9" ry="3" />
+      9  18 │         <path d="M3 5v14c0 1.66 4.03 3 9 3s9-1.34 9-3V5" />
+    ······· │ 
+     15  24 │   export function IconShield(props: IconProps) {
+     16  25 │     return (
+     17     │ - ····<svg·xmlns="http://www.w3.org/2000/svg"·viewBox="0·0·24·24"·fill="none"·stroke="currentColor"·strokeWidth="1.5"·strokeLinecap="round"·strokeLinejoin="round"·{...props}>
+         26 │ + ····<svg
+         27 │ + ······xmlns="http://www.w3.org/2000/svg"
+         28 │ + ······viewBox="0·0·24·24"
+         29 │ + ······fill="none"
+         30 │ + ······stroke="currentColor"
+         31 │ + ······strokeWidth="1.5"
+         32 │ + ······strokeLinecap="round"
+         33 │ + ······strokeLinejoin="round"
+         34 │ + ······{...props}
+         35 │ + ····>
+     18  36 │         <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+     19  37 │       </svg>
+    ······· │ 
+     23  41 │   export function IconShieldCheck(props: IconProps) {
+     24  42 │     return (
+     25     │ - ····<svg·xmlns="http://www.w3.org/2000/svg"·viewBox="0·0·24·24"·fill="none"·stroke="currentColor"·strokeWidth="1.5"·strokeLinecap="round"·strokeLinejoin="round"·{...props}>
+         43 │ + ····<svg
+         44 │ + ······xmlns="http://www.w3.org/2000/svg"
+         45 │ + ······viewBox="0·0·24·24"
+         46 │ + ······fill="none"
+         47 │ + ······stroke="currentColor"
+         48 │ + ······strokeWidth="1.5"
+         49 │ + ······strokeLinecap="round"
+         50 │ + ······strokeLinejoin="round"
+         51 │ + ······{...props}
+         52 │ + ····>
+     26  53 │         <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+     27  54 │         <path d="m9 12 2 2 4-4" />
+    ······· │ 
+     32  59 │   export function IconShieldAlert(props: IconProps) {
+     33  60 │     return (
+     34     │ - ····<svg·xmlns="http://www.w3.org/2000/svg"·viewBox="0·0·24·24"·fill="none"·stroke="currentColor"·strokeWidth="1.5"·strokeLinecap="round"·strokeLinejoin="round"·{...props}>
+         61 │ + ····<svg
+         62 │ + ······xmlns="http://www.w3.org/2000/svg"
+         63 │ + ······viewBox="0·0·24·24"
+         64 │ + ······fill="none"
+         65 │ + ······stroke="currentColor"
+         66 │ + ······strokeWidth="1.5"
+         67 │ + ······strokeLinecap="round"
+         68 │ + ······strokeLinejoin="round"
+         69 │ + ······{...props}
+         70 │ + ····>
+     35  71 │         <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+     36  72 │         <path d="M12 8v4" />
+    ······· │ 
+     42  78 │   export function IconGitBranch(props: IconProps) {
+     43  79 │     return (
+     44     │ - ····<svg·xmlns="http://www.w3.org/2000/svg"·viewBox="0·0·24·24"·fill="none"·stroke="currentColor"·strokeWidth="1.5"·strokeLinecap="round"·strokeLinejoin="round"·{...props}>
+         80 │ + ····<svg
+         81 │ + ······xmlns="http://www.w3.org/2000/svg"
+         82 │ + ······viewBox="0·0·24·24"
+         83 │ + ······fill="none"
+         84 │ + ······stroke="currentColor"
+         85 │ + ······strokeWidth="1.5"
+         86 │ + ······strokeLinecap="round"
+         87 │ + ······strokeLinejoin="round"
+         88 │ + ······{...props}
+         89 │ + ····>
+     45  90 │         <line x1="6" y1="3" x2="6" y2="15" />
+     46  91 │         <circle cx="18" cy="6" r="3" />
+    ······· │ 
+     53  98 │   export function IconCode(props: IconProps) {
+     54  99 │     return (
+     55     │ - ····<svg·xmlns="http://www.w3.org/2000/svg"·viewBox="0·0·24·24"·fill="none"·stroke="currentColor"·strokeWidth="1.5"·strokeLinecap="round"·strokeLinejoin="round"·{...props}>
+        100 │ + ····<svg
+        101 │ + ······xmlns="http://www.w3.org/2000/svg"
+        102 │ + ······viewBox="0·0·24·24"
+        103 │ + ······fill="none"
+        104 │ + ······stroke="currentColor"
+        105 │ + ······strokeWidth="1.5"
+        106 │ + ······strokeLinecap="round"
+        107 │ + ······strokeLinejoin="round"
+        108 │ + ······{...props}
+        109 │ + ····>
+     56 110 │         <polyline points="16 18 22 12 16 6" />
+     57 111 │         <polyline points="8 6 2 12 8 18" />
+    ······· │ 
+     62 116 │   export function IconCheck(props: IconProps) {
+     63 117 │     return (
+     64     │ - ····<svg·xmlns="http://www.w3.org/2000/svg"·viewBox="0·0·24·24"·fill="none"·stroke="currentColor"·strokeWidth="1.5"·strokeLinecap="round"·strokeLinejoin="round"·{...props}>
+        118 │ + ····<svg
+        119 │ + ······xmlns="http://www.w3.org/2000/svg"
+        120 │ + ······viewBox="0·0·24·24"
+        121 │ + ······fill="none"
+        122 │ + ······stroke="currentColor"
+        123 │ + ······strokeWidth="1.5"
+        124 │ + ······strokeLinecap="round"
+        125 │ + ······strokeLinejoin="round"
+        126 │ + ······{...props}
+        127 │ + ····>
+     65 128 │         <polyline points="20 6 9 17 4 12" />
+     66 129 │       </svg>
+    ······· │ 
+     70 133 │   export function IconX(props: IconProps) {
+     71 134 │     return (
+     72     │ - ····<svg·xmlns="http://www.w3.org/2000/svg"·viewBox="0·0·24·24"·fill="none"·stroke="currentColor"·strokeWidth="1.5"·strokeLinecap="round"·strokeLinejoin="round"·{...props}>
+        135 │ + ····<svg
+        136 │ + ······xmlns="http://www.w3.org/2000/svg"
+        137 │ + ······viewBox="0·0·24·24"
+        138 │ + ······fill="none"
+        139 │ + ······stroke="currentColor"
+        140 │ + ······strokeWidth="1.5"
+        141 │ + ······strokeLinecap="round"
+        142 │ + ······strokeLinejoin="round"
+        143 │ + ······{...props}
+        144 │ + ····>
+     73 145 │         <line x1="18" y1="6" x2="6" y2="18" />
+     74 146 │         <line x1="6" y1="6" x2="18" y2="18" />
+    ······· │ 
+     79 151 │   export function IconActivity(props: IconProps) {
+     80 152 │     return (
+     81     │ - ····<svg·xmlns="http://www.w3.org/2000/svg"·viewBox="0·0·24·24"·fill="none"·stroke="currentColor"·strokeWidth="1.5"·strokeLinecap="round"·strokeLinejoin="round"·{...props}>
+        153 │ + ····<svg
+        154 │ + ······xmlns="http://www.w3.org/2000/svg"
+        155 │ + ······viewBox="0·0·24·24"
+        156 │ + ······fill="none"
+        157 │ + ······stroke="currentColor"
+        158 │ + ······strokeWidth="1.5"
+        159 │ + ······strokeLinecap="round"
+        160 │ + ······strokeLinejoin="round"
+        161 │ + ······{...props}
+        162 │ + ····>
+     82 163 │         <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
+     83 164 │       </svg>
+    ······· │ 
+     87 168 │   export function IconLayers(props: IconProps) {
+     88 169 │     return (
+     89     │ - ····<svg·xmlns="http://www.w3.org/2000/svg"·viewBox="0·0·24·24"·fill="none"·stroke="currentColor"·strokeWidth="1.5"·strokeLinecap="round"·strokeLinejoin="round"·{...props}>
+        170 │ + ····<svg
+        171 │ + ······xmlns="http://www.w3.org/2000/svg"
+        172 │ + ······viewBox="0·0·24·24"
+        173 │ + ······fill="none"
+        174 │ + ······stroke="currentColor"
+        175 │ + ······strokeWidth="1.5"
+        176 │ + ······strokeLinecap="round"
+        177 │ + ······strokeLinejoin="round"
+        178 │ + ······{...props}
+        179 │ + ····>
+     90 180 │         <polygon points="12 2 2 7 12 12 22 7 12 2" />
+     91 181 │         <polyline points="2 17 12 22 22 17" />
+  179 more lines truncated
+  
+
+apps/web/components/ui/pipeline-stepper.tsx format ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+  
+     8  8 │   }
+     9  9 │   
+    10    │ - export·function·PipelineStepper({·steps,·currentStatus,·failed·}:·{
+       10 │ + export·function·PipelineStepper({
+       11 │ + ··steps,
+       12 │ + ··currentStatus,
+       13 │ + ··failed,
+       14 │ + }:·{
+    11 15 │     steps: StepDef[];
+    12 16 │     currentStatus: string;
+    ····· │ 
+    27 31 │               <div className="flex flex-col items-center w-full">
+    28 32 │                 {/* Node */}
+    29    │ - ··············<div·className={cn(
+    30    │ - ················"w-9·h-9·rounded-full·flex·items-center·justify-center·border-2·transition-all",
+    31    │ - ················isFailed·?·"border-status-fail·bg-status-fail/10·text-status-fail"·:
+    32    │ - ················isCurrent·?·"border-status-info·bg-status-info/10·text-status-info·ring-[3px]·ring-status-info/15"·:
+    33    │ - ················isPast·?·"border-status-pass·bg-status-pass/10·text-status-pass"·:
+    34    │ - ················"border-border·bg-card·text-muted-foreground/40",
+    35    │ - ··············)}>
+       33 │ + ··············<div
+       34 │ + ················className={cn(
+       35 │ + ··················"w-9·h-9·rounded-full·flex·items-center·justify-center·border-2·transition-all",
+       36 │ + ··················isFailed
+       37 │ + ····················?·"border-status-fail·bg-status-fail/10·text-status-fail"
+       38 │ + ····················:·isCurrent
+       39 │ + ······················?·"border-status-info·bg-status-info/10·text-status-info·ring-[3px]·ring-status-info/15"
+       40 │ + ······················:·isPast
+       41 │ + ························?·"border-status-pass·bg-status-pass/10·text-status-pass"
+       42 │ + ························:·"border-border·bg-card·text-muted-foreground/40",
+       43 │ + ················)}
+       44 │ + ··············>
+    36 45 │                   <span className="w-4 h-4">{step.icon}</span>
+    37 46 │                 </div>
+    38 47 │                 {/* Label */}
+    39    │ - ··············<span·className={cn(
+    40    │ - ················"text-[11px]·mt-2·text-center·leading-tight",
+    41    │ - ················isCurrent·?·"font-semibold·text-foreground"·:
+    42    │ - ················isPast·?·"text-muted-foreground"·:
+    43    │ - ················"text-muted-foreground/40",
+    44    │ - ··············)}>
+       48 │ + ··············<span
+       49 │ + ················className={cn(
+       50 │ + ··················"text-[11px]·mt-2·text-center·leading-tight",
+       51 │ + ··················isCurrent
+       52 │ + ····················?·"font-semibold·text-foreground"
+       53 │ + ····················:·isPast
+       54 │ + ······················?·"text-muted-foreground"
+       55 │ + ······················:·"text-muted-foreground/40",
+       56 │ + ················)}
+       57 │ + ··············>
+    45 58 │                   {step.label}
+    46 59 │                 </span>
+    ····· │ 
+    49 62 │               {i < steps.length - 1 && (
+    50 63 │                 <div className="flex-1 min-w-3 max-w-12 mt-[18px]">
+    51    │ - ················<div·className={cn(
+    52    │ - ··················"h-[2px]·w-full",
+    53    │ - ··················i·<·activeIdx·?·"bg-status-pass"·:
+    54    │ - ··················i·===·activeIdx·&&·isFailed·?·"bg-status-fail"·:
+    55    │ - ··················"bg-border",
+    56    │ - ················)}·/>
+       64 │ + ················<div
+       65 │ + ··················className={cn(
+       66 │ + ····················"h-[2px]·w-full",
+       67 │ + ····················i·<·activeIdx
+       68 │ + ······················?·"bg-status-pass"
+       69 │ + ······················:·i·===·activeIdx·&&·isFailed
+       70 │ + ························?·"bg-status-fail"
+       71 │ + ························:·"bg-border",
+       72 │ + ··················)}
+       73 │ + ················/>
+    57 74 │                 </div>
+    58 75 │               )}
+  
+
+apps/worker/src/index.ts format ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+  
+     46  46 │           prNumber: Number.parseInt(sourcePrNumber, 10),
+     47  47 │         });
+     48     │ - ······console.log(`[worker]·Source·PR:·${sourcePR.prUrl}·(${sourcePR.baseSha.slice(0,·7)}..${sourcePR.headSha.slice(0,·7)})`);
+         48 │ + ······console.log(
+         49 │ + ········`[worker]·Source·PR:·${sourcePR.prUrl}·(${sourcePR.baseSha.slice(0,·7)}..${sourcePR.headSha.slice(0,·7)})`,
+         50 │ + ······);
+     49  51 │       }
+     50  52 │   
+    ······· │ 
+     55  57 │         throw new Error(
+     56  58 │           "LINEAGEGUARD_BASE_SHA and LINEAGEGUARD_HEAD_SHA are required in LIVE mode. " +
+     57     │ - ········"Set·these·to·real·Git·SHAs,·or·set·SOURCE_PR_NUMBER·to·read·from·a·GitHub·PR."
+         59 │ + ··········"Set·these·to·real·Git·SHAs,·or·set·SOURCE_PR_NUMBER·to·read·from·a·GitHub·PR.",
+     58  60 │         );
+     59  61 │       }
+    ······· │ 
+     68  70 │         const renamePattern = /RENAME\s+COLUMN\s+customer_id\s+TO\s+buyer_id/i;
+     69  71 │         const sqlPatches = sourcePR.patches.filter(
+     70     │ - ········(p)·=>·p.filename.endsWith(".sql")·&&·renamePattern.test(p.patch)
+         72 │ + ········(p)·=>·p.filename.endsWith(".sql")·&&·renamePattern.test(p.patch),
+     71  73 │         );
+     72  74 │         if (sqlPatches.length === 0) {
+     73  75 │           throw new Error(
+     74  76 │             `Source PR #${sourcePR.prNumber} does not contain the canonical rename ` +
+     75     │ - ··········`(ALTER·TABLE·...·RENAME·COLUMN·customer_id·TO·buyer_id).·`·+
+     76     │ - ··········`Changed·files:·${sourcePR.changedFiles.join(",·")}`
+         77 │ + ············`(ALTER·TABLE·...·RENAME·COLUMN·customer_id·TO·buyer_id).·`·+
+         78 │ + ············`Changed·files:·${sourcePR.changedFiles.join(",·")}`,
+     77  79 │           );
+     78  80 │         }
+    ······· │ 
+     80  82 │           throw new Error(
+     81  83 │             `Source PR #${sourcePR.prNumber} contains multiple schema rename statements. ` +
+     82     │ - ··········`Only·one·canonical·change·is·supported.`
+         84 │ + ············`Only·one·canonical·change·is·supported.`,
+     83  85 │           );
+     84  86 │         }
+    ······· │ 
+     89  91 │           throw new Error(
+     90  92 │             `Source PR #${sourcePR.prNumber} could not be converted to SourceChange — ` +
+     91     │ - ··········`expected·exactly·one·SQL·file·with·canonical·rename.`
+         93 │ + ············`expected·exactly·one·SQL·file·with·canonical·rename.`,
+     92  94 │           );
+     93  95 │         }
+    ······· │ 
+    129 131 │         newName: "buyer_id",
+    130 132 │         source: sourceType,
+    131     │ - ······sourcePath:·sourcePath·??·(sourcePR·?·sourcePR.patches.find((p)·=>·/RENAME\s+COLUMN\s+customer_id/i.test(p.patch))?.filename·:·undefined),
+        133 │ + ······sourcePath:
+        134 │ + ········sourcePath·??
+        135 │ + ········(sourcePR
+        136 │ + ··········?·sourcePR.patches.find((p)·=>·/RENAME\s+COLUMN\s+customer_id/i.test(p.patch))?.filename
+        137 │ + ··········:·undefined),
+    132 138 │       });
+    133 139 │   
+  
+
+apps/worker/src/orchestration.test.ts format ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+  
+     27  27 │   }
+     28  28 │   
+     29     │ - function·reviewInput(overrides:·Partial<Parameters<NonNullable<ReturnType<typeof·createGitHubPort>>["createReview"]>[0]>·=·{})·{
+         29 │ + function·reviewInput(
+         30 │ + ··overrides:·Partial<
+         31 │ + ····Parameters<NonNullable<ReturnType<typeof·createGitHubPort>>["createReview"]>[0]
+         32 │ + ··>·=·{},
+         33 │ + )·{
+     30  34 │     return {
+     31  35 │       runId: "run_test_0000000000000001",
+     32  36 │       candidate: {
+     33  37 │         strategy: "EXPAND_MIGRATE_CONTRACT",
+     34     │ - ······artifacts:·[{·path:·"docs/migrations/customer-id.md",·kind:·"MIGRATION_DOCUMENT",·content:·"#·Migration\n"·}],
+         38 │ + ······artifacts:·[
+         39 │ + ········{
+         40 │ + ··········path:·"docs/migrations/customer-id.md",
+         41 │ + ··········kind:·"MIGRATION_DOCUMENT",
+         42 │ + ··········content:·"#·Migration\n",
+         43 │ + ········},
+         44 │ + ······],
+     35  45 │       } as never,
+     36  46 │       comparison: { transition: "ALLOW→BLOCK", triggeredRuleIds: ["LG001"] } as never,
+    ······· │ 
+     56  66 │           const method = init?.method ?? "GET";
+     57  67 │           calls.push({ url, method });
+     58     │ - ········if·(url.endsWith("/git/ref/heads/main"))·return·jsonResponse({·object:·{·sha:·"a".repeat(40)·}·});
+         68 │ + ········if·(url.endsWith("/git/ref/heads/main"))
+         69 │ + ··········return·jsonResponse({·object:·{·sha:·"a".repeat(40)·}·});
+     59  70 │           if (url.endsWith("/git/blobs")) return jsonResponse({ sha: "blob-sha" });
+     60     │ - ········if·(url.includes("/git/commits/")·&&·method·===·"GET")·return·jsonResponse({·tree:·{·sha:·"tree-sha"·}·});
+         71 │ + ········if·(url.includes("/git/commits/")·&&·method·===·"GET")
+         72 │ + ··········return·jsonResponse({·tree:·{·sha:·"tree-sha"·}·});
+     61  73 │           if (url.endsWith("/git/trees")) return jsonResponse({ sha: "new-tree-sha" });
+     62     │ - ········if·(url.endsWith("/git/commits")·&&·method·===·"POST")·return·jsonResponse({·sha:·"c".repeat(40)·});
+     63     │ - ········if·(url.endsWith("/git/refs")·&&·method·===·"POST")·return·jsonResponse({·ref:·"refs/heads/lineageguard/run-run_test_0000000000000001"·});
+         74 │ + ········if·(url.endsWith("/git/commits")·&&·method·===·"POST")
+         75 │ + ··········return·jsonResponse({·sha:·"c".repeat(40)·});
+         76 │ + ········if·(url.endsWith("/git/refs")·&&·method·===·"POST")
+         77 │ + ··········return·jsonResponse({·ref:·"refs/heads/lineageguard/run-run_test_0000000000000001"·});
+     64  78 │           if (url.endsWith("/pulls") && method === "POST") {
+     65  79 │             // Simulate GitHub rejecting creation because a PR for this head already exists.
+    ······· │ 
+     67  81 │           }
+     68  82 │           if (url.includes("/pulls?state=open")) {
+     69     │ - ··········return·jsonResponse([{·html_url:·"https://github.com/org/walkthrough/pull/7",·number:·7·}]);
+         83 │ + ··········return·jsonResponse([
+         84 │ + ············{·html_url:·"https://github.com/org/walkthrough/pull/7",·number:·7·},
+         85 │ + ··········]);
+     70  86 │           }
+     71  87 │           throw new Error(`Unexpected fetch: ${method} ${url}`);
+    ······· │ 
+     89 105 │         vi.fn(async (url: string, init?: RequestInit) => {
+     90 106 │           const method = init?.method ?? "GET";
+     91     │ - ········if·(url.endsWith("/git/ref/heads/main"))·return·jsonResponse({·object:·{·sha:·"a".repeat(40)·}·});
+        107 │ + ········if·(url.endsWith("/git/ref/heads/main"))
+        108 │ + ··········return·jsonResponse({·object:·{·sha:·"a".repeat(40)·}·});
+     92 109 │           if (url.endsWith("/git/blobs")) return jsonResponse({ sha: "blob-sha" });
+     93     │ - ········if·(url.includes("/git/commits/")·&&·method·===·"GET")·return·jsonResponse({·tree:·{·sha:·"tree-sha"·}·});
+        110 │ + ········if·(url.includes("/git/commits/")·&&·method·===·"GET")
+        111 │ + ··········return·jsonResponse({·tree:·{·sha:·"tree-sha"·}·});
+     94 112 │           if (url.endsWith("/git/trees")) return jsonResponse({ sha: "new-tree-sha" });
+     95     │ - ········if·(url.endsWith("/git/commits")·&&·method·===·"POST")·return·jsonResponse({·sha:·"c".repeat(40)·});
+     96     │ - ········if·(url.endsWith("/git/refs")·&&·method·===·"POST")·return·jsonResponse({·ref:·"refs/heads/x"·});
+        113 │ + ········if·(url.endsWith("/git/commits")·&&·method·===·"POST")
+        114 │ + ··········return·jsonResponse({·sha:·"c".repeat(40)·});
+        115 │ + ········if·(url.endsWith("/git/refs")·&&·method·===·"POST")
+        116 │ + ··········return·jsonResponse({·ref:·"refs/heads/x"·});
+     97 117 │           if (url.endsWith("/pulls") && method === "POST") {
+     98 118 │             return jsonResponse({ message: "Validation failed" }, 422);
+    ······· │ 
+    224 244 │       if (!port) throw new Error("Writeback port should be configured");
+    225 245 │   
+    226     │ - ····await·expect(port.write(writebackInput())).rejects.toThrow(/Reviewed·tag·not·found·on·read-back/);
+        246 │ + ····await·expect(port.write(writebackInput())).rejects.toThrow(
+        247 │ + ······/Reviewed·tag·not·found·on·read-back/,
+        248 │ + ····);
+    227 249 │       expect(ingestCalls).toBe(2); // tags + document — both attempted before verification caught the mismatch
+    228 250 │     });
+    ······· │ 
+    234 256 │       };
+    235 257 │       const existingMemoryAspect = {
+    236     │ - ······aspect:·{·value:·JSON.stringify({·elements:·[{·url:·"https://example.invalid",·description:·"unrelated·note"·}]·})·},
+        258 │ + ······aspect:·{
+        259 │ + ········value:·JSON.stringify({
+        260 │ + ··········elements:·[{·url:·"https://example.invalid",·description:·"unrelated·note"·}],
+        261 │ + ········}),
+        262 │ + ······},
+    237 263 │       };
+    238 264 │       let tagBody: { proposal?: { aspect?: { value?: string } } } | undefined;
+    ······· │ 
+    266 292 │                   elements: [
+    267 293 │                     { url: "https://example.invalid", description: "unrelated note" },
+    268     │ - ··················{·url:·"https://github.com/org/walkthrough/pull/1",·description:·"lineageguard:decision:v1:lineageguard-run_test_0000000000000002"·},
+        294 │ + ··················{
+        295 │ + ····················url:·"https://github.com/org/walkthrough/pull/1",
+        296 │ + ····················description:·"lineageguard:decision:v1:lineageguard-run_test_0000000000000002",
+        297 │ + ··················},
+    269 298 │                   ],
+    270 299 │                 }),
+    ······· │ 
+    273 302 │           }
+    274 303 │           if (url.includes("ingestProposal")) {
+    275     │ - ··········const·body·=·JSON.parse((init?.body·as·string)·??·"{}")·as·{·proposal?:·{·aspectName?:·string;·aspect?:·{·value?:·string·}·}·};
+        304 │ + ··········const·body·=·JSON.parse((init?.body·as·string)·??·"{}")·as·{
+        305 │ + ············proposal?:·{·aspectName?:·string;·aspect?:·{·value?:·string·}·};
+        306 │ + ··········};
+    276 307 │             if (body.proposal?.aspectName === "globalTags") tagBody = body;
+    277 308 │             return jsonResponse({ status: "ok" });
+    ······· │ 
+    286 317 │   
+    287 318 │       expect(result.status).toBe("SUCCEEDED");
+    288     │ - ····const·writtenTags·=·JSON.parse(tagBody?.proposal?.aspect?.value·??·"{}")·as·{·tags?:·Array<{·tag:·string·}>·};
+        319 │ + ····const·writtenTags·=·JSON.parse(tagBody?.proposal?.aspect?.value·??·"{}")·as·{
+        320 │ + ······tags?:·Array<{·tag:·string·}>;
+        321 │ + ····};
+    289 322 │       expect(writtenTags.tags?.some((t) => t.tag === "urn:li:tag:team-finance")).toBe(true);
+    290     │ - ····expect(writtenTags.tags?.some((t)·=>·t.tag·===·"urn:li:tag:lineageguard-canonical.Reviewed")).toBe(true);
+        323 │ + ····expect(
+        324 │ + ······writtenTags.tags?.some((t)·=>·t.tag·===·"urn:li:tag:lineageguard-canonical.Reviewed"),
+        325 │ + ····).toBe(true);
+    291 326 │     });
+    292 327 │   
+    ······· │ 
+    304 339 │           if (method === "GET" && url.includes("aspect=globalTags")) {
+    305 340 │             return jsonResponse({
+    306     │ - ············aspect:·{·value:·JSON.stringify({·tags:·[{·tag:·"urn:li:tag:lineageguard-canonical.Reviewed"·}]·})·},
+        341 │ + ············aspect:·{
+        342 │ + ··············value:·JSON.stringify({
+        343 │ + ················tags:·[{·tag:·"urn:li:tag:lineageguard-canonical.Reviewed"·}],
+        344 │ + ··············}),
+        345 │ + ············},
+    307 346 │             });
+    308 347 │           }
+    ······· │ 
+    311 350 │               aspect: {
+    312 351 │                 value: JSON.stringify({
+    313     │ - ················elements:·[{·description:·"lineageguard:decision:v1:lineageguard-run_test_0000000000000002"·}],
+        352 │ + ················elements:·[
+        353 │ + ··················{
+        354 │ + ····················description:·"lineageguard:decision:v1:lineageguard-run_test_0000000000000002",
+        355 │ + ··················},
+        356 │ + ················],
+    314 357 │                 }),
+    315 358 │               },
+  
+
+apps/worker/src/orchestration.ts format ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+  
+     35  35 │   
+     36  36 │     if (readToken.length <= 8) {
+     37     │ - ····console.warn("[orchestration]·DataHub·not·configured·(token·missing·or·too·short)·—·collection·will·fail·at·runtime");
+         37 │ + ····console.warn(
+         38 │ + ······"[orchestration]·DataHub·not·configured·(token·missing·or·too·short)·—·collection·will·fail·at·runtime",
+         39 │ + ····);
+     38  40 │       return {
+     39  41 │         async collect(_input: { changeId: string; request?: unknown }) {
+     40     │ - ········throw·new·Error("DataHub·is·not·configured:·DATAHUB_READ_TOKEN·(or·DATAHUB_TOKEN)·must·be·set·and·longer·than·8·characters");
+         42 │ + ········throw·new·Error(
+         43 │ + ··········"DataHub·is·not·configured:·DATAHUB_READ_TOKEN·(or·DATAHUB_TOKEN)·must·be·set·and·longer·than·8·characters",
+         44 │ + ········);
+     41  45 │         },
+     42  46 │       };
+    ······· │ 
+     99 103 │           throw new Error(
+    100 104 │             `Validation runtime unavailable: Docker executable not found at ${dockerExecutable}. ` +
+    101     │ - ··········`Set·VALIDATION_DOCKER_EXECUTABLE·or·install·Docker.`
+        105 │ + ············`Set·VALIDATION_DOCKER_EXECUTABLE·or·install·Docker.`,
+    102 106 │           );
+    103 107 │         }
+    ······· │ 
+    107 111 │           throw new Error(
+    108 112 │             "Validation runtime unavailable: VALIDATION_RUNNER_IMAGE_ID and VALIDATION_POSTGRES_IMAGE_ID must be set. " +
+    109     │ - ··········"These·are·content-addressed·image·digests·(sha256:...)·for·the·validation·containers."
+        113 │ + ············"These·are·content-addressed·image·digests·(sha256:...)·for·the·validation·containers.",
+    110 114 │           );
+    111 115 │         }
+    ······· │ 
+    119 123 │           const repositoryPath = resolve(process.cwd());
+    120 124 │           const sandboxRoot = process.env.VALIDATION_SANDBOX_ROOT ?? "/tmp";
+    121     │ - ········const·baseSha·=·parsed.artifacts.find((a)·=>·a.operation·===·"MODIFY")?.expectedBaseSha·??·"HEAD";
+        125 │ + ········const·baseSha·=
+        126 │ + ··········parsed.artifacts.find((a)·=>·a.operation·===·"MODIFY")?.expectedBaseSha·??·"HEAD";
+    122 127 │           const sandboxId = `validation-${Date.now()}`;
+    123 128 │           const worktreeId = `lineageguard/validation/${sandboxId}`;
+    124 129 │   
+    125 130 │           // Read base fixture SQL — must include existing rows for backfill verification
+    126     │ - ········let·baseFixtureSql·=·"CREATE·SCHEMA·IF·NOT·EXISTS·commerce;·CREATE·TABLE·commerce.orders·(or...
+        131 │ + ········let·baseFixtureSql·=
+        132 │ + ··········"CREATE·SCHEMA·IF·NOT·EXISTS·commerce;·CREATE·TABLE·commerce.orders·(order_id·BIGINT·PRIMARY·KEY,·customer_id·BIGINT·NOT·NULL,·order_total·NUMERIC(10,2),·ordered_at·TIMESTAMPTZ·DEFAULT·now());·INSERT·INTO·commerce.orders·(order_id,·customer_id,·order_total,·ordered_at)·VALUES·(1,·100,·49.99,·'2024-01-15'),·(2,·200,·129.00,·'2024-02-20'),·(3,·100,·75.50,·'2024-03-10');";
+    127 133 │           if (baseFixturePath) {
+    128 134 │             try {
+    129 135 │               baseFixtureSql = await readFile(baseFixturePath, "utf8");
+    130 136 │             } catch {
+    131     │ - ············console.warn(`[orchestration]·Could·not·read·base·fixture·from·${baseFixturePath},·using·default`);
+        137 │ + ············console.warn(
+        138 │ + ··············`[orchestration]·Could·not·read·base·fixture·from·${baseFixturePath},·using·default`,
+        139 │ + ············);
+    132 140 │             }
+    133 141 │           }
+    ······· │ 
+    148 156 │             const dbtImpl = "lineageguard:dbt-runner:v1";
+    149 157 │             const dbtVer = "1.8.0";
+    150     │ - ··········const·dbtDigest·=·runnerImageId.startsWith("sha256:")·?·runnerImageId.slice("sha256:".length)·:·createHash("sha256").update(runnerImageId).digest("hex");
+        158 │ + ··········const·dbtDigest·=·runnerImageId.startsWith("sha256:")
+        159 │ + ············?·runnerImageId.slice("sha256:".length)
+        160 │ + ············:·createHash("sha256").update(runnerImageId).digest("hex");
+    151 161 │   
+    152 162 │             const validators = [
+    153     │ - ············{·check:·"SQL_MIGRATION",·commandId:·"VALIDATE_SQL_MIGRATION_V1",·impl:·sqlDriverImpl,·ver:·sqlDriverVer,·dig:·sqlDriverDigest·},
+    154     │ - ············{·check:·"BACKFILL_EQUALITY",·commandId:·"VALIDATE_BACKFILL_EQUALITY_V1",·impl:·sqlDriverImpl,·ver:·sqlDriverVer,·dig:·sqlDriverDigest·},
+    155     │ - ············{·check:·"DBT_PARSE",·commandId:·"VALIDATE_DBT_PARSE_V1",·impl:·dbtImpl,·ver:·dbtVer,·dig:·dbtDigest·},
+    156     │ - ············{·check:·"DBT_COMPILE",·commandId:·"VALIDATE_DBT_COMPILE_V1",·impl:·dbtImpl,·ver:·dbtVer,·dig:·dbtDigest·},
+    157     │ - ············{·check:·"DBT_TEST",·commandId:·"VALIDATE_DBT_TEST_V1",·impl:·dbtImpl,·ver:·dbtVer,·dig:·dbtDigest·},
+    158     │ - ············{·check:·"OLD_CONSUMER_COMPATIBILITY",·commandId:·"VALIDATE_OLD_CONSUMER_V1",·impl:·sqlDriverImpl,·ver:·sqlDriverVer,·dig:·sqlDriverDigest·},
+    159     │ - ············{·check:·"NEW_CONSUMER_COMPATIBILITY",·commandId:·"VALIDATE_NEW_CONSUMER_V1",·impl:·sqlDriverImpl,·ver:·sqlDriverVer,·dig:·sqlDriverDigest·},
+    160     │ - ············{·check:·"ROLLBACK",·commandId:·"VALIDATE_ROLLBACK_V1",·impl:·sqlDriverImpl,·ver:·sqlDriverVer,·dig:·sqlDriverDigest·},
+        163 │ + ············{
+        164 │ + ··············check:·"SQL_MIGRATION",
+        165 │ + ··············commandId:·"VALIDATE_SQL_MIGRATION_V1",
+        166 │ + ··············impl:·sqlDriverImpl,
+        167 │ + ··············ver:·sqlDriverVer,
+        168 │ + ··············dig:·sqlDriverDigest,
+        169 │ + ············},
+        170 │ + ············{
+        171 │ + ··············check:·"BACKFILL_EQUALITY",
+        172 │ + ··············commandId:·"VALIDATE_BACKFILL_EQUALITY_V1",
+        173 │ + ··············impl:·sqlDriverImpl,
+        174 │ + ··············ver:·sqlDriverVer,
+        175 │ + ··············dig:·sqlDriverDigest,
+        176 │ + ············},
+        177 │ + ············{
+        178 │ + ··············check:·"DBT_PARSE",
+        179 │ + ··············commandId:·"VALIDATE_DBT_PARSE_V1",
+        180 │ + ··············impl:·dbtImpl,
+        181 │ + ··············ver:·dbtVer,
+        182 │ + ··············dig:·dbtDigest,
+        183 │ + ············},
+        184 │ + ············{
+        185 │ + ··············check:·"DBT_COMPILE",
+        186 │ + ··············commandId:·"VALIDATE_DBT_COMPILE_V1",
+        187 │ + ··············impl:·dbtImpl,
+        188 │ + ··············ver:·dbtVer,
+        189 │ + ··············dig:·dbtDigest,
+        190 │ + ············},
+        191 │ + ············{
+        192 │ + ··············check:·"DBT_TEST",
+        193 │ + ··············commandId:·"VALIDATE_DBT_TEST_V1",
+        194 │ + ··············impl:·dbtImpl,
+        195 │ + ··············ver:·dbtVer,
+        196 │ + ··············dig:·dbtDigest,
+        197 │ + ············},
+        198 │ + ············{
+        199 │ + ··············check:·"OLD_CONSUMER_COMPATIBILITY",
+        200 │ + ··············commandId:·"VALIDATE_OLD_CONSUMER_V1",
+        201 │ + ··············impl:·sqlDriverImpl,
+        202 │ + ··············ver:·sqlDriverVer,
+        203 │ + ··············dig:·sqlDriverDigest,
+        204 │ + ············},
+        205 │ + ············{
+        206 │ + ··············check:·"NEW_CONSUMER_COMPATIBILITY",
+        207 │ + ··············commandId:·"VALIDATE_NEW_CONSUMER_V1",
+        208 │ + ··············impl:·sqlDriverImpl,
+        209 │ + ··············ver:·sqlDriverVer,
+        210 │ + ··············dig:·sqlDriverDigest,
+        211 │ + ············},
+        212 │ + ············{
+        213 │ + ··············check:·"ROLLBACK",
+        214 │ + ··············commandId:·"VALIDATE_ROLLBACK_V1",
+        215 │ + ··············impl:·sqlDriverImpl,
+        216 │ + ··············ver:·sqlDriverVer,
+        217 │ + ··············dig:·sqlDriverDigest,
+        218 │ + ············},
+    161 219 │             ] as const;
+    162 220 │   
+    ······· │ 
+    170 228 │                 sandboxId,
+    171 229 │                 worktreeId,
+    172     │ - ··············leaseId:·`lease_${createHash("sha256").update(runId·+·sandboxId).digest("hex").slice(0,·24)}`·as·any,
+        230 │ + ··············leaseId:·`lease_${createHash("sha256")
+        231 │ + ················.update(runId·+·sandboxId)
+        232 │ + ················.digest("hex")
+        233 │ + ················.slice(0,·24)}`·as·any,
+    173 234 │                 workerId,
+    174 235 │                 generation: 1,
+    ······· │ 
+    254 315 │   
+    255 316 │         // Get current base SHA
+    256     │ - ······const·baseRef·=·await·ghFetch(token,·`${apiBase}/repos/${owner}/${repo}/git/ref/heads/${baseBranch}`);
+        317 │ + ······const·baseRef·=·await·ghFetch(
+        318 │ + ········token,
+        319 │ + ········`${apiBase}/repos/${owner}/${repo}/git/ref/heads/${baseBranch}`,
+        320 │ + ······);
+    257 321 │         const baseSha = (baseRef as { object?: { sha?: string } })?.object?.sha;
+    258 322 │         if (!baseSha) throw new Error("Cannot resolve base branch SHA");
+    ······· │ 
+    260 324 │         // Create tree with artifacts
+    261 325 │         const treeEntries: Array<{ path: string; mode: string; type: string; sha: string }> = [];
+    262     │ - ······const·artifacts·=·(input.candidate·as·{·artifacts?:·Array<{·path:·string;·content:·string·}>·}).artifacts·??·[];
+        326 │ + ······const·artifacts·=
+        327 │ + ········(input.candidate·as·{·artifacts?:·Array<{·path:·string;·content:·string·}>·}).artifacts·??
+        328 │ + ········[];
+    263 329 │         for (const artifact of artifacts) {
+    264     │ - ········const·blob·=·await·ghFetch(token,·`${apiBase}/repos/${owner}/${repo}/git/blobs`,·{
+        330 │ + ········const·blob·=·(await·ghFetch(token,·`${apiBase}/repos/${owner}/${repo}/git/blobs`,·{
+    265 331 │             method: "POST",
+  217 more lines truncated
+  
+
+apps/worker/src/source-pr-reader.ts format ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+  
+     37  37 │     if (!prRes.ok) {
+     38  38 │       const text = await prRes.text().catch(() => "");
+     39     │ - ····throw·new·Error(`Failed·to·read·source·PR·#${prNumber}:·HTTP·${prRes.status}·—·${text.slice(0,·200)}`);
+         39 │ + ····throw·new·Error(
+         40 │ + ······`Failed·to·read·source·PR·#${prNumber}:·HTTP·${prRes.status}·—·${text.slice(0,·200)}`,
+         41 │ + ····);
+     40  42 │     }
+     41  43 │     const pr = (await prRes.json()) as {
+    ······· │ 
+     47  49 │   
+     48  50 │     // Fetch changed files
+     49     │ - ··const·filesRes·=·await·fetch(`${apiBase}/repos/${owner}/${repo}/pulls/${prNumber}/files?per_page=100`,·{
+     50     │ - ····headers:·{
+     51     │ - ······Accept:·"application/vnd.github+json",
+     52     │ - ······Authorization:·`Bearer·${token}`,
+     53     │ - ······"X-GitHub-Api-Version":·"2022-11-28",
+         51 │ + ··const·filesRes·=·await·fetch(
+         52 │ + ····`${apiBase}/repos/${owner}/${repo}/pulls/${prNumber}/files?per_page=100`,
+         53 │ + ····{
+         54 │ + ······headers:·{
+         55 │ + ········Accept:·"application/vnd.github+json",
+         56 │ + ········Authorization:·`Bearer·${token}`,
+         57 │ + ········"X-GitHub-Api-Version":·"2022-11-28",
+         58 │ + ······},
+     54  59 │       },
+     55     │ - ··});
+         60 │ + ··);
+     56  61 │     if (!filesRes.ok) {
+     57  62 │       throw new Error(`Failed to read source PR files: HTTP ${filesRes.status}`);
+    ······· │ 
+     84  89 │    * Returns null if no single canonical SQL file is found.
+     85  90 │    */
+     86     │ - export·function·buildSourceChange(
+     87     │ - ··info:·SourcePRInfo,
+     88     │ - ··repository:·string,
+     89     │ - ):·SourceChange·|·null·{
+         91 │ + export·function·buildSourceChange(info:·SourcePRInfo,·repository:·string):·SourceChange·|·null·{
+     90  92 │     const renamePattern = /RENAME\s+COLUMN\s+customer_id\s+TO\s+buyer_id/i;
+     91  93 │     const sqlPatches = info.patches.filter(
+  
+
+packages/agent/src/llm/schemas.ts format ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+  
+     1  1 │   import { z } from "zod";
+     2  2 │   
+     3    │ - export·const·migrationPlanSchema·=·z
+     4    │ - ··.object({
+     5    │ - ····strategy:·z.string().min(1),
+     6    │ - ····steps:·z
+     7    │ - ······.array(
+     8    │ - ········z.object({
+     9    │ - ··········order:·z.number().int().positive(),
+    10    │ - ··········action:·z.string().min(1),
+    11    │ - ··········description:·z.string().min(1).max(500),
+    12    │ - ··········targetPath:·z.string().optional(),
+    13    │ - ········}),
+    14    │ - ······)
+    15    │ - ······.min(1)
+    16    │ - ······.max(20),
+    17    │ - ····rationale:·z.string().min(1).max(2000),
+    18    │ - ··});
+        3 │ + export·const·migrationPlanSchema·=·z.object({
+        4 │ + ··strategy:·z.string().min(1),
+        5 │ + ··steps:·z
+        6 │ + ····.array(
+        7 │ + ······z.object({
+        8 │ + ········order:·z.number().int().positive(),
+        9 │ + ········action:·z.string().min(1),
+       10 │ + ········description:·z.string().min(1).max(500),
+       11 │ + ········targetPath:·z.string().optional(),
+       12 │ + ······}),
+       13 │ + ····)
+       14 │ + ····.min(1)
+       15 │ + ····.max(20),
+       16 │ + ··rationale:·z.string().min(1).max(2000),
+       17 │ + });
+    19 18 │   export type MigrationPlan = z.infer<typeof migrationPlanSchema>;
+    20 19 │   
+    21    │ - export·const·migrationPatchSchema·=·z
+    22    │ - ··.object({
+    23    │ - ····artifacts:·z
+    24    │ - ······.array(
+    25    │ - ········z.object({
+    26    │ - ··········kind:·z.string().min(1),
+    27    │ - ··········path:·z.string().min(1).max(240),
+    28    │ - ··········content:·z.string().min(1).max(100_000),
+    29    │ - ··········operation:·z.string().min(1),
+    30    │ - ········}),
+    31    │ - ······)
+    32    │ - ······.min(1)
+    33    │ - ······.max(20),
+    34    │ - ····summary:·z.string().min(1).max(1000),
+    35    │ - ··});
+       20 │ + export·const·migrationPatchSchema·=·z.object({
+       21 │ + ··artifacts:·z
+       22 │ + ····.array(
+       23 │ + ······z.object({
+       24 │ + ········kind:·z.string().min(1),
+       25 │ + ········path:·z.string().min(1).max(240),
+       26 │ + ········content:·z.string().min(1).max(100_000),
+       27 │ + ········operation:·z.string().min(1),
+       28 │ + ······}),
+       29 │ + ····)
+       30 │ + ····.min(1)
+       31 │ + ····.max(20),
+       32 │ + ··summary:·z.string().min(1).max(1000),
+       33 │ + });
+    36 34 │   export type MigrationPatch = z.infer<typeof migrationPatchSchema>;
+    37 35 │   
+  
+
+packages/agent/src/pipeline.test.ts format ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+  
+     70  70 │   // the same 4-consumer canonical scenario the real DataHub adapter produces.
+     71  71 │   function provenanceEntry(
+     72     │ - ··role:·"SCHEMA"·|·"LINEAGE_DISCOVERY"·|·"FIELD_PATH"·|·"ENTITY_PATH"·|·"ENTITY_DETAILS"·|·"QUERY_DISCOVERY"·|·"QUERY_DETAILS"·|·"OWNER"·|·"GLOSSARY_BINDING"·|·"GLOSSARY_DETAILS",
+     73     │ - ··tool:·"get_entities"·|·"list_schema_fields"·|·"get_lineage"·|·"get_lineage_paths_between"·|·"get_dataset_queries",
+         72 │ + ··role:
+         73 │ + ····|·"SCHEMA"
+         74 │ + ····|·"LINEAGE_DISCOVERY"
+         75 │ + ····|·"FIELD_PATH"
+         76 │ + ····|·"ENTITY_PATH"
+         77 │ + ····|·"ENTITY_DETAILS"
+         78 │ + ····|·"QUERY_DISCOVERY"
+         79 │ + ····|·"QUERY_DETAILS"
+         80 │ + ····|·"OWNER"
+         81 │ + ····|·"GLOSSARY_BINDING"
+         82 │ + ····|·"GLOSSARY_DETAILS",
+         83 │ + ··tool:
+         84 │ + ····|·"get_entities"
+         85 │ + ····|·"list_schema_fields"
+         86 │ + ····|·"get_lineage"
+         87 │ + ····|·"get_lineage_paths_between"
+         88 │ + ····|·"get_dataset_queries",
+     74  89 │     invocationId: string,
+     75  90 │   ) {
+    ······· │ 
+     90 105 │       schemaFieldUrn: canonicalSchemaFieldUrn,
+     91 106 │       nativeFieldPath: canonicalNativeFieldPath,
+     92     │ - ····provenance:·[{·...provenanceEntry("SCHEMA",·"get_entities",·"resolution"),·tool:·"search"·as·const,·role:·"RESOLUTION"·as·const·}],
+        107 │ + ····provenance:·[
+        108 │ + ······{
+        109 │ + ········...provenanceEntry("SCHEMA",·"get_entities",·"resolution"),
+        110 │ + ········tool:·"search"·as·const,
+        111 │ + ········role:·"RESOLUTION"·as·const,
+        112 │ + ······},
+        113 │ + ····],
+     93 114 │     });
+     94 115 │     const schema = createEvidence({
+    ······· │ 
+    125 146 │         direction: "DOWNSTREAM",
+    126 147 │         fieldLevel: true,
+    127     │ - ······nodes:·[canonicalDatasetUrn,·canonicalAnalyticsStagingUrn,·canonicalAnalyticsRevenueUrn,·canonicalDashboardUrn],
+        148 │ + ······nodes:·[
+        149 │ + ········canonicalDatasetUrn,
+        150 │ + ········canonicalAnalyticsStagingUrn,
+        151 │ + ········canonicalAnalyticsRevenueUrn,
+        152 │ + ········canonicalDashboardUrn,
+        153 │ + ······],
+    128 154 │         segments: [
+    129 155 │           {
+    ······· │ 
+    187 213 │         direction: "DOWNSTREAM",
+    188 214 │         fieldLevel: true,
+    189     │ - ······nodes:·[canonicalDatasetUrn,·canonicalAnalyticsStagingUrn,·canonicalFraudFeaturesUrn,·canonicalFraudModelUrn],
+        215 │ + ······nodes:·[
+        216 │ + ········canonicalDatasetUrn,
+        217 │ + ········canonicalAnalyticsStagingUrn,
+        218 │ + ········canonicalFraudFeaturesUrn,
+        219 │ + ········canonicalFraudModelUrn,
+        220 │ + ······],
+    190 221 │         segments: [
+    191 222 │           {
+    ······· │ 
+    237 268 │       fieldPath: canonicalFieldPath,
+    238 269 │       title: "Finance close SYSTEM query",
+    239     │ - ····summary:·"A·cataloged·PostgreSQL·query·subject·references·analytics.customer_revenue.customer_id.",
+        270 │ + ····summary:
+        271 │ + ······"A·cataloged·PostgreSQL·query·subject·references·analytics.customer_revenue.customer_id.",
+    240 272 │       criticality: "HIGH",
+    241 273 │       relatedEvidenceIds: [dashboardPath.id],
+    ······· │ 
+    338 370 │     return vi.stubGlobal(
+    339 371 │       "fetch",
+    340     │ - ····vi.fn(async·()·=>
+    341     │ - ······new·Response(JSON.stringify({·choices:·[{·message:·{·content:·MOCK_PLAN_RESPONSE·}·}]·}),·{
+    342     │ - ········status:·200,
+    343     │ - ········headers:·{·"content-type":·"application/json"·},
+    344     │ - ······}),
+        372 │ + ····vi.fn(
+        373 │ + ······async·()·=>
+        374 │ + ········new·Response(JSON.stringify({·choices:·[{·message:·{·content:·MOCK_PLAN_RESPONSE·}·}]·}),·{
+        375 │ + ··········status:·200,
+        376 │ + ··········headers:·{·"content-type":·"application/json"·},
+        377 │ + ········}),
+    345 378 │       ),
+    346 379 │     );
+    ······· │ 
+    348 381 │   
+    349 382 │   function unusedLlm() {
+    350     │ - ··return·createAgentModel({·baseURL:·"http://unused.invalid/v1",·model:·"unused",·apiKey:·"unused"·});
+        383 │ + ··return·createAgentModel({
+        384 │ + ····baseURL:·"http://unused.invalid/v1",
+        385 │ + ····model:·"unused",
+        386 │ + ····apiKey:·"unused",
+        387 │ + ··});
+    351 388 │   }
+    352 389 │   
+  
+
+packages/agent/src/pipeline.ts format ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+  
+     14  14 │   import { deriveImpactCards } from "./steps/derive-impact-cards.js";
+     15  15 │   import type { AgentDataHubContextPort, StepContext } from "./steps/index.js";
+     16     │ - import·{
+     17     │ - ··baselineAssess,
+     18     │ - ··collectContext,
+     19     │ - ··decideRisk,
+     20     │ - ··parseChange,
+     21     │ - }·from·"./steps/index.js";
+         16 │ + import·{·baselineAssess,·collectContext,·decideRisk,·parseChange·}·from·"./steps/index.js";
+     22  17 │   
+     23  18 │   // ---------------------------------------------------------------------------
+    ······· │ 
+     85  80 │     validation?: AgentValidationPort | undefined;
+     86  81 │     writeback?: AgentWritebackPort | undefined;
+     87     │ - ··onStatusChange?:·((runId:·string,·status:·string,·extra?:·Record<string,·unknown>)·=>·Promise<void>)·|·undefined;
+         82 │ + ··onStatusChange?:
+         83 │ + ····|·((runId:·string,·status:·string,·extra?:·Record<string,·unknown>)·=>·Promise<void>)
+         84 │ + ····|·undefined;
+     88  85 │   }
+     89  86 │   
+    ······· │ 
+    119 116 │   
+    120 117 │   function extractJson(text: string): unknown {
+    121     │ - ··const·stripped·=·text.replace(/^```(?:json)?\n?/m,·"").replace(/\n?```$/m,·"").trim();
+    122     │ - ··try·{·return·JSON.parse(stripped);·}·catch·{}
+        118 │ + ··const·stripped·=·text
+        119 │ + ····.replace(/^```(?:json)?\n?/m,·"")
+        120 │ + ····.replace(/\n?```$/m,·"")
+        121 │ + ····.trim();
+        122 │ + ··try·{
+        123 │ + ····return·JSON.parse(stripped);
+        124 │ + ··}·catch·{}
+    123 125 │     const match = stripped.match(/\{[\s\S]*\}/);
+    124 126 │     if (match) return JSON.parse(match[0]);
+    ······· │ 
+    185 187 │           const impactCards = deriveImpactCards(context);
+    186 188 │           result.consumersFound = impactCards.length;
+    187     │ - ········console.log(`··[pipeline]·Step·3:·Collected·${context.evidence.length}·evidence·items·(${impactCards.length}·impact·cards)`);
+        189 │ + ········console.log(
+        190 │ + ··········`··[pipeline]·Step·3:·Collected·${context.evidence.length}·evidence·items·(${impactCards.length}·impact·cards)`,
+        191 │ + ········);
+    188 192 │           await notify(input.runId, "CONTEXT_COLLECTED", {
+    189 193 │             consumersFound: impactCards.length,
+    ······· │ 
+    206 210 │           result.groundedDecision = comparison.grounded.decision;
+    207 211 │           result.triggeredRules = [...comparison.triggeredRuleIds];
+    208     │ - ········console.log(`··[pipeline]·Step·4:·${comparison.transition}·—·rules:·${comparison.triggeredRuleIds.join(",·")}`);
+        212 │ + ········console.log(
+        213 │ + ··········`··[pipeline]·Step·4:·${comparison.transition}·—·rules:·${comparison.triggeredRuleIds.join(",·")}`,
+        214 │ + ········);
+    209 215 │           await notify(input.runId, "RISK_DECIDED", {
+    210 216 │             groundedDecision: comparison.grounded.decision,
+    ······· │ 
+    239 245 │               criticality: e.criticality,
+    240 246 │             }));
+    241     │ - ········const·planPrompt·=·migrationPlanPrompt({
+    242     │ - ··········table:·input.table,·field:·input.field,
+    243     │ - ··········operation:·"RENAME",·newName:·input.newName,·consumers,
+    244     │ - ········})·+·"\n\nRespond·with·ONLY·a·valid·JSON·object:·{\"strategy\":·string,·\"steps\":·[{\"order\":·number,·\"action\":·string,·\"description\":·string}],·\"rationale\":·string}.·No·markdown·fences.";
+        247 │ + ········const·planPrompt·=
+        248 │ + ··········migrationPlanPrompt({
+        249 │ + ············table:·input.table,
+        250 │ + ············field:·input.field,
+        251 │ + ············operation:·"RENAME",
+        252 │ + ············newName:·input.newName,
+        253 │ + ············consumers,
+        254 │ + ··········})·+
+        255 │ + ··········'\n\nRespond·with·ONLY·a·valid·JSON·object:·{"strategy":·string,·"steps":·[{"order":·number,·"action":·string,·"description":·string}],·"rationale":·string}.·No·markdown·fences.';
+    245 256 │           const planText = await directLLMCall(llmConfig, planPrompt, 3000);
+    246 257 │           plan = migrationPlanSchema.parse(extractJson(planText));
+    247     │ - ········console.log(`··[pipeline]·Step·5:·Plan·strategy:·${plan.strategy}·(${plan.steps.length}·steps)`);
+        258 │ + ········console.log(
+        259 │ + ··········`··[pipeline]·Step·5:·Plan·strategy:·${plan.strategy}·(${plan.steps.length}·steps)`,
+        260 │ + ········);
+    248 261 │           await notify(input.runId, "MIGRATION_PLANNED", { strategy: plan.strategy });
+    249 262 │         } catch (err: any) {
+    ······· │ 
+    268 281 │           bindMigrationCandidate(candidate, change, context, comparison.grounded);
+    269 282 │           result.artifactsGenerated = candidate.artifacts.length;
+    270     │ - ········console.log(`··[pipeline]·Step·6:·Built·${result.artifactsGenerated}·artifacts·(deterministic,·bound)`);
+        283 │ + ········console.log(
+        284 │ + ··········`··[pipeline]·Step·6:·Built·${result.artifactsGenerated}·artifacts·(deterministic,·bound)`,
+        285 │ + ········);
+    271 286 │           await notify(input.runId, "PATCH_GENERATED", {
+    272 287 │             artifactsGenerated: result.artifactsGenerated,
+    ······· │ 
+    285 300 │           console.log(`  [pipeline] Step 7: Running validation (8 checks)...`);
+    286 301 │           try {
+    287     │ - ··········const·validationOutput·=·await·config.validation.validate(candidate,·{·runId:·input.runId·});
+        302 │ + ··········const·validationOutput·=·await·config.validation.validate(candidate,·{
+        303 │ + ············runId:·input.runId,
+        304 │ + ··········});
+    288 305 │             result.validationPassed = validationOutput.allPass;
+    289 306 │             validationReceiptFingerprint = validationOutput.receiptFingerprint;
+    290 307 │             if (!validationOutput.allPass) {
+    291 308 │               const failed = validationOutput.checks.filter((c) => c.status === "FAIL");
+    292     │ - ············console.error(`··[pipeline]·Step·7:·Validation·FAILED:·${failed.map((c)·=>·c.check).join(",·")}`);
+    293     │ - ············await·notify(input.runId,·"FAILED_VALIDATION",·{·failedChecks:·failed.map((c)·=>·c.check)·});
+        309 │ + ············console.error(
+        310 │ + ··············`··[pipeline]·Step·7:·Validation·FAILED:·${failed.map((c)·=>·c.check).join(",·")}`,
+        311 │ + ············);
+        312 │ + ············await·notify(input.runId,·"FAILED_VALIDATION",·{
+        313 │ + ··············failedChecks:·failed.map((c)·=>·c.check),
+        314 │ + ············});
+    294 315 │               result.finalStatus = "FAILED_VALIDATION" as RunStatus;
+    295 316 │               return result;
+  
+
+packages/agent/src/steps/build-canonical-candidate.ts format ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+  
+     42  42 │   
+     43  43 │     if (sourceEvidenceIds.length === 0) {
+     44     │ - ····throw·new·Error("Cannot·build·migration·candidate:·no·triggered·evidence·(decision·should·be·BLOCK)");
+         44 │ + ····throw·new·Error(
+         45 │ + ······"Cannot·build·migration·candidate:·no·triggered·evidence·(decision·should·be·BLOCK)",
+         46 │ + ····);
+     45  47 │     }
+     46  48 │   
+    ······· │ 
+    205 207 │         r.kind === "OWNER"
+    206 208 │           ? `- ${r.ownerUrn} (owner of ${r.affectedAssetUrns.join(", ")})`
+    207     │ - ········:·`-·Escalation:·${r.affectedAssetUrn}·(${r.reason})`
+        209 │ + ········:·`-·Escalation:·${r.affectedAssetUrn}·(${r.reason})`,
+    208 210 │       ),
+    209 211 │     ].join("\n");
+    ······· │ 
+    218 220 │   
+    219 221 │     // Ensure all evidence is covered exactly once across steps
+    220     │ - ··const·allStepEvidence·=·[...new·Set([...expandEvidence,·...migrateEvidence,·...contractEvidence])].sort();
+        222 │ + ··const·allStepEvidence·=·[
+        223 │ + ····...new·Set([...expandEvidence,·...migrateEvidence,·...contractEvidence]),
+        224 │ + ··].sort();
+    221 225 │     if (JSON.stringify(allStepEvidence) !== JSON.stringify(sourceEvidenceIds)) {
+    222 226 │       throw new Error("Evidence distribution failed — all source evidence must be covered by steps");
+    ······· │ 
+    230 234 │       sourceDecision: "BLOCK",
+    231 235 │       sourceEvidenceIds,
+    232     │ - ····summary:·input.rationale·??·"Add·buyer_id,·migrate·readers,·then·retire·customer_id·after·compatibility·window.",
+        236 │ + ····summary:
+        237 │ + ······input.rationale·??
+        238 │ + ······"Add·buyer_id,·migrate·readers,·then·retire·customer_id·after·compatibility·window.",
+    233 239 │       steps: [
+    234 240 │         {
+    ······· │ 
+    321 327 │       requiredReviewers: requiredReviewers as MigrationCandidate["requiredReviewers"],
+    322 328 │       compatibilityWindowDays: 30,
+    323     │ - ····rollbackPlan:·"Run·walkthrough/migrations/001_rollback.sql·while·customer_id·remains·the·source·of·truth.",
+        329 │ + ····rollbackPlan:
+        330 │ + ······"Run·walkthrough/migrations/001_rollback.sql·while·customer_id·remains·the·source·of·truth.",
+    324 331 │     };
+    325 332 │   
+  
+
+packages/agent/src/steps/plan-migration.ts format ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+  
+    14 14 │   function extractJson(text: string): unknown {
+    15 15 │     // Strip markdown code fences if present
+    16    │ - ··const·stripped·=·text.replace(/^```(?:json)?\n?/m,·"").replace(/\n?```$/m,·"").trim();
+       16 │ + ··const·stripped·=·text
+       17 │ + ····.replace(/^```(?:json)?\n?/m,·"")
+       18 │ + ····.replace(/\n?```$/m,·"")
+       19 │ + ····.trim();
+    17 20 │     // Try direct parse first
+    18 21 │     try {
+    ····· │ 
+    29 32 │     input: PlanMigrationInput,
+    30 33 │   ): Promise<PlanMigrationResult> {
+    31    │ - ··const·consumers·=·(input.context·as·any).evidence?.map((evidence:·any)·=>·({
+    32    │ - ····name:·evidence.title·??·evidence.entityName·??·"unknown",
+    33    │ - ····type:·evidence.kind,
+    34    │ - ····criticality:·evidence.criticality,
+    35    │ - ··}))·??·[];
+       34 │ + ··const·consumers·=
+       35 │ + ····(input.context·as·any).evidence?.map((evidence:·any)·=>·({
+       36 │ + ······name:·evidence.title·??·evidence.entityName·??·"unknown",
+       37 │ + ······type:·evidence.kind,
+       38 │ + ······criticality:·evidence.criticality,
+       39 │ + ····}))·??·[];
+    36 40 │   
+    37 41 │     const prompt = migrationPlanPrompt({
+    ····· │ 
+    45 49 │     const { text } = await generateText({
+    46 50 │       model: ctx.llm,
+    47    │ - ····prompt:·prompt·+·"\n\nRespond·with·ONLY·a·JSON·object·matching·this·schema:·{strategy:·string,·steps:·[{order:·number,·action:·string,·description:·string}],·rationale:·string}.·No·markdown,·no·explanation.",
+       51 │ + ····prompt:
+       52 │ + ······prompt·+
+       53 │ + ······"\n\nRespond·with·ONLY·a·JSON·object·matching·this·schema:·{strategy:·string,·steps:·[{order:·number,·action:·string,·description:·string}],·rationale:·string}.·No·markdown,·no·explanation.",
+    48 54 │     });
+    49 55 │   
+  
+
+packages/db/src/simple-runs.ts format ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+  
+    172 172 │         ];
+    173 173 │         for (const col of columns) {
+    174     │ - ········await·pool.query(
+    175     │ - ··········`ALTER·TABLE·lineageguard.simple_runs·ADD·COLUMN·IF·NOT·EXISTS·${col}`
+    176     │ - ········);
+        174 │ + ········await·pool.query(`ALTER·TABLE·lineageguard.simple_runs·ADD·COLUMN·IF·NOT·EXISTS·${col}`);
+    177 175 │         }
+    178 176 │       },
+    ······· │ 
+    294 292 │   
+    295 293 │       async get(id): Promise<SimpleRun | null> {
+    296     │ - ······const·result·=·await·pool.query(
+    297     │ - ········"SELECT·*·FROM·lineageguard.simple_runs·WHERE·id·=·$1",
+    298     │ - ········[id],
+    299     │ - ······);
+        294 │ + ······const·result·=·await·pool.query("SELECT·*·FROM·lineageguard.simple_runs·WHERE·id·=·$1",·[id]);
+    300 295 │         return result.rows[0] ? mapRow(result.rows[0]) : null;
+    301 296 │       },
+  
+
+packages/domain/src/impact-consumer.ts format ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+  
+     29  29 │   }
+     30  30 │   
+     31     │ - export·type·ImpactConsumer·=·DataModelConsumer·|·DashboardConsumer·|·MlConsumer·|·UnmanagedQueryConsumer;
+         31 │ + export·type·ImpactConsumer·=
+         32 │ + ··|·DataModelConsumer
+         33 │ + ··|·DashboardConsumer
+         34 │ + ··|·MlConsumer
+         35 │ + ··|·UnmanagedQueryConsumer;
+     32  36 │   
+     33  37 │   /**
+  
+
+playwright.config.ts format ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+  
+    13 13 │     },
+    14 14 │     webServer: {
+    15    │ - ····command:·"LINEAGEGUARD_DATABASE_URL=postgresql://lineageguard:lineageguard@127.0.0.1:5432/lineageguard·pnpm·--filter·@lineageguard/web·dev·--port·3000",
+       15 │ + ····command:
+       16 │ + ······"LINEAGEGUARD_DATABASE_URL=postgresql://lineageguard:lineageguard@127.0.0.1:5432/lineageguard·pnpm·--filter·@lineageguard/web·dev·--port·3000",
+    16 17 │       reuseExistingServer: true,
+    17 18 │       url: "http://127.0.0.1:3000",
+  
+
+scripts/demo.ts format ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Formatter would have printed the following content:
+  
+    37 37 │   
+    38 38 │     console.log(`DataHub:     ${process.env.DATAHUB_GMS_URL ?? "http://127.0.0.1:8080"}`);
+    39    │ - ··console.log(`Token:·······${(process.env.DATAHUB_READ_TOKEN·??·process.env.DATAHUB_TOKEN·??·"").length·>·8·?·"✓·configured"·:·"✗·not·configured"}`);
+       39 │ + ··console.log(
+       40 │ + ····`Token:·······${(process.env.DATAHUB_READ_TOKEN·??·process.env.DATAHUB_TOKEN·??·"").length·>·8·?·"✓·configured"·:·"✗·not·configured"}`,
+       41 │ + ··);
+    40 42 │     console.log(`GitHub:      ${process.env.GITHUB_TOKEN ? "✓ configured" : "✗ not configured"}`);
+    41    │ - ··console.log(`Writeback:···${process.env.DATAHUB_MUTATION_TOKEN·?·"✓·configured"·:·"✗·not·configured"}`);
+    42    │ - ··console.log(`Validation:··${process.env.VALIDATION_ENABLED·!==·"false"·?·"✓·enabled"·:·"✗·disabled"}`);
+       43 │ + ··console.log(
+       44 │ + ····`Writeback:···${process.env.DATAHUB_MUTATION_TOKEN·?·"✓·configured"·:·"✗·not·configured"}`,
+       45 │ + ··);
+       46 │ + ··console.log(
+       47 │ + ····`Validation:··${process.env.VALIDATION_ENABLED·!==·"false"·?·"✓·enabled"·:·"✗·disabled"}`,
+       48 │ + ··);
+    43 49 │     console.log(`Base SHA:    ${process.env.LINEAGEGUARD_BASE_SHA ? "✓ set" : "✗ not set"}`);
+    44 50 │     console.log(`Head SHA:    ${process.env.LINEAGEGUARD_HEAD_SHA ? "✓ set" : "✗ not set"}`);
+  
+
+The number of diagnostics exceeds the limit allowed. Use --max-diagnostics to increase it.
+Diagnostics not shown: 1.
+Checked 186 files in 73ms. No fixes applied.
+Found 20 errors.
+format ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Some errors were emitted while running checks.
+  
+
+[ELIFECYCLE] Command failed with exit code 1.
+=== format:check ===
+$ biome format .
+apps/web/app/globals.css:3:2 parse ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Tailwind-specific syntax is disabled.
+  
+     1 │ @import "tailwindcss";
+     2 │ 
+   > 3 │ @theme {
+       │  ^^^^^^^
+   > 4 │   --color-background: oklch(1 0 0);
+        ...
+  > 26 │   --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  > 27 │ }
+       │ ^
+    28 │ 
+    29 │ @media (prefers-color-scheme: dark) {
+  
+  i Enable `tailwindDirectives` in the css parser options, or remove this if you are not using Tailwind CSS.
+  
+
+apps/web/app/globals.css format ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Code formatting aborted due to parsing errors. To format code with errors, enable the 'formatter.formatWithErrors' option.
+  
+
+Checked 186 files in 63ms. No fixes applied.
+Found 1 error.
+format ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Some errors were emitted while running checks.
+  
+
+[ELIFECYCLE] Command failed with exit code 1.
+=== lint ===
+$ biome lint .
+apps/web/app/api/runs/[runId]/route.ts:10:17 lint/suspicious/noExplicitAny ━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ! Unexpected any. Specify a different type.
+  
+     8 │     if (!run) return NextResponse.json({ error: "Not found" }, { status: 404 });
+     9 │     return NextResponse.json(run);
+  > 10 │   } catch (err: any) {
+       │                 ^^^
+    11 │     return NextResponse.json({ error: err.message }, { status: 500 });
+    12 │   }
+  
+  i any disables many type checking rules. Its use should be avoided.
+  
+
+apps/web/app/api/runs/route.ts:8:17 lint/suspicious/noExplicitAny ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ! Unexpected any. Specify a different type.
+  
+     6 │     const runs = await fetchRuns();
+     7 │     return NextResponse.json(runs);
+   > 8 │   } catch (err: any) {
+       │                 ^^^
+     9 │     return NextResponse.json({ error: err.message }, { status: 500 });
+    10 │   }
+  
+  i any disables many type checking rules. Its use should be avoided.
+  
+
+apps/web/app/page.tsx:12:3 lint/correctness/noUnusedImports  FIXABLE  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ! Several of these imports are unused.
+  
+    10 │   IconDatabase,
+    11 │   IconFileText,
+  > 12 │   IconGitPullRequest,
+       │   ^^^^^^^^^^^^^^^^^^^
+  > 13 │   IconLayers,
+        ...
+  > 17 │   IconShieldCheck,
+  > 18 │   IconUpload,
+       │   ^^^^^^^^^^
+    19 │   IconZap,
+    20 │ } from "@/components/ui/icons";
+  
+  i Unused imports might be the result of an incomplete refactoring.
+  
+  i Unsafe fix: Remove the unused imports.
+  
+     10  10 │     IconDatabase,
+     11  11 │     IconFileText,
+     12     │ - ··IconGitPullRequest,
+     13  12 │     IconLayers,
+     14  13 │     IconSearch,
+    ······· │ 
+     16  15 │     IconShieldAlert,
+     17  16 │     IconShieldCheck,
+     18     │ - ··IconUpload,
+     19  17 │     IconZap,
+     20  18 │   } from "@/components/ui/icons";
+  
+
+apps/worker/src/source-pr-reader.ts:98:16 lint/style/noNonNullAssertion ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ! Forbidden non-null assertion.
+  
+     96 │   if (sqlPatches.length !== 1) return null;
+     97 │ 
+   > 98 │   const file = sqlPatches[0]!;
+        │                ^^^^^^^^^^^^^^
+     99 │   // GitHub API patch starts at the @@ hunk header.
+    100 │   // The domain parser expects full unified diff: diff --git, ---, +++, then hunks.
+  
+
+packages/agent/src/llm/client.ts:50:38 lint/suspicious/noExplicitAny ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ! Unexpected any. Specify a different type.
+  
+    48 │   });
+    49 │   if (!res.ok) throw new Error(`LLM call failed: ${res.status}`);
+  > 50 │   const data = (await res.json()) as any;
+       │                                      ^^^
+    51 │   return data.choices?.[0]?.message?.content ?? "";
+    52 │ }
+  
+  i any disables many type checking rules. Its use should be avoided.
+  
+
+apps/web/app/globals.css:3:2 parse ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Tailwind-specific syntax is disabled.
+  
+     1 │ @import "tailwindcss";
+     2 │ 
+   > 3 │ @theme {
+       │  ^^^^^^^
+   > 4 │   --color-background: oklch(1 0 0);
+        ...
+  > 26 │   --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  > 27 │ }
+       │ ^
+    28 │ 
+    29 │ @media (prefers-color-scheme: dark) {
+  
+  i Enable `tailwindDirectives` in the css parser options, or remove this if you are not using Tailwind CSS.
+  
+
+apps/web/app/runs/[runId]/page.tsx:170:26 lint/suspicious/noArrayIndexKey ━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Avoid using the index of an array as key property in an element.
+  
+    168 │                 {(run.patch || "No patch data available").split("\n").map((line, i) => (
+    169 │                   <div
+  > 170 │                     key={i}
+        │                          ^
+    171 │                     className={
+    172 │                       line.startsWith("+")
+  
+  i This is the source of the key value.
+  
+    166 │             <div className="rounded-md bg-muted/50 p-3 overflow-x-auto">
+    167 │               <pre className="text-xs font-mono leading-relaxed">
+  > 168 │                 {(run.patch || "No patch data available").split("\n").map((line, i) => (
+        │                                                                                  ^
+    169 │                   <div
+    170 │                     key={i}
+  
+  i The order of the items may change, and this also affects performances and component state.
+  
+  i Check the React documentation. 
+  
+
+apps/web/components/ui/icons.tsx:7:5 lint/a11y/noSvgWithoutTitle ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Alternative text title element cannot be empty
+  
+     5 │ export function IconDatabase(props: IconProps) {
+     6 │   return (
+   > 7 │     <svg
+       │     ^^^^
+   > 8 │       xmlns="http://www.w3.org/2000/svg"
+        ...
+  > 15 │       {...props}
+  > 16 │     >
+       │     ^
+    17 │       <ellipse cx="12" cy="5" rx="9" ry="3" />
+    18 │       <path d="M3 5v14c0 1.66 4.03 3 9 3s9-1.34 9-3V5" />
+  
+  i For accessibility purposes, SVGs should have an alternative text, provided via title element. If the svg element has role="img", you should add the aria-label or aria-labelledby attribute.
+  
+
+apps/web/components/ui/icons.tsx:26:5 lint/a11y/noSvgWithoutTitle ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Alternative text title element cannot be empty
+  
+    24 │ export function IconShield(props: IconProps) {
+    25 │   return (
+  > 26 │     <svg
+       │     ^^^^
+  > 27 │       xmlns="http://www.w3.org/2000/svg"
+        ...
+  > 34 │       {...props}
+  > 35 │     >
+       │     ^
+    36 │       <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+    37 │     </svg>
+  
+  i For accessibility purposes, SVGs should have an alternative text, provided via title element. If the svg element has role="img", you should add the aria-label or aria-labelledby attribute.
+  
+
+apps/web/components/ui/icons.tsx:43:5 lint/a11y/noSvgWithoutTitle ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Alternative text title element cannot be empty
+  
+    41 │ export function IconShieldCheck(props: IconProps) {
+    42 │   return (
+  > 43 │     <svg
+       │     ^^^^
+  > 44 │       xmlns="http://www.w3.org/2000/svg"
+        ...
+  > 51 │       {...props}
+  > 52 │     >
+       │     ^
+    53 │       <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+    54 │       <path d="m9 12 2 2 4-4" />
+  
+  i For accessibility purposes, SVGs should have an alternative text, provided via title element. If the svg element has role="img", you should add the aria-label or aria-labelledby attribute.
+  
+
+apps/web/components/ui/icons.tsx:61:5 lint/a11y/noSvgWithoutTitle ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Alternative text title element cannot be empty
+  
+    59 │ export function IconShieldAlert(props: IconProps) {
+    60 │   return (
+  > 61 │     <svg
+       │     ^^^^
+  > 62 │       xmlns="http://www.w3.org/2000/svg"
+        ...
+  > 69 │       {...props}
+  > 70 │     >
+       │     ^
+    71 │       <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+    72 │       <path d="M12 8v4" />
+  
+  i For accessibility purposes, SVGs should have an alternative text, provided via title element. If the svg element has role="img", you should add the aria-label or aria-labelledby attribute.
+  
+
+apps/web/components/ui/icons.tsx:80:5 lint/a11y/noSvgWithoutTitle ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Alternative text title element cannot be empty
+  
+    78 │ export function IconGitBranch(props: IconProps) {
+    79 │   return (
+  > 80 │     <svg
+       │     ^^^^
+  > 81 │       xmlns="http://www.w3.org/2000/svg"
+        ...
+  > 88 │       {...props}
+  > 89 │     >
+       │     ^
+    90 │       <line x1="6" y1="3" x2="6" y2="15" />
+    91 │       <circle cx="18" cy="6" r="3" />
+  
+  i For accessibility purposes, SVGs should have an alternative text, provided via title element. If the svg element has role="img", you should add the aria-label or aria-labelledby attribute.
+  
+
+apps/web/components/ui/icons.tsx:100:5 lint/a11y/noSvgWithoutTitle ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Alternative text title element cannot be empty
+  
+     98 │ export function IconCode(props: IconProps) {
+     99 │   return (
+  > 100 │     <svg
+        │     ^^^^
+  > 101 │       xmlns="http://www.w3.org/2000/svg"
+         ...
+  > 108 │       {...props}
+  > 109 │     >
+        │     ^
+    110 │       <polyline points="16 18 22 12 16 6" />
+    111 │       <polyline points="8 6 2 12 8 18" />
+  
+  i For accessibility purposes, SVGs should have an alternative text, provided via title element. If the svg element has role="img", you should add the aria-label or aria-labelledby attribute.
+  
+
+apps/web/components/ui/icons.tsx:118:5 lint/a11y/noSvgWithoutTitle ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Alternative text title element cannot be empty
+  
+    116 │ export function IconCheck(props: IconProps) {
+    117 │   return (
+  > 118 │     <svg
+        │     ^^^^
+  > 119 │       xmlns="http://www.w3.org/2000/svg"
+         ...
+  > 126 │       {...props}
+  > 127 │     >
+        │     ^
+    128 │       <polyline points="20 6 9 17 4 12" />
+    129 │     </svg>
+  
+  i For accessibility purposes, SVGs should have an alternative text, provided via title element. If the svg element has role="img", you should add the aria-label or aria-labelledby attribute.
+  
+
+apps/web/components/ui/icons.tsx:135:5 lint/a11y/noSvgWithoutTitle ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Alternative text title element cannot be empty
+  
+    133 │ export function IconX(props: IconProps) {
+    134 │   return (
+  > 135 │     <svg
+        │     ^^^^
+  > 136 │       xmlns="http://www.w3.org/2000/svg"
+         ...
+  > 143 │       {...props}
+  > 144 │     >
+        │     ^
+    145 │       <line x1="18" y1="6" x2="6" y2="18" />
+    146 │       <line x1="6" y1="6" x2="18" y2="18" />
+  
+  i For accessibility purposes, SVGs should have an alternative text, provided via title element. If the svg element has role="img", you should add the aria-label or aria-labelledby attribute.
+  
+
+apps/web/components/ui/icons.tsx:153:5 lint/a11y/noSvgWithoutTitle ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Alternative text title element cannot be empty
+  
+    151 │ export function IconActivity(props: IconProps) {
+    152 │   return (
+  > 153 │     <svg
+        │     ^^^^
+  > 154 │       xmlns="http://www.w3.org/2000/svg"
+         ...
+  > 161 │       {...props}
+  > 162 │     >
+        │     ^
+    163 │       <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
+    164 │     </svg>
+  
+  i For accessibility purposes, SVGs should have an alternative text, provided via title element. If the svg element has role="img", you should add the aria-label or aria-labelledby attribute.
+  
+
+apps/web/components/ui/icons.tsx:170:5 lint/a11y/noSvgWithoutTitle ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Alternative text title element cannot be empty
+  
+    168 │ export function IconLayers(props: IconProps) {
+    169 │   return (
+  > 170 │     <svg
+        │     ^^^^
+  > 171 │       xmlns="http://www.w3.org/2000/svg"
+         ...
+  > 178 │       {...props}
+  > 179 │     >
+        │     ^
+    180 │       <polygon points="12 2 2 7 12 12 22 7 12 2" />
+    181 │       <polyline points="2 17 12 22 22 17" />
+  
+  i For accessibility purposes, SVGs should have an alternative text, provided via title element. If the svg element has role="img", you should add the aria-label or aria-labelledby attribute.
+  
+
+apps/web/components/ui/icons.tsx:189:5 lint/a11y/noSvgWithoutTitle ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Alternative text title element cannot be empty
+  
+    187 │ export function IconFileText(props: IconProps) {
+    188 │   return (
+  > 189 │     <svg
+        │     ^^^^
+  > 190 │       xmlns="http://www.w3.org/2000/svg"
+         ...
+  > 197 │       {...props}
+  > 198 │     >
+        │     ^
+    199 │       <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+    200 │       <polyline points="14 2 14 8 20 8" />
+  
+  i For accessibility purposes, SVGs should have an alternative text, provided via title element. If the svg element has role="img", you should add the aria-label or aria-labelledby attribute.
+  
+
+apps/web/components/ui/icons.tsx:210:5 lint/a11y/noSvgWithoutTitle ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Alternative text title element cannot be empty
+  
+    208 │ export function IconSearch(props: IconProps) {
+    209 │   return (
+  > 210 │     <svg
+        │     ^^^^
+  > 211 │       xmlns="http://www.w3.org/2000/svg"
+         ...
+  > 218 │       {...props}
+  > 219 │     >
+        │     ^
+    220 │       <circle cx="11" cy="11" r="8" />
+    221 │       <line x1="21" y1="21" x2="16.65" y2="16.65" />
+  
+  i For accessibility purposes, SVGs should have an alternative text, provided via title element. If the svg element has role="img", you should add the aria-label or aria-labelledby attribute.
+  
+
+apps/web/components/ui/icons.tsx:228:5 lint/a11y/noSvgWithoutTitle ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Alternative text title element cannot be empty
+  
+    226 │ export function IconZap(props: IconProps) {
+    227 │   return (
+  > 228 │     <svg
+        │     ^^^^
+  > 229 │       xmlns="http://www.w3.org/2000/svg"
+         ...
+  > 236 │       {...props}
+  > 237 │     >
+        │     ^
+    238 │       <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+    239 │     </svg>
+  
+  i For accessibility purposes, SVGs should have an alternative text, provided via title element. If the svg element has role="img", you should add the aria-label or aria-labelledby attribute.
+  
+
+The number of diagnostics exceeds the limit allowed. Use --max-diagnostics to increase it.
+Diagnostics not shown: 52.
+Checked 186 files in 103ms. No fixes applied.
+Found 24 errors.
+Found 46 warnings.
+Found 2 infos.
+lint ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  × Some errors were emitted while running checks.
+  
+
+[ELIFECYCLE] Command failed with exit code 1.
+=== typecheck ===
+$ pnpm --recursive --if-present typecheck
+Scope: 9 of 10 workspace projects
+packages/github typecheck$ tsc --noEmit
+packages/domain typecheck$ tsc --noEmit
+packages/ui typecheck$ tsc --noEmit
+packages/ui typecheck: Done
+packages/github typecheck: Done
+packages/domain typecheck: Done
+packages/validation typecheck$ tsc --noEmit
+packages/agent typecheck$ tsc --noEmit
+packages/db typecheck$ tsc --noEmit
+packages/datahub typecheck$ tsc --noEmit
+packages/agent typecheck: Done
+packages/validation typecheck: Done
+packages/db typecheck: Done
+packages/datahub typecheck: Done
+apps/worker typecheck$ tsc --noEmit
+apps/web typecheck$ tsc --noEmit
+apps/worker typecheck: Done
+apps/web typecheck: Done
+=== test ===
+$ node --test scripts/*.test.mjs && pnpm check:boundaries && vitest run
+✔ extracts static, exported, dynamic, and required module specifiers (4.817833ms)
+✔ accepts imports explicitly allowed for each application boundary (0.954042ms)
+✔ ignores import-shaped text in comments and templates (0.587875ms)
+✔ rejects forbidden package and relative cross-boundary imports (0.391875ms)
+✔ rejects unknown internal package names (0.207584ms)
+✔ accepts allowed internal dependencies across every manifest section (0.206333ms)
+✔ rejects forbidden internal dependencies declared in manifests (0.151458ms)
+✔ accepts the pinned runtime family and disk floor (1.459875ms)
+✔ accepts both supported Compose CLI major versions (0.248542ms)
+✔ reports every failed precondition without short circuiting (0.129583ms)
+✔ accepts a complete immutable vendored snapshot (46.569375ms)
+✔ rejects a tampered vendored file (43.333458ms)
+✔ rejects a missing locked file (45.994ms)
+✔ rejects an extra vendored file (46.225708ms)
+✔ rejects a declared vendored root that is a symlink (38.342208ms)
+✔ rejects a non-immutable upstream ref (38.269375ms)
+✔ rejects a missing upstream ref (39.085625ms)
+✔ rejects local patch metadata that does not match the vendored file (38.963708ms)
+✔ bootstrap invokes only the offline snapshot verifier (267.758959ms)
+ℹ tests 19
+ℹ suites 0
+ℹ pass 19
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 681.180167
+$ node scripts/check-boundaries.mjs
+dependency boundaries: verified (124 source files, 9 manifests)
+
+[1m[30m[46m RUN [49m[39m[22m [36mv4.1.10 [39m[90m/Users/igorgarkusha/Documents/development/lineageguard/.claude/worktrees/fix+demo-readiness-final[39m
+
+ [32m✓[39m packages/datahub/src/official-stdio.test.ts [2m([22m[2m12 tests[22m[2m)[22m[32m 271[2mms[22m[39m
+ [32m✓[39m packages/datahub/src/replay.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 104[2mms[22m[39m
+ [32m✓[39m packages/github/src/live-adapter.test.ts [2m([22m[2m38 tests[22m[2m)[22m[32m 270[2mms[22m[39m
+ [32m✓[39m packages/domain/src/domain.test.ts [2m([22m[2m41 tests[22m[2m)[22m[33m 410[2mms[22m[39m
+ [32m✓[39m packages/datahub/src/canonical-normalizer.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 53[2mms[22m[39m
+[90mstdout[2m | apps/worker/src/index.test.ts[2m > [22m[2mrunWorker[2m > [22m[2mfails when base/head SHAs are not set in --once mode
+[22m[39m[orchestration] Using REAL DataHub MCP stdio context port (no fallback)
+
+[90mstdout[2m | apps/worker/src/index.test.ts[2m > [22m[2mrunWorker[2m > [22m[2mfails when base/head SHAs are not set in --once mode
+[22m[39m[orchestration] GitHub PR disabled (GITHUB_TOKEN/OWNER/REPO not set)
+[orchestration] Ports configured:
+  DataHub:    ✓
+  Validation: ✓
+  GitHub:     ✗ (no token)
+  Writeback:  ✓
+
+[90mstdout[2m | apps/worker/src/index.test.ts[2m > [22m[2mrunWorker[2m > [22m[2mstops when its abort signal is raised
+[22m[39m[orchestration] Using REAL DataHub MCP stdio context port (no fallback)
+
+[90mstdout[2m | apps/worker/src/index.test.ts[2m > [22m[2mrunWorker[2m > [22m[2mstops when its abort signal is raised
+[22m[39m[orchestration] GitHub PR disabled (GITHUB_TOKEN/OWNER/REPO not set)
+[orchestration] Ports configured:
+  DataHub:    ✓
+  Validation: ✓
+  GitHub:     ✗ (no token)
+  Writeback:  ✓
+
+ [32m✓[39m apps/worker/src/index.test.ts [2m([22m[2m2 tests[22m[2m)[22m[33m 314[2mms[22m[39m
+     [33m[2m✓[22m[39m fails when base/head SHAs are not set in --once mode [33m 312[2mms[22m[39m
+ [32m✓[39m packages/datahub/src/writeback.test.ts [2m([22m[2m45 tests[22m[2m)[22m[32m 89[2mms[22m[39m
+[90mstdout[2m | packages/agent/src/pipeline.test.ts[2m > [22m[2mFull pipeline to COMPLETED[2m > [22m[2mreaches COMPLETED with mocked external ports
+[22m[39m  [pipeline] Step 1: Parsing change...
+
+[90mstdout[2m | packages/agent/src/pipeline.test.ts[2m > [22m[2mFull pipeline to COMPLETED[2m > [22m[2mreaches COMPLETED with mocked external ports
+[22m[39m  [pipeline] Step 2: Baseline assessment...
+
+[90mstdout[2m | packages/agent/src/pipeline.test.ts[2m > [22m[2mFull pipeline to COMPLETED[2m > [22m[2mreaches COMPLETED with mocked external ports
+[22m[39m  [pipeline] Step 3: Collecting DataHub context...
+
+[90mstdout[2m | packages/agent/src/pipeline.test.ts[2m > [22m[2mFull pipeline to COMPLETED[2m > [22m[2mreaches COMPLETED with mocked external ports
+[22m[39m  [pipeline] Step 3: Collected 9 evidence items (4 impact cards)
+
+[90mstdout[2m | packages/agent/src/pipeline.test.ts[2m > [22m[2mFull pipeline to COMPLETED[2m > [22m[2mreaches COMPLETED with mocked external ports
+[22m[39m  [pipeline] Step 4: Evaluating risk (5 rules)...
+
+[90mstdout[2m | packages/agent/src/pipeline.test.ts[2m > [22m[2mFull pipeline to COMPLETED[2m > [22m[2mreaches COMPLETED with mocked external ports
+[22m[39m  [pipeline] Step 4: ALLOW→BLOCK — rules: LG001, LG002, LG003, LG004
+
+[90mstdout[2m | packages/agent/src/pipeline.test.ts[2m > [22m[2mFull pipeline to COMPLETED[2m > [22m[2mreaches COMPLETED with mocked external ports
+[22m[39m  [pipeline] Step 5: Planning migration...
+
+[90mstdout[2m | packages/agent/src/pipeline.test.ts[2m > [22m[2mFull pipeline to COMPLETED[2m > [22m[2mreaches COMPLETED with mocked external ports
+[22m[39m  [pipeline] Step 5: Plan strategy: EXPAND_MIGRATE_CONTRACT (3 steps)
+
+[90mstdout[2m | packages/agent/src/pipeline.test.ts[2m > [22m[2mFull pipeline to COMPLETED[2m > [22m[2mreaches COMPLETED with mocked external ports
+[22m[39m  [pipeline] Step 6: Building canonical migration candidate...
+  [pipeline] Step 6: Built 8 artifacts (deterministic, bound)
+
+[90mstdout[2m | packages/agent/src/pipeline.test.ts[2m > [22m[2mFull pipeline to COMPLETED[2m > [22m[2mreaches COMPLETED with mocked external ports
+[22m[39m  [pipeline] Step 7: Running validation (8 checks)...
+
+[90mstdout[2m | packages/agent/src/pipeline.test.ts[2m > [22m[2mFull pipeline to COMPLETED[2m > [22m[2mreaches COMPLETED with mocked external ports
+[22m[39m  [pipeline] Step 7: All 8 checks PASS
+
+[90mstdout[2m | packages/agent/src/pipeline.test.ts[2m > [22m[2mFull pipeline to COMPLETED[2m > [22m[2mreaches COMPLETED with mocked external ports
+[22m[39m  [pipeline] Step 8: Creating GitHub PR...
+
+[90mstdout[2m | packages/agent/src/pipeline.test.ts[2m > [22m[2mFull pipeline to COMPLETED[2m > [22m[2mreaches COMPLETED with mocked external ports
+[22m[39m  [pipeline] Step 8: PR created → https://github.com/org/walkthrough/pull/99
+
+[90mstdout[2m | packages/agent/src/pipeline.test.ts[2m > [22m[2mFull pipeline to COMPLETED[2m > [22m[2mreaches COMPLETED with mocked external ports
+[22m[39m  [pipeline] Step 9: Writing decision back to DataHub...
+
+[90mstdout[2m | packages/agent/src/pipeline.test.ts[2m > [22m[2mFull pipeline to COMPLETED[2m > [22m[2mreaches COMPLETED with mocked external ports
+[22m[39m  [pipeline] Step 9: Writeback SUCCEEDED
+
+[90mstdout[2m | packages/agent/src/pipeline.test.ts[2m > [22m[2mFull pipeline to COMPLETED[2m > [22m[2mreaches COMPLETED with mocked external ports
+[22m[39m  [pipeline] ✅ Run run_e2e_completed_0000000001 COMPLETED
+
+[90mstdout[2m | packages/agent/src/pipeline.test.ts[2m > [22m[2mFull pipeline to COMPLETED[2m > [22m[2mreturns FAILED_CONTEXT when the DataHub port throws
+[22m[39m  [pipeline] Step 1: Parsing change...
+
+[90mstdout[2m | packages/agent/src/pipeline.test.ts[2m > [22m[2mFull pipeline to COMPLETED[2m > [22m[2mreturns FAILED_CONTEXT when the DataHub port throws
+[22m[39m  [pipeline] Step 2: Baseline assessment...
+
+[90mstdout[2m | packages/agent/src/pipeline.test.ts[2m > [22m[2mFull pipeline to COMPLETED[2m > [22m[2mreturns FAILED_CONTEXT when the DataHub port throws
+[22m[39m  [pipeline] Step 3: Collecting DataHub context...
+
+[90mstderr[2m | packages/agent/src/pipeline.test.ts[2m > [22m[2mFull pipeline to COMPLETED[2m > [22m[2mreturns FAILED_CONTEXT when the DataHub port throws
+[22m[39m  [pipeline] Step 3 FAILED: DataHub is unreachable
+
+[90mstdout[2m | packages/agent/src/pipeline.test.ts[2m > [22m[2mFull pipeline to COMPLETED[2m > [22m[2mreturns FAILED_VALIDATION when a validation check fails
+[22m[39m  [pipeline] Step 1: Parsing change...
+
+[90mstdout[2m | packages/agent/src/pipeline.test.ts[2m > [22m[2mFull pipeline to COMPLETED[2m > [22m[2mreturns FAILED_VALIDATION when a validation check fails
+[22m[39m  [pipeline] Step 2: Baseline assessment...
+
+[90mstdout[2m | packages/agent/src/pipeline.test.ts[2m > [22m[2mFull pipeline to COMPLETED[2m > [22m[2mreturns FAILED_VALIDATION when a validation check fails
+[22m[39m  [pipeline] Step 3: Collecting DataHub context...
+
+[90mstdout[2m | packages/agent/src/pipeline.test.ts[2m > [22m[2mFull pipeline to COMPLETED[2m > [22m[2mreturns FAILED_VALIDATION when a validation check fails
+[22m[39m  [pipeline] Step 3: Collected 9 evidence items (4 impact cards)
+
+[90mstdout[2m | packages/agent/src/pipeline.test.ts[2m > [22m[2mFull pipeline to COMPLETED[2m > [22m[2mreturns FAILED_VALIDATION when a validation check fails
+[22m[39m  [pipeline] Step 4: Evaluating risk (5 rules)...
+
+[90mstdout[2m | packages/agent/src/pipeline.test.ts[2m > [22m[2mFull pipeline to COMPLETED[2m > [22m[2mreturns FAILED_VALIDATION when a validation check fails
+[22m[39m  [pipeline] Step 4: ALLOW→BLOCK — rules: LG001, LG002, LG003, LG004
+
+[90mstdout[2m | packages/agent/src/pipeline.test.ts[2m > [22m[2mFull pipeline to COMPLETED[2m > [22m[2mreturns FAILED_VALIDATION when a validation check fails
+[22m[39m  [pipeline] Step 5: Planning migration...
+
+[90mstdout[2m | packages/agent/src/pipeline.test.ts[2m > [22m[2mFull pipeline to COMPLETED[2m > [22m[2mreturns FAILED_VALIDATION when a validation check fails
+[22m[39m  [pipeline] Step 5: Plan strategy: EXPAND_MIGRATE_CONTRACT (3 steps)
+
+[90mstdout[2m | packages/agent/src/pipeline.test.ts[2m > [22m[2mFull pipeline to COMPLETED[2m > [22m[2mreturns FAILED_VALIDATION when a validation check fails
+[22m[39m  [pipeline] Step 6: Building canonical migration candidate...
+  [pipeline] Step 6: Built 8 artifacts (deterministic, bound)
+
+[90mstdout[2m | packages/agent/src/pipeline.test.ts[2m > [22m[2mFull pipeline to COMPLETED[2m > [22m[2mreturns FAILED_VALIDATION when a validation check fails
+[22m[39m  [pipeline] Step 7: Running validation (8 checks)...
+
+[90mstderr[2m | packages/agent/src/pipeline.test.ts[2m > [22m[2mFull pipeline to COMPLETED[2m > [22m[2mreturns FAILED_VALIDATION when a validation check fails
+[22m[39m  [pipeline] Step 7: Validation FAILED: SQL_MIGRATION
+
+[90mstdout[2m | packages/agent/src/pipeline.test.ts[2m > [22m[2mFull pipeline to COMPLETED[2m > [22m[2mreturns FAILED_GITHUB when no GitHub port is configured
+[22m[39m  [pipeline] Step 1: Parsing change...
+
+[90mstdout[2m | packages/agent/src/pipeline.test.ts[2m > [22m[2mFull pipeline to COMPLETED[2m > [22m[2mreturns FAILED_GITHUB when no GitHub port is configured
+[22m[39m  [pipeline] Step 2: Baseline assessment...
+
+[90mstdout[2m | packages/agent/src/pipeline.test.ts[2m > [22m[2mFull pipeline to COMPLETED[2m > [22m[2mreturns FAILED_GITHUB when no GitHub port is configured
+[22m[39m  [pipeline] Step 3: Collecting DataHub context...
+
+[90mstdout[2m | packages/agent/src/pipeline.test.ts[2m > [22m[2mFull pipeline to COMPLETED[2m > [22m[2mreturns FAILED_GITHUB when no GitHub port is configured
+[22m[39m  [pipeline] Step 3: Collected 9 evidence items (4 impact cards)
+
+[90mstdout[2m | packages/agent/src/pipeline.test.ts[2m > [22m[2mFull pipeline to COMPLETED[2m > [22m[2mreturns FAILED_GITHUB when no GitHub port is configured
+[22m[39m  [pipeline] Step 4: Evaluating risk (5 rules)...
+
+[90mstdout[2m | packages/agent/src/pipeline.test.ts[2m > [22m[2mFull pipeline to COMPLETED[2m > [22m[2mreturns FAILED_GITHUB when no GitHub port is configured
+[22m[39m  [pipeline] Step 4: ALLOW→BLOCK — rules: LG001, LG002, LG003, LG004
+
+[90mstdout[2m | packages/agent/src/pipeline.test.ts[2m > [22m[2mFull pipeline to COMPLETED[2m > [22m[2mreturns FAILED_GITHUB when no GitHub port is configured
+[22m[39m  [pipeline] Step 5: Planning migration...
+
+[90mstdout[2m | packages/agent/src/pipeline.test.ts[2m > [22m[2mFull pipeline to COMPLETED[2m > [22m[2mreturns FAILED_GITHUB when no GitHub port is configured
+[22m[39m  [pipeline] Step 5: Plan strategy: EXPAND_MIGRATE_CONTRACT (3 steps)
+
+[90mstdout[2m | packages/agent/src/pipeline.test.ts[2m > [22m[2mFull pipeline to COMPLETED[2m > [22m[2mreturns FAILED_GITHUB when no GitHub port is configured
+[22m[39m  [pipeline] Step 6: Building canonical migration candidate...
+  [pipeline] Step 6: Built 8 artifacts (deterministic, bound)
+
+[90mstdout[2m | packages/agent/src/pipeline.test.ts[2m > [22m[2mFull pipeline to COMPLETED[2m > [22m[2mreturns FAILED_GITHUB when no GitHub port is configured
+[22m[39m  [pipeline] Step 7: Running validation (8 checks)...
+
+[90mstdout[2m | packages/agent/src/pipeline.test.ts[2m > [22m[2mFull pipeline to COMPLETED[2m > [22m[2mreturns FAILED_GITHUB when no GitHub port is configured
+[22m[39m  [pipeline] Step 7: All 8 checks PASS
+
+[90mstderr[2m | packages/agent/src/pipeline.test.ts[2m > [22m[2mFull pipeline to COMPLETED[2m > [22m[2mreturns FAILED_GITHUB when no GitHub port is configured
+[22m[39m  [pipeline] Step 8: No GitHub port configured — failing
+
+ [32m✓[39m packages/agent/src/pipeline.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 88[2mms[22m[39m
+ [32m✓[39m packages/db/src/simple-runs.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 106[2mms[22m[39m
+ [32m✓[39m packages/datahub/src/context-port.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 56[2mms[22m[39m
+ [32m✓[39m packages/datahub/src/tool-client.test.ts [2m([22m[2m15 tests[22m[2m)[22m[32m 35[2mms[22m[39m
+[90mstdout[2m | apps/worker/src/orchestration.test.ts[2m > [22m[2mcreateGitHubPort[2m > [22m[2mreturns undefined when GITHUB_TOKEN/OWNER/REPO are not configured
+[22m[39m[orchestration] GitHub PR disabled (GITHUB_TOKEN/OWNER/REPO not set)
+
+[90mstdout[2m | apps/worker/src/orchestration.test.ts[2m > [22m[2mcreateWritebackPort[2m > [22m[2mreturns undefined when DATAHUB_MUTATION_TOKEN is not configured
+[22m[39m[orchestration] DataHub writeback disabled (DATAHUB_MUTATION_TOKEN not set or WRITEBACK_ENABLED=false)
+
+[90mstdout[2m | apps/worker/src/orchestration.test.ts[2m > [22m[2mcreateWritebackPort[2m > [22m[2mreturns undefined when WRITEBACK_ENABLED=false even with a token set
+[22m[39m[orchestration] DataHub writeback disabled (DATAHUB_MUTATION_TOKEN not set or WRITEBACK_ENABLED=false)
+
+[90mstderr[2m | apps/worker/src/orchestration.test.ts[2m > [22m[2mcreateWritebackPort[2m > [22m[2mfails when the write mutation itself is rejected by DataHub
+[22m[39m[orchestration] Writeback error: DataHub tag writeback failed: HTTP 500
+
+[90mstderr[2m | apps/worker/src/orchestration.test.ts[2m > [22m[2mcreateWritebackPort[2m > [22m[2mfails when read-after-write does not show the expected tag (verification mismatch)
+[22m[39m[orchestration] Writeback error: DataHub write-back verification failed: Reviewed tag not found on read-back
+
+[90mstdout[2m | apps/worker/src/orchestration.test.ts[2m > [22m[2mcreateWritebackPort[2m > [22m[2mpreserves unrelated existing tags and institutional-memory elements on write
+[22m[39m[orchestration] DataHub write-back verified: tag ✓, document ✓, preservation ✓
+
+[90mstdout[2m | apps/worker/src/orchestration.test.ts[2m > [22m[2mcreateWritebackPort[2m > [22m[2mis idempotent: skips re-writing when the decision marker and tag already exist
+[22m[39m[orchestration] DataHub write-back: idempotent — already written
+
+ [32m✓[39m apps/worker/src/orchestration.test.ts [2m([22m[2m12 tests[22m[2m)[22m[32m 27[2mms[22m[39m
+ [32m✓[39m packages/agent/src/steps/baseline-assess.test.ts [2m([22m[2m1 test[22m[2m)[22m[32m 32[2mms[22m[39m
+ [32m✓[39m packages/datahub/src/canonical-reader.test.ts [2m([22m[2m31 tests[22m[2m)[22m[32m 28[2mms[22m[39m
+ [32m✓[39m packages/github/src/transport.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 25[2mms[22m[39m
+ [32m✓[39m packages/datahub/src/mutation-official-contract.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 28[2mms[22m[39m
+ [32m✓[39m packages/domain/src/change.test.ts [2m([22m[2m18 tests[22m[2m)[22m[32m 26[2mms[22m[39m
+ [32m✓[39m packages/datahub/src/writeback-readback.test.ts [2m([22m[2m13 tests[22m[2m)[22m[32m 30[2mms[22m[39m
+ [32m✓[39m packages/datahub/src/mutation-tool-client.test.ts [2m([22m[2m8 tests[22m[2m)[22m[32m 19[2mms[22m[39m
+ [32m✓[39m packages/domain/src/impact-consumer.test.ts [2m([22m[2m10 tests[22m[2m)[22m[32m 4[2mms[22m[39m
+ [32m✓[39m packages/datahub/src/official-contract.test.ts [2m([22m[2m13 tests[22m[2m)[22m[32m 11[2mms[22m[39m
+ [32m✓[39m packages/agent/src/steps/parse-change.test.ts [2m([22m[2m2 tests[22m[2m)[22m[32m 21[2mms[22m[39m
+ [32m✓[39m packages/github/src/replay-adapter.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 8[2mms[22m[39m
+ [32m✓[39m packages/domain/src/source-change.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 10[2mms[22m[39m
+ [32m✓[39m packages/datahub/src/pagination.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 4[2mms[22m[39m
+ [32m✓[39m packages/db/src/config.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 4[2mms[22m[39m
+ [32m✓[39m packages/agent/src/llm/client.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 2[2mms[22m[39m
+ [32m✓[39m packages/datahub/src/sql-fingerprint.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 4[2mms[22m[39m
+ [32m✓[39m packages/datahub/src/mutation-stdio.test.ts [2m([22m[2m1 test[22m[2m)[22m[32m 10[2mms[22m[39m
+ [32m✓[39m packages/db/src/codec.test.ts [2m([22m[2m2 tests[22m[2m)[22m[32m 13[2mms[22m[39m
+ [32m✓[39m tests/foundation.test.ts [2m([22m[2m1 test[22m[2m)[22m[32m 2[2mms[22m[39m
+ [32m✓[39m packages/datahub/src/index.test.ts [2m([22m[2m1 test[22m[2m)[22m[32m 3[2mms[22m[39m
+ [2m[90m↓[39m[22m packages/validation/src/executable.integration.test.ts [2m([22m[2m7 tests[22m[2m | [22m[33m7 skipped[39m[2m)[22m
+ [2m[90m↓[39m[22m packages/db/src/store.integration.test.ts [2m([22m[2m24 tests[22m[2m | [22m[33m24 skipped[39m[2m)[22m
+ [31m❯[39m packages/validation/src/validator.test.ts [2m([22m[2m54 tests[22m[2m | [22m[31m2 failed[39m[2m)[22m[33m 2414[2mms[22m[39m
+     [33m[2m✓[22m[39m runs only the canonical eight fixed shell-free commands and binds every artifact [33m 473[2mms[22m[39m
+     [33m[2m✓[22m[39m fails closed for a broken migration [33m 603[2mms[22m[39m
+     [33m[2m✓[22m[39m fails closed for a broken old consumer [33m 490[2mms[22m[39m
+     [33m[2m✓[22m[39m fails closed for a broken rollback [33m 358[2mms[22m[39m
+     [32m✓[39m bounds Docker diagnostics and redacts named credentials[32m 0[2mms[22m[39m
+     [32m✓[39m makes the constrained role the database owner and removes PUBLIC database access[32m 0[2mms[22m[39m
+     [32m✓[39m seals dbt inputs from descriptor-observed bytes even if the candidate object changes[32m 224[2mms[22m[39m
+     [32m✓[39m fails closed before validation when content-addressed images are not locally verified[32m 212[2mms[22m[39m
+     [32m✓[39m builds a no-mount, no-pull, internal-network container plan without host secrets[32m 1[2mms[22m[39m
+     [32m✓[39m dual-homes only PostgreSQL while keeping the validation runner on the internal network[32m 0[2mms[22m[39m
+     [32m✓[39m never removes a Docker object when the ownership label is ambiguous[32m 0[2mms[22m[39m
+     [32m✓[39m removes only the persisted Docker ID and requires a proven not-found result[32m 0[2mms[22m[39m
+     [32m✓[39m fails closed when Docker inspection errors are not proven absence[32m 0[2mms[22m[39m
+     [32m✓[39m accepts only the exact canonical expand and rollback programs[32m 1[2mms[22m[39m
+     [32m✓[39m rejects non-canonical generated SQL: \! touch /tmp/pwned[32m 0[2mms[22m[39m
+     [32m✓[39m rejects non-canonical generated SQL: \connect postgres[32m 0[2mms[22m[39m
+     [32m✓[39m rejects non-canonical generated SQL: COPY commerce.orders TO PROGRAM 'sh -c id'[32m 0[2mms[22m[39m
+     [32m✓[39m rejects non-canonical generated SQL: CREATE/**/DATABASE escaped[32m 0[2mms[22m[39m
+     [32m✓[39m rejects non-canonical generated SQL: ALTER ROLE validator SUPERUSER[32m 0[2mms[22m[39m
+     [32m✓[39m rejects non-canonical generated SQL: select dblink('host=outside', 'select 1')[32m 0[2mms[22m[39m
+     [32m✓[39m rejects non-canonical generated SQL: ALTER EXTENSION plpgsql UPDATE[32m 0[2mms[22m[39m
+     [32m✓[39m rejects non-canonical generated SQL: DROP EXTENSION plpgsql[32m 0[2mms[22m[39m
+     [32m✓[39m rejects non-canonical generated SQL: CREATE SERVER escaped FOREIGN DATA WRAPPER postgres_fdw[32m 0[2mms[22m[39m
+     [32m✓[39m rejects non-canonical generated SQL: ALTER FOREIGN DATA WRAPPER postgres_fdw OPTIONS (ADD x 'y')[32m 0[2mms[22m[39m
+     [32m✓[39m rejects non-canonical generated SQL: DROP USER MAPPING FOR validator SERVER escaped[32m 0[2mms[22m[39m
+     [32m✓[39m rejects non-canonical generated SQL: select dblink_connect('outside')[32m 0[2mms[22m[39m
+     [32m✓[39m rejects non-canonical generated SQL: select dblink_exec('outside', 'drop table x')[32m 0[2mms[22m[39m
+     [32m✓[39m rejects non-canonical generated SQL: select lo_open(1, 0)[32m 0[2mms[22m[39m
+     [32m✓[39m rejects non-canonical generated SQL: select loread(lo_open(1, 0), 1024)[32m 0[2mms[22m[39m
+     [32m✓[39m rejects non-canonical generated SQL: GRANT postgres TO validator[32m 0[2mms[22m[39m
+     [32m✓[39m rejects non-canonical generated SQL: REVOKE ALL ON DATABASE postgres FROM postgres[32m 0[2mms[22m[39m
+     [32m✓[39m rejects non-canonical generated SQL: alter table commerce.orders owner to postgres[32m 0[2mms[22m[39m
+     [32m✓[39m rejects non-canonical generated SQL: select * from commerce.orders[32m 0[2mms[22m[39m
+     [32m✓[39m rejects non-canonical generated SQL: (select repeat('x', 1000000))[32m 0[2mms[22m[39m
+     [32m✓[39m rejects non-canonical generated SQL: update commerce.orders set customer_id=1 returning *[32m 0[2mms[22m[39m
+     [32m✓[39m rejects non-canonical generated SQL: do $$ begin execute 'create ' || 'extension dblink'; end $$[32m 0[2mms[22m[39m
+     [32m✓[39m rejects non-canonical generated SQL: create procedure commerce.escape(inout payload text) language sql as $$ select repeat('x', 10000000) $$; call commerce.escape(null);[32m 0[2mms[22m[39m
+     [32m✓[39m rejects non-canonical generated SQL: call commerce.materialize_large_output(null)[32m 0[2mms[22m[39m
+     [32m✓[39m rejects non-canonical generated SQL: with payload as (select repeat('x', 10000000)) update commerce.orders set buyer_id=1 from payload[32m 0[2mms[22m[39m
+     [32m✓[39m rejects non-canonical generated SQL: create function commerce.escape() returns text language sql as $$ select repeat('x', 10000000) $$[32m 0[2mms[22m[39m
+     [32m✓[39m rejects non-canonical generated SQL: copy commerce.orders to stdout[32m 0[2mms[22m[39m
+     [32m✓[39m enforces the remaining global deadline on every server query[32m 21[2mms[22m[39m
+     [32m✓[39m fails closed if the driver reports rows for generated SQL[32m 1[2mms[22m[39m
+     [32m✓[39m bounds client shutdown and destroys an ambiguous connection[32m 21[2mms[22m[39m
+     [32m✓[39m rejects non-allowlisted dbt Jinja: select {{ run_query('create database escaped') }}[32m 0[2mms[22m[39m
+     [32m✓[39m rejects non-allowlisted dbt Jinja: {% call statement('escape') %} select 1 {% endcall %}[32m 0[2mms[22m[39m
+     [32m✓[39m rejects non-allowlisted dbt Jinja: select {{ modules.os.environ }}[32m 0[2mms[22m[39m
+     [32m✓[39m rejects non-allowlisted dbt Jinja: {% do adapter.execute('copy x to program y') %}[32m 0[2mms[22m[39m
+     [32m✓[39m rejects forged live and replay objects even through any/JS shapes[32m 0[2mms[22m[39m
+     [32m✓[39m rejects signer composition in a generic worker or mixed-credential process[32m 0[2mms[22m[39m
+[31m     [31m×[31m starts a signer-only IPC surface from validation-process credentials[39m[32m 4[2mms[22m[39m
+[31m     [31m×[31m starts an effect-only IPC surface without signer credentials[39m[32m 0[2mms[22m[39m
+     [32m✓[39m rejects a private signer key in the effect authority process[32m 0[2mms[22m[39m
+     [32m✓[39m requires explicit server-only runtime policy without defaults[32m 0[2mms[22m[39m
+ [32m✓[39m packages/validation/src/materializer.test.ts [2m([22m[2m11 tests[22m[2m)[22m[33m 2910[2mms[22m[39m
+     [33m[2m✓[22m[39m clones the exact base, writes accepted artifacts, and cleans only its owned directory [33m 469[2mms[22m[39m
+     [33m[2m✓[22m[39m rejects the wrong base SHA and symlink targets [33m 658[2mms[22m[39m
+
+[31m⎯⎯⎯⎯⎯⎯⎯[39m[1m[41m Failed Tests 2 [49m[22m[31m⎯⎯⎯⎯⎯⎯⎯[39m
+
+[41m[1m FAIL [22m[49m packages/validation/src/validator.test.ts[2m > [22mruntime validation capability accessors[2m > [22mstarts a signer-only IPC surface from validation-process credentials
+[31m[1mValidationError[22m: Validation boundary rejected input: ATTESTATION_INVALID[39m
+[36m [2m❯[22m startValidationReceiptIssuerProcess packages/validation/src/server/validation-receipt-issuer.ts:[2m49:13[22m[39m
+    [90m 47|[39m   [35mfor[39m ([35mconst[39m name [35mof[39m forbiddenSignerCredentials) {
+    [90m 48|[39m     [35mif[39m (process[33m.[39menv[name]) {
+    [90m 49|[39m       throw new ValidationError("ATTESTATION_INVALID", `co-resident cr…
+    [90m   |[39m             [31m^[39m
+    [90m 50|[39m     }
+    [90m 51|[39m   }
+[90m [2m❯[22m packages/validation/src/validator.test.ts:[2m694:20[22m[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m packages/validation/src/validator.test.ts[2m > [22mruntime validation capability accessors[2m > [22mstarts an effect-only IPC surface without signer credentials
+[31m[1mValidationError[22m: Validation boundary rejected input: ATTESTATION_INVALID[39m
+[36m [2m❯[22m startEffectAuthorizationProcess packages/validation/src/server/effect-authorization.ts:[2m41:13[22m[39m
+    [90m 39|[39m   [35mfor[39m ([35mconst[39m name [35mof[39m forbiddenEffectCredentials) {
+    [90m 40|[39m     [35mif[39m (process[33m.[39menv[name]) {
+    [90m 41|[39m       throw new ValidationError("ATTESTATION_INVALID", `co-resident cr…
+    [90m   |[39m             [31m^[39m
+    [90m 42|[39m     }
+    [90m 43|[39m   }
+[90m [2m❯[22m packages/validation/src/validator.test.ts:[2m712:20[22m[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯[22m[39m
+
+
+[2m Test Files [22m [1m[31m1 failed[39m[22m[2m | [22m[1m[32m33 passed[39m[22m[2m | [22m[33m2 skipped[39m[90m (36)[39m
+[2m      Tests [22m [1m[31m2 failed[39m[22m[2m | [22m[1m[32m386 passed[39m[22m[2m | [22m[33m31 skipped[39m[90m (419)[39m
+[2m   Start at [22m 12:24:14
+[2m   Duration [22m 3.36s[2m (transform 2.23s, setup 0ms, import 5.67s, tests 7.43s, environment 4ms)[22m
+
+[ELIFECYCLE] Test failed. See above for more details.
+=== build ===
+$ pnpm --recursive --if-present build
+Scope: 9 of 10 workspace projects
+packages/domain build$ tsc -p tsconfig.build.json
+packages/github build$ tsc -p tsconfig.build.json
+packages/ui build$ tsc -p tsconfig.build.json
+packages/ui build: Done
+packages/github build: Done
+packages/domain build: Done
+packages/agent build$ tsc -p tsconfig.build.json
+packages/datahub build$ tsc -p tsconfig.build.json
+packages/db build$ tsc -p tsconfig.build.json
+packages/validation build$ tsc -p tsconfig.build.json
+packages/agent build: Done
+packages/validation build: Done
+packages/db build: Done
+packages/datahub build: Done
+apps/web build$ next build
+apps/worker build$ node ../../scripts/clean-worker-dist.mjs && tsc -p tsconfig.build.json && node ../../scripts/assert-worker-dist.mjs
+apps/web build: ▲ Next.js 16.3.0 (Turbopack)
+apps/web build: ✓ Running next.config took 9ms
+apps/web build:   Creating an optimized production build ...
+apps/worker build: worker artifact: verified (5 runtime modules, no test modules)
+apps/worker build: Done
+apps/web build: ✓ Compiled successfully in 1016ms
+apps/web build:   Running TypeScript ...
+apps/web build:   Finished TypeScript in 1142ms ...
+apps/web build:   Collecting page data using 7 workers ...
+apps/web build:   Generating static pages using 7 workers (0/3) ...
+apps/web build: ✓ Generating static pages using 7 workers (3/3) in 331ms
+apps/web build:   Finalizing page optimization ...
+apps/web build: Route (app)
+apps/web build: ┌ ƒ /
+apps/web build: ├ ○ /_not-found
+apps/web build: ├ ƒ /api/runs
+apps/web build: ├ ƒ /api/runs/[runId]
+apps/web build: └ ƒ /runs/[runId]
+apps/web build: ○  (Static)   prerendered as static content
+apps/web build: ƒ  (Dynamic)  server-rendered on demand
+apps/web build: Done
+=== db test:integration ===
+
+[1m[30m[46m RUN [49m[39m[22m [36mv4.1.10 [39m[90m/Users/igorgarkusha/Documents/development/lineageguard/.claude/worktrees/fix+demo-readiness-final[39m
+
+ [2m[90m↓[39m[22m packages/db/src/store.integration.test.ts [2m([22m[2m24 tests[22m[2m | [22m[33m24 skipped[39m[2m)[22m
+
+[2m Test Files [22m [33m1 skipped[39m[90m (1)[39m
+[2m      Tests [22m [33m24 skipped[39m[90m (24)[39m
+[2m   Start at [22m 12:25:05
+[2m   Duration [22m 280ms[2m (transform 123ms, setup 0ms, import 192ms, tests 0ms, environment 0ms)[22m
+
+=== validation package tests ===
+
+[1m[30m[46m RUN [49m[39m[22m [36mv4.1.10 [39m[90m/Users/igorgarkusha/Documents/development/lineageguard/.claude/worktrees/fix+demo-readiness-final[39m
+
+ [2m[90m↓[39m[22m packages/validation/src/executable.integration.test.ts [2m([22m[2m7 tests[22m[2m | [22m[33m7 skipped[39m[2m)[22m
+ [31m❯[39m packages/validation/src/validator.test.ts [2m([22m[2m54 tests[22m[2m | [22m[31m2 failed[39m[2m)[22m[33m 1390[2mms[22m[39m
+     [32m✓[39m runs only the canonical eight fixed shell-free commands and binds every artifact[32m 249[2mms[22m[39m
+     [32m✓[39m fails closed for a broken migration[32m 218[2mms[22m[39m
+     [32m✓[39m fails closed for a broken old consumer[32m 211[2mms[22m[39m
+     [32m✓[39m fails closed for a broken rollback[32m 212[2mms[22m[39m
+     [32m✓[39m bounds Docker diagnostics and redacts named credentials[32m 0[2mms[22m[39m
+     [32m✓[39m makes the constrained role the database owner and removes PUBLIC database access[32m 0[2mms[22m[39m
+     [32m✓[39m seals dbt inputs from descriptor-observed bytes even if the candidate object changes[32m 228[2mms[22m[39m
+     [32m✓[39m fails closed before validation when content-addressed images are not locally verified[32m 216[2mms[22m[39m
+     [32m✓[39m builds a no-mount, no-pull, internal-network container plan without host secrets[32m 1[2mms[22m[39m
+     [32m✓[39m dual-homes only PostgreSQL while keeping the validation runner on the internal network[32m 0[2mms[22m[39m
+     [32m✓[39m never removes a Docker object when the ownership label is ambiguous[32m 0[2mms[22m[39m
+     [32m✓[39m removes only the persisted Docker ID and requires a proven not-found result[32m 0[2mms[22m[39m
+     [32m✓[39m fails closed when Docker inspection errors are not proven absence[32m 0[2mms[22m[39m
+     [32m✓[39m accepts only the exact canonical expand and rollback programs[32m 1[2mms[22m[39m
+     [32m✓[39m rejects non-canonical generated SQL: \! touch /tmp/pwned[32m 0[2mms[22m[39m
+     [32m✓[39m rejects non-canonical generated SQL: \connect postgres[32m 0[2mms[22m[39m
+     [32m✓[39m rejects non-canonical generated SQL: COPY commerce.orders TO PROGRAM 'sh -c id'[32m 0[2mms[22m[39m
+     [32m✓[39m rejects non-canonical generated SQL: CREATE/**/DATABASE escaped[32m 0[2mms[22m[39m
+     [32m✓[39m rejects non-canonical generated SQL: ALTER ROLE validator SUPERUSER[32m 0[2mms[22m[39m
+     [32m✓[39m rejects non-canonical generated SQL: select dblink('host=outside', 'select 1')[32m 0[2mms[22m[39m
+     [32m✓[39m rejects non-canonical generated SQL: ALTER EXTENSION plpgsql UPDATE[32m 0[2mms[22m[39m
+     [32m✓[39m rejects non-canonical generated SQL: DROP EXTENSION plpgsql[32m 0[2mms[22m[39m
+     [32m✓[39m rejects non-canonical generated SQL: CREATE SERVER escaped FOREIGN DATA WRAPPER postgres_fdw[32m 0[2mms[22m[39m
+     [32m✓[39m rejects non-canonical generated SQL: ALTER FOREIGN DATA WRAPPER postgres_fdw OPTIONS (ADD x 'y')[32m 0[2mms[22m[39m
+     [32m✓[39m rejects non-canonical generated SQL: DROP USER MAPPING FOR validator SERVER escaped[32m 0[2mms[22m[39m
+     [32m✓[39m rejects non-canonical generated SQL: select dblink_connect('outside')[32m 0[2mms[22m[39m
+     [32m✓[39m rejects non-canonical generated SQL: select dblink_exec('outside', 'drop table x')[32m 0[2mms[22m[39m
+     [32m✓[39m rejects non-canonical generated SQL: select lo_open(1, 0)[32m 0[2mms[22m[39m
+     [32m✓[39m rejects non-canonical generated SQL: select loread(lo_open(1, 0), 1024)[32m 0[2mms[22m[39m
+     [32m✓[39m rejects non-canonical generated SQL: GRANT postgres TO validator[32m 0[2mms[22m[39m
+     [32m✓[39m rejects non-canonical generated SQL: REVOKE ALL ON DATABASE postgres FROM postgres[32m 0[2mms[22m[39m
+     [32m✓[39m rejects non-canonical generated SQL: alter table commerce.orders owner to postgres[32m 0[2mms[22m[39m
+     [32m✓[39m rejects non-canonical generated SQL: select * from commerce.orders[32m 0[2mms[22m[39m
+     [32m✓[39m rejects non-canonical generated SQL: (select repeat('x', 1000000))[32m 0[2mms[22m[39m
+     [32m✓[39m rejects non-canonical generated SQL: update commerce.orders set customer_id=1 returning *[32m 0[2mms[22m[39m
+     [32m✓[39m rejects non-canonical generated SQL: do $$ begin execute 'create ' || 'extension dblink'; end $$[32m 0[2mms[22m[39m
+     [32m✓[39m rejects non-canonical generated SQL: create procedure commerce.escape(inout payload text) language sql as $$ select repeat('x', 10000000) $$; call commerce.escape(null);[32m 0[2mms[22m[39m
+     [32m✓[39m rejects non-canonical generated SQL: call commerce.materialize_large_output(null)[32m 0[2mms[22m[39m
+     [32m✓[39m rejects non-canonical generated SQL: with payload as (select repeat('x', 10000000)) update commerce.orders set buyer_id=1 from payload[32m 0[2mms[22m[39m
+     [32m✓[39m rejects non-canonical generated SQL: create function commerce.escape() returns text language sql as $$ select repeat('x', 10000000) $$[32m 0[2mms[22m[39m
+     [32m✓[39m rejects non-canonical generated SQL: copy commerce.orders to stdout[32m 0[2mms[22m[39m
+     [32m✓[39m enforces the remaining global deadline on every server query[32m 22[2mms[22m[39m
+     [32m✓[39m fails closed if the driver reports rows for generated SQL[32m 1[2mms[22m[39m
+     [32m✓[39m bounds client shutdown and destroys an ambiguous connection[32m 21[2mms[22m[39m
+     [32m✓[39m rejects non-allowlisted dbt Jinja: select {{ run_query('create database escaped') }}[32m 0[2mms[22m[39m
+     [32m✓[39m rejects non-allowlisted dbt Jinja: {% call statement('escape') %} select 1 {% endcall %}[32m 0[2mms[22m[39m
+     [32m✓[39m rejects non-allowlisted dbt Jinja: select {{ modules.os.environ }}[32m 0[2mms[22m[39m
+     [32m✓[39m rejects non-allowlisted dbt Jinja: {% do adapter.execute('copy x to program y') %}[32m 0[2mms[22m[39m
+     [32m✓[39m rejects forged live and replay objects even through any/JS shapes[32m 0[2mms[22m[39m
+     [32m✓[39m rejects signer composition in a generic worker or mixed-credential process[32m 0[2mms[22m[39m
+[31m     [31m×[31m starts a signer-only IPC surface from validation-process credentials[39m[32m 4[2mms[22m[39m
+[31m     [31m×[31m starts an effect-only IPC surface without signer credentials[39m[32m 0[2mms[22m[39m
+     [32m✓[39m rejects a private signer key in the effect authority process[32m 0[2mms[22m[39m
+     [32m✓[39m requires explicit server-only runtime policy without defaults[32m 0[2mms[22m[39m
+ [32m✓[39m packages/validation/src/materializer.test.ts [2m([22m[2m11 tests[22m[2m)[22m[33m 1970[2mms[22m[39m
+     [33m[2m✓[22m[39m rejects the wrong base SHA and symlink targets [33m 326[2mms[22m[39m
+
+[31m⎯⎯⎯⎯⎯⎯⎯[39m[1m[41m Failed Tests 2 [49m[22m[31m⎯⎯⎯⎯⎯⎯⎯[39m
+
+[41m[1m FAIL [22m[49m packages/validation/src/validator.test.ts[2m > [22mruntime validation capability accessors[2m > [22mstarts a signer-only IPC surface from validation-process credentials
+[31m[1mValidationError[22m: Validation boundary rejected input: ATTESTATION_INVALID[39m
+[36m [2m❯[22m startValidationReceiptIssuerProcess packages/validation/src/server/validation-receipt-issuer.ts:[2m49:13[22m[39m
+    [90m 47|[39m   [35mfor[39m ([35mconst[39m name [35mof[39m forbiddenSignerCredentials) {
+    [90m 48|[39m     [35mif[39m (process[33m.[39menv[name]) {
+    [90m 49|[39m       throw new ValidationError("ATTESTATION_INVALID", `co-resident cr…
+    [90m   |[39m             [31m^[39m
+    [90m 50|[39m     }
+    [90m 51|[39m   }
+[90m [2m❯[22m packages/validation/src/validator.test.ts:[2m694:20[22m[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m packages/validation/src/validator.test.ts[2m > [22mruntime validation capability accessors[2m > [22mstarts an effect-only IPC surface without signer credentials
+[31m[1mValidationError[22m: Validation boundary rejected input: ATTESTATION_INVALID[39m
+[36m [2m❯[22m startEffectAuthorizationProcess packages/validation/src/server/effect-authorization.ts:[2m41:13[22m[39m
+    [90m 39|[39m   [35mfor[39m ([35mconst[39m name [35mof[39m forbiddenEffectCredentials) {
+    [90m 40|[39m     [35mif[39m (process[33m.[39menv[name]) {
+    [90m 41|[39m       throw new ValidationError("ATTESTATION_INVALID", `co-resident cr…
+    [90m   |[39m             [31m^[39m
+    [90m 42|[39m     }
+    [90m 43|[39m   }
+[90m [2m❯[22m packages/validation/src/validator.test.ts:[2m712:20[22m[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯[22m[39m
+
+
+[2m Test Files [22m [1m[31m1 failed[39m[22m[2m | [22m[1m[32m1 passed[39m[22m[2m | [22m[33m1 skipped[39m[90m (3)[39m
+[2m      Tests [22m [1m[31m2 failed[39m[22m[2m | [22m[1m[32m63 passed[39m[22m[2m | [22m[33m7 skipped[39m[90m (72)[39m
+[2m   Start at [22m 12:25:15
+[2m   Duration [22m 2.23s[2m (transform 338ms, setup 0ms, import 578ms, tests 3.36s, environment 0ms)[22m
+
+=== python/datahub tests ===
+Using CPython 3.12.13
+Creating virtual environment at: tools/datahub/.venv
+Resolved 119 packages in 20ms
+   Building lineageguard-datahub @ file:///Users/igorgarkusha/Documents/development/lineageguard/.claude/worktrees/fix+demo-readiness-final/tools/datahub
+      Built lineageguard-datahub @ file:///Users/igorgarkusha/Documents/development/lineageguard/.claude/worktrees/fix+demo-readiness-final/tools/datahub
+Prepared 1 package in 451ms
+Installed 116 packages in 458ms
+ + acryl-datahub==1.6.0.17
+ + agate==1.9.1
+ + aiohappyeyeballs==2.7.1
+ + aiohttp==3.14.3
+ + aiosignal==1.4.0
+ + annotated-types==0.8.0
+ + anyio==4.14.2
+ + asgiref==3.12.1
+ + attrs==26.1.0
+ + avro==1.12.1
+ + avro-gen3==0.7.16
+ + babel==2.18.0
+ + boto3==1.43.63
+ + botocore==1.43.63
+ + cached-property==2.0.1
+ + cachetools==5.5.2
+ + certifi==2026.7.22
+ + charset-normalizer==3.4.9
+ + click==8.4.2
+ + click-default-group==1.2.4
+ + click-spinner==0.1.11
+ + colorama==0.4.6
+ + cramjam==2.11.0
+ + daff==1.4.2
+ + dbt-adapters==1.24.5
+ + dbt-common==1.38.0
+ + dbt-core==1.12.0
+ + dbt-core-experimental-parser==2.0.0a5
+ + dbt-extractor==0.6.0
+ + dbt-postgres==1.11.0
+ + dbt-protos==1.0.541
+ + deepdiff==8.6.2
+ + deprecated==1.3.1
+ + docker==7.2.0
+ + expandvars==1.1.2
+ + frozenlist==1.8.0
+ + geoalchemy2==0.18.4
+ + greenlet==3.5.4
+ + h11==0.16.0
+ + httpcore==1.0.9
+ + httpx==0.28.1
+ + humanfriendly==10.0
+ + idna==3.18
+ + ijson==3.5.1
+ + importlib-metadata==9.0.0
+ + iniconfig==2.3.0
+ + isodate==0.7.2
+ + jinja2==3.1.6
+ + jmespath==1.1.0
+ + jsonref==1.1.0
+ + jsonschema==4.26.0
+ + jsonschema-specifications==2025.9.1
+ + leather==0.4.1
+ + librt==0.13.0
+ + lineageguard-datahub==0.1.0 (from file:///Users/igorgarkusha/Documents/development/lineageguard/.claude/worktrees/fix+demo-readiness-final/tools/datahub)
+ + markupsafe==3.0.3
+ + mashumaro==3.17
+ + metricflow==0.211.0
+ + mixpanel==5.0.0
+ + more-itertools==10.8.0
+ + msgpack==1.2.1
+ + multidict==6.7.1
+ + mypy==1.20.2
+ + mypy-extensions==1.1.0
+ + networkx==3.6.1
+ + orderly-set==5.5.0
+ + packaging==26.2
+ + parsedatetime==2.6
+ + pathspec==1.0.4
+ + pip==26.2
+ + pluggy==1.6.0
+ + progressbar2==4.5.0
+ + propcache==0.5.2
+ + protobuf==6.33.6
+ + psutil==7.2.2
+ + psycopg==3.3.4
+ + psycopg-binary==3.3.4
+ + psycopg2-binary==2.9.12
+ + pydantic==2.13.4
+ + pydantic-core==2.46.4
+ + pygments==2.20.0
+ + pytest==8.4.2
+ + python-dateutil==2.9.0.post0
+ + python-dotenv==1.2.2
+ + python-json-logger==4.1.0
+ + python-slugify==8.0.4
+ + python-utils==4.0.0
+ + pytimeparse==1.1.8
+ + pytz==2026.3.post1
+ + pyyaml==6.0.3
+ + rapidfuzz==3.14.5
+ + referencing==0.37.0
+ + requests==2.34.2
+ + requests-file==3.0.1
+ + rpds-py==2026.6.3
+ + ruamel-yaml==0.19.1
+ + ruff==0.12.12
+ + s3transfer==0.19.2
+ + sentry-sdk==2.66.1
+ + setuptools==81.0.0
+ + six==1.17.0
+ + snowplow-tracker==1.1.0
+ + sqlalchemy==1.4.54
+ + sqlglot==30.12.0
+ + sqlglotc==30.12.0
+ + sqlparse==0.5.5
+ + tabulate==0.10.0
+ + text-unidecode==1.3
+ + toml==0.10.2
+ + typing-extensions==4.16.0
+ + typing-inspect==0.9.0
+ + typing-inspection==0.4.2
+ + urllib3==2.7.0
+ + wrapt==2.3.0
+ + yarl==1.24.5
+ + zipp==4.1.0
+============================= test session starts ==============================
+platform darwin -- Python 3.12.13, pytest-8.4.2, pluggy-1.6.0
+rootdir: /Users/igorgarkusha/Documents/development/lineageguard/.claude/worktrees/fix+demo-readiness-final
+plugins: anyio-4.14.2
+collected 111 items
+
+tools/datahub/tests/test_dbt_manifest.py F.                              [  1%]
+tools/datahub/tests/test_expected_graph.py .............                 [ 13%]
+tools/datahub/tests/test_ingestion_prerequisites.py ......               [ 18%]
+tools/datahub/tests/test_lineage_plan.py ..                              [ 20%]
+tools/datahub/tests/test_live_query.py .........                         [ 28%]
+tools/datahub/tests/test_query_history.py ......                         [ 34%]
+tools/datahub/tests/test_reset_scope.py ......                           [ 39%]
+tools/datahub/tests/test_safety_boundaries.py ..........                 [ 48%]
+tools/datahub/tests/test_secret_redaction.py ..........                  [ 57%]
+tools/datahub/tests/test_seed_plan.py ..............                     [ 70%]
+tools/datahub/tests/test_soft_delete_lifecycle.py .                      [ 71%]
+tools/datahub/tests/test_target_attestation.py ...........               [ 81%]
+tools/datahub/tests/test_verify.py ..................                    [ 97%]
+tools/datahub/tests/test_walkthrough_assets.py ...                       [100%]
+
+=================================== FAILURES ===================================
+________________ test_dbt_parse_relations_match_expected_graph _________________
+
+expected_graph = ExpectedGraph(schema_version=1, scenario_id='canonical-customer-id-rename', environment='PROD', platform_instance='lin...d.model-v3', 'query.finance-monthly-close'), lineage_intermediates=('analytics.stg_orders', 'fraud.customer_features'))
+repository_root = PosixPath('/private/var/folders/1q/3y105zb525l11wysl8njlcs00000gn/T/pytest-of-igorgarkusha/pytest-190/canonical-repository0')
+tmp_path = PosixPath('/private/var/folders/1q/3y105zb525l11wysl8njlcs00000gn/T/pytest-of-igorgarkusha/pytest-190/test_dbt_parse_relations_match0')
+
+    def test_dbt_parse_relations_match_expected_graph(
+        expected_graph: ExpectedGraph,
+        repository_root: Path,
+        tmp_path: Path,
+    ) -> None:
+        environment = {
+            "WALKTHROUGH_POSTGRES_HOST": "127.0.0.1",
+            "WALKTHROUGH_POSTGRES_PORT": "5432",
+            "WALKTHROUGH_DBT_POSTGRES_USER": "lineageguard_dbt",
+            "WALKTHROUGH_DBT_POSTGRES_PASSWORD": "placeholder",
+            "WALKTHROUGH_POSTGRES_DATABASE": "lineageguard",
+            "WALKTHROUGH_POSTGRES_SSLMODE": "disable",
+        }
+        old_environment = dict(os.environ)
+        os.environ.update(environment)
+        try:
+            project = repository_root / "walkthrough/dbt"
+            target = tmp_path / "target"
+            result = dbtRunner().invoke(
+                [
+                    "parse",
+                    "--project-dir",
+                    str(project),
+                    "--profiles-dir",
+                    str(project),
+                    "--target-path",
+                    str(target),
+                    "--no-partial-parse",
+                ]
+            )
+        finally:
+            os.environ.clear()
+            os.environ.update(old_environment)
+>       assert result.success is True
+E       AssertionError: assert False is True
+E        +  where False = dbtRunnerResult(success=False, exception=DuplicateResourceNameError(UnpatchedSourceDefinition(name='commerce_orders', ...rnal=None, tags=[]), fqn=['lineageguard_walkthrough', 'staging', 'commerce', 'orders'], patch_path=None)), result=None).success
+
+tools/datahub/tests/test_dbt_manifest.py:45: AssertionError
+----------------------------- Captured stdout call -----------------------------
+[0m10:26:16  Running with dbt=1.12.0
+[0m10:26:16  Registered adapter: postgres=1.11.0
+[0m10:26:17  [[31mERROR[0m]: Encountered an error:
+Compilation Error
+  dbt found two sources with the name "commerce_orders".
+  
+  Since these resources have the same name, dbt will be unable to find the correct resource
+  when looking for source("commerce", "orders").
+  
+  To fix this, change the name of one of these resources:
+  - source.lineageguard_walkthrough.commerce.orders (models/staging/sources.yml)
+  - source.lineageguard_walkthrough.commerce.orders (models/staging/stg_orders.yml)
+=========================== short test summary info ============================
+FAILED tools/datahub/tests/test_dbt_manifest.py::test_dbt_parse_relations_match_expected_graph
+======================== 1 failed, 110 passed in 51.75s ========================

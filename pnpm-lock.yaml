@@ -11,6 +11,12 @@ importers:
       '@biomejs/biome':
         specifier: 2.5.7
         version: 2.5.7
+      '@lineageguard/db':
+        specifier: workspace:*
+        version: link:packages/db
+      '@lineageguard/domain':
+        specifier: workspace:*
+        version: link:packages/domain
       '@playwright/test':
         specifier: 1.62.1
         version: 1.62.1
@@ -26,6 +32,9 @@ importers:
       '@types/react-dom':
         specifier: 19.2.4
         version: 19.2.4(@types/react@19.2.18)
+      pg:
+        specifier: 8.22.0
+        version: 8.22.0
       tsx:
         specifier: ^4.23.7
         version: 4.23.7
@@ -41,6 +50,9 @@ importers:
       '@lineageguard/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@lineageguard/domain':
+        specifier: workspace:*
+        version: link:../../packages/domain
       '@tailwindcss/postcss':
         specifier: ^4.3.3
         version: 4.3.3

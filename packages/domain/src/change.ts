@@ -170,7 +170,78 @@ function classifyFixture(path: string, patch: string): ChangeClassification {
     : { kind: "NO_SUPPORTED_CHANGE" };
 }
 
+/**
+ * Classifies a real GitHub unified diff against a migration file
+ * (`walkthrough/migrations/*.sql`), as produced by the canonical source PR:
+ * a new SQL file containing comment lines plus exactly one canonical
+ * `ALTER TABLE ... RENAME COLUMN` statement. Unlike `classifyGitDiff` (which
+ * validates in-place edits to dbt model files), this accepts the git
+ * "new file" hunk shape (`@@ -0,0 +N,M @@`) since the migration file is newly
+ * added by the source PR, and classifies based on the added SQL statement
+ * lines (ignoring `--` SQL comment lines as non-semantic context).
+ */
+function classifyMigrationGitDiff(path: string, patch: string): ChangeClassification {
+  if (patch.includes("\r") || patch.includes("Binary files")) return { kind: "INVALID_INPUT" };
+  const lines = patch.split("\n");
+  if (lines.at(-1) === "") lines.pop();
+  let cursor = 0;
+  if (lines[cursor] !== `diff --git a/${path} b/${path}`) return { kind: "INVALID_INPUT" };
+  cursor += 1;
+  while (
+    (lines[cursor] ?? "").startsWith("new file mode ") ||
+    (lines[cursor] ?? "").startsWith("deleted file mode ") ||
+    (lines[cursor] ?? "").startsWith("index ")
+  ) {
+    cursor += 1;
+  }
+  const oldHeaderLine = lines[cursor];
+  const newHeaderLine = lines[cursor + 1];
+  const isNewFile = oldHeaderLine === "--- /dev/null";
+  const isDeletedFile = newHeaderLine === "+++ /dev/null";
+  const oldHeaderValid = isNewFile || oldHeaderLine === `--- a/${path}`;
+  const newHeaderValid = isDeletedFile || newHeaderLine === `+++ b/${path}`;
+  if (!oldHeaderValid || !newHeaderValid) return { kind: "INVALID_INPUT" };
+  cursor += 2;
+  const header = hunkHeaderPattern.exec(lines[cursor] ?? "");
+  if (!header) return { kind: "INVALID_INPUT" };
+  const oldStart = Number(header[1]);
+  const oldCount = Number(header[2] ?? 1);
+  const newStart = Number(header[3]);
+  const newCount = Number(header[4] ?? 1);
+  if (newStart < 1) return { kind: "INVALID_INPUT" };
+  if (isNewFile) {
+    if (oldStart !== 0 || oldCount !== 0) return { kind: "INVALID_INPUT" };
+  } else if (oldStart < 1) {
+    return { kind: "INVALID_INPUT" };
+  }
+  cursor += 1;
+  const body = lines.slice(cursor);
+  if (body.length === 0 || body.some((line) => !/^[ +-]/.test(line) || line.startsWith("@@"))) {
+    return { kind: "INVALID_INPUT" };
+  }
+  const observedOld = body.filter((line) => line.startsWith(" ") || line.startsWith("-")).length;
+  const observedNew = body.filter((line) => line.startsWith(" ") || line.startsWith("+")).length;
+  if (observedOld !== oldCount || observedNew !== newCount) return { kind: "INVALID_INPUT" };
+
+  const addedLines = body.filter((line) => line.startsWith("+")).map((line) => line.slice(1));
+  const removedLines = body.filter((line) => line.startsWith("-")).map((line) => line.slice(1));
+  const codeLines = addedLines.filter((line) => {
+    const trimmed = line.trim();
+    return trimmed !== "" && !trimmed.startsWith("--");
+  });
+  const joinedCode = codeLines.map((line) => line.trim()).join(" ");
+  const occurrences = joinedCode.split(canonicalSql).length - 1;
+  if (occurrences > 1) return { kind: "MULTIPLE_SUPPORTED_CHANGES" };
+  if (occurrences === 1) {
+    return joinedCode === canonicalSql ? { kind: "SUCCESS" } : { kind: "AMBIGUOUS_CHANGE" };
+  }
+  return [...addedLines, ...removedLines].some((line) => /customer_id|buyer_id/i.test(line))
+    ? { kind: "UNSUPPORTED_CHANGE" }
+    : { kind: "NO_SUPPORTED_CHANGE" };
+}
+
 function classifyGitDiff(path: string, patch: string): ChangeClassification {
+  if (migrationPathPattern.test(path)) return classifyMigrationGitDiff(path, patch);
   if (!modelPathPattern.test(path) || patch.includes("\r")) return { kind: "INVALID_INPUT" };
   const lines = patch.split("\n");
   if (lines.at(-1) === "") lines.pop();

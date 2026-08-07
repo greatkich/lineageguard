@@ -48,6 +48,15 @@ export {
   lineageSegmentSchema,
 } from "./evidence.js";
 export * from "./hash.js";
+export type {
+  DashboardConsumer,
+  DataModelConsumer,
+  ImpactConsumer,
+  ImpactConsumerKind,
+  MlConsumer,
+  UnmanagedQueryConsumer,
+} from "./impact-consumer.js";
+export { deriveImpactConsumers } from "./impact-consumer.js";
 export type { MigrationArtifact, MigrationCandidate } from "./migration.js";
 export {
   bindMigrationCandidate,
@@ -62,4 +71,6 @@ export {
 } from "./migration.js";
 export * from "./risk.js";
 export * from "./run.js";
+export type { SourceChange } from "./source-change.js";
+export { sourceChangeSchema, validateSourceChange } from "./source-change.js";
 export * from "./validation.js";

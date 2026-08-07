@@ -6,6 +6,7 @@ import {
   mkdtemp,
   readFile,
   realpath,
+  rename,
   stat,
   symlink,
   unlink,
@@ -306,7 +307,18 @@ describe("fixed command runner", () => {
     const running = new SpawnCommandRunner().run(command);
     await new Promise((resolve) => setTimeout(resolve, 50));
     await chmod(executable, 0o700);
-    await copyFile("/usr/bin/true", executable);
+    // Swap the executable's bytes while the spawned process is still running,
+    // to prove the runner detects tamper mid-execution. Linux can reject an
+    // in-place overwrite of a file actively mapped for exec with ETXTBSY
+    // (kernel-dependent; not reproduced on macOS). Renaming a replacement
+    // file into place is an atomic directory-entry swap that does not
+    // require the target's old inode to be non-busy, so it avoids the race
+    // entirely while still fully replacing what `executable` resolves to —
+    // the tamper-detection behavior under test is unchanged.
+    const replacement = join(root, "validator-tool.replacement");
+    await copyFile("/usr/bin/true", replacement);
+    await chmod(replacement, 0o700);
+    await rename(replacement, executable);
     await expect(running).rejects.toMatchObject({ code: "MISSING_TOOL" });
     await writeFile(executable, "#!/bin/sh\nexit 0\n");
     await chmod(executable, 0o500);
