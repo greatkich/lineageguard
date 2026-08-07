@@ -136,6 +136,51 @@ function safeTargets(input: CanonicalCollectionTargets): CanonicalCollectionTarg
   return { ...parsed.data, ...(fetchImpl === undefined ? {} : { fetchImpl }) };
 }
 
+/**
+ * Calls `get_lineage_paths_between` but tolerates the MCP server returning isError:true when no
+ * lineage edges exist between two entities. This happens for mlModel entities whose relationship
+ * is established through the TrainingData aspect rather than UpstreamLineage. The normalizer
+ * accepts pathCount=0 for this case.
+ */
+async function observePathOrEmpty(
+  invoker: CanonicalToolInvoker,
+  tool: ReadToolName,
+  arguments_: Readonly<Record<string, unknown>>,
+  sourceUrn: string,
+  targetUrn: string,
+): Promise<OfficialObservation<OfficialPathResult>> {
+  try {
+    return await observe(invoker, tool, arguments_, parsePathResult);
+  } catch (error) {
+    if (error instanceof DataHubAdapterError && error.code === "TOOL_FAILURE") {
+      // The MCP server returns isError:true with "No lineage found" when no lineage edges
+      // connect the entities. Synthesize an empty path result — the normalizer already accepts
+      // pathCount=0 for non-lineage relationships (TrainingData, etc.).
+      const { createHash } = await import("node:crypto");
+      const emptyPathResult: OfficialPathResult = {
+        source: { urn: sourceUrn },
+        target: { urn: targetUrn },
+        paths: [],
+        pathCount: 0,
+      };
+      const responseFingerprint = createHash("sha256")
+        .update(JSON.stringify(emptyPathResult))
+        .digest("hex");
+      return Object.freeze({
+        data: emptyPathResult,
+        invocation: {
+          invocationId: error.invocationId ?? `synth_${Date.now().toString(16)}`,
+          tool,
+          payload: emptyPathResult as unknown as Readonly<Record<string, unknown>>,
+          responseFingerprint,
+          retrievedAt: new Date().toISOString(),
+        },
+      });
+    }
+    throw error;
+  }
+}
+
 function requireUniqueResolution(
   count: number,
   invocation: RawToolInvocation,
@@ -606,7 +651,7 @@ export async function collectCanonicalObservations(
     },
     parsePathResult,
   );
-  const fraudEntityPath = await observe(
+  const fraudEntityPath = await observePathOrEmpty(
     invoker,
     "get_lineage_paths_between",
     {
@@ -614,7 +659,8 @@ export async function collectCanonicalObservations(
       source_urn: targets.fraudFeaturesUrn,
       target_urn: targets.modelUrn,
     },
-    parsePathResult,
+    targets.fraudFeaturesUrn,
+    targets.modelUrn,
   );
   const trainingDataProof = await readTrainingDataAspect({
     gmsBaseUrl: targets.gmsBaseUrl,

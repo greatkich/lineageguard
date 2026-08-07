@@ -270,7 +270,7 @@ const dashboardEvidenceSchema = z
 
 const trainingDataReceiptSchema = z
   .object({
-    aspectName: z.literal("trainingData"),
+    aspectName: z.literal("mlModelTrainingData"),
     credentialClass: z.literal("READ"),
     endpoint: z.string().min(1).max(2_048),
     modelUrn: urnSchema,
@@ -990,7 +990,7 @@ export const impactContextSchema = z
         models[0]?.criticality !== "CRITICAL" ||
         models[0]?.payload.trainingDataReceipt.modelUrn !== canonicalFraudModelUrn ||
         models[0]?.payload.trainingDataReceipt.provenDatasetUrn !== canonicalFraudFeaturesUrn ||
-        models[0]?.payload.trainingDataReceipt.aspectName !== "trainingData" ||
+        models[0]?.payload.trainingDataReceipt.aspectName !== "mlModelTrainingData" ||
         models[0]?.payload.trainingDataReceipt.credentialClass !== "READ" ||
         queries.length !== 1 ||
         queries[0]?.payload.queryUrn !== canonicalQueryUrn ||
@@ -1246,9 +1246,9 @@ export function createCanonicalImpactContextFixture(changeId: string): ImpactCon
       featureDatasetUrn: canonicalFraudFeaturesUrn,
       featureField: "fraud.customer_features.customer_id",
       trainingDataReceipt: {
-        aspectName: "trainingData",
+        aspectName: "mlModelTrainingData",
         credentialClass: "READ",
-        endpoint: `http://127.0.0.1:8080/openapi/v3/entity/mlModel/${encodeURIComponent(canonicalFraudModelUrn)}/trainingData`,
+        endpoint: `http://127.0.0.1:8080/openapi/v3/entity/mlModel/${encodeURIComponent(canonicalFraudModelUrn)}/mlModelTrainingData`,
         modelUrn: canonicalFraudModelUrn,
         provenDatasetUrn: canonicalFraudFeaturesUrn,
         responseSha256: sha256("canonical-training-data-response"),

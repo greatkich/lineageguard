@@ -45,7 +45,7 @@ describe("readTrainingDataAspect", () => {
 
     expect(result.proven).toBe(true);
     if (result.proven) {
-      expect(result.proof.aspectName).toBe("trainingData");
+      expect(result.proof.aspectName).toBe("mlModelTrainingData");
       expect(result.proof.credentialClass).toBe("READ");
       expect(result.proof.modelUrn).toBe(modelUrn);
       expect(result.proof.provenDatasetUrn).toBe(expectedDatasetUrn);

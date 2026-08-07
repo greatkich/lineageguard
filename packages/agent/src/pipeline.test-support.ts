@@ -246,9 +246,9 @@ export function liveCanonicalContext(changeId: string): ImpactContext {
       featureDatasetUrn: canonicalFraudFeaturesUrn,
       featureField: "fraud.customer_features.customer_id",
       trainingDataReceipt: {
-        aspectName: "trainingData",
+        aspectName: "mlModelTrainingData",
         credentialClass: "READ",
-        endpoint: `http://127.0.0.1:8080/openapi/v3/entity/mlModel/${encodeURIComponent(canonicalFraudModelUrn)}/trainingData`,
+        endpoint: `http://127.0.0.1:8080/openapi/v3/entity/mlModel/${encodeURIComponent(canonicalFraudModelUrn)}/mlModelTrainingData`,
         modelUrn: canonicalFraudModelUrn,
         provenDatasetUrn: canonicalFraudFeaturesUrn,
         responseSha256: "a".repeat(64),

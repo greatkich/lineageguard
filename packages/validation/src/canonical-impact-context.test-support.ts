@@ -295,10 +295,10 @@ const canonicalImpactContextData: Omit<ImpactContextData, "changeId" | "collecti
           "urn:li:dataset:(urn:li:dataPlatform:postgres,lineageguard-canonical.lineageguard.fraud.customer_features,PROD)",
         featureField: "fraud.customer_features.customer_id",
         trainingDataReceipt: {
-          aspectName: "trainingData",
+          aspectName: "mlModelTrainingData",
           credentialClass: "READ",
           endpoint:
-            "http://127.0.0.1:8080/openapi/v3/entity/mlModel/urn%3Ali%3AmlModel%3A(urn%3Ali%3AdataPlatform%3Amlflow%2Clineageguard-canonical.fraud-model-v3%2CPROD)/trainingData",
+            "http://127.0.0.1:8080/openapi/v3/entity/mlModel/urn%3Ali%3AmlModel%3A(urn%3Ali%3AdataPlatform%3Amlflow%2Clineageguard-canonical.fraud-model-v3%2CPROD)/mlModelTrainingData",
           modelUrn:
             "urn:li:mlModel:(urn:li:dataPlatform:mlflow,lineageguard-canonical.fraud-model-v3,PROD)",
           provenDatasetUrn:

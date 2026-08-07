@@ -10,7 +10,7 @@ const trainingDataResponseSchema = z
     value: z
       .object({
         trainingData: z
-          .array(z.object({ datasetUrn: z.string().startsWith("urn:li:dataset:") }).passthrough())
+          .array(z.object({ dataset: z.string().startsWith("urn:li:dataset:") }).passthrough())
           .max(100),
       })
       .passthrough(),
@@ -18,7 +18,7 @@ const trainingDataResponseSchema = z
   .passthrough();
 
 export type TrainingDataProof = Readonly<{
-  aspectName: "trainingData";
+  aspectName: "mlModelTrainingData";
   credentialClass: "READ";
   endpoint: string;
   modelUrn: string;
@@ -73,7 +73,7 @@ function normalizedGmsBaseUrl(value: string): string {
 
 function aspectEndpoint(gmsBaseUrl: string, modelUrn: string): string {
   const base = normalizedGmsBaseUrl(gmsBaseUrl);
-  return `${base}/openapi/v3/entity/mlModel/${encodeURIComponent(modelUrn)}/trainingData`;
+  return `${base}/openapi/v3/entity/mlModel/${encodeURIComponent(modelUrn)}/mlModelTrainingData`;
 }
 
 /** Issues the bounded read-only GET. Never surfaces the token or raw transport error. */
@@ -132,7 +132,7 @@ async function boundedBody(
   });
 }
 
-function parsedTrainingData(text: string): readonly Readonly<{ datasetUrn: string }>[] {
+function parsedTrainingData(text: string): readonly Readonly<{ dataset: string }>[] {
   let json: unknown;
   try {
     json = JSON.parse(text);
@@ -172,13 +172,13 @@ export async function readTrainingDataAspect(
   const body = await boundedBody(response, maxBytes);
   const trainingData = parsedTrainingData(body.text);
 
-  if (!trainingData.some((entry) => entry.datasetUrn === options.expectedDatasetUrn)) {
+  if (!trainingData.some((entry) => entry.dataset === options.expectedDatasetUrn)) {
     return Object.freeze({ proven: false });
   }
   return Object.freeze({
     proven: true,
     proof: Object.freeze({
-      aspectName: "trainingData" as const,
+      aspectName: "mlModelTrainingData" as const,
       credentialClass: "READ" as const,
       endpoint,
       modelUrn: options.modelUrn,
