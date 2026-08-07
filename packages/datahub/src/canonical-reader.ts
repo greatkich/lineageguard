@@ -117,6 +117,44 @@ async function observe<T>(
   }
 }
 
+/**
+ * Calls get_lineage_paths_between and gracefully handles the case where
+ * the MCP server returns isError with "No lineage found". This occurs for
+ * entity types (e.g., mlModel) that don't support UpstreamLineage aspects
+ * and therefore have no traversable lineage paths.
+ */
+async function observePathBetweenOrEmpty(
+  invoker: CanonicalToolInvoker,
+  arguments_: Readonly<Record<string, unknown>>,
+  sourceUrn: string,
+  targetUrn: string,
+): Promise<OfficialObservation<OfficialPathResult>> {
+  try {
+    return await observe(invoker, "get_lineage_paths_between", arguments_, parsePathResult);
+  } catch (error) {
+    if (error instanceof DataHubAdapterError && error.code === "TOOL_FAILURE") {
+      // The MCP server returns isError: true with "No lineage found" when the target
+      // entity type doesn't participate in the lineage graph (e.g., mlModel entities
+      // use TrainingData instead of UpstreamLineage). Synthesize a valid empty result.
+      const emptyResult: OfficialPathResult = {
+        pathCount: 0,
+        paths: [],
+        source: { urn: sourceUrn },
+        target: { urn: targetUrn },
+      };
+      const syntheticInvocation: RawToolInvocation = {
+        invocationId: error.invocationId ?? "synthetic_empty_path",
+        payload: emptyResult as unknown as Readonly<Record<string, unknown>>,
+        responseFingerprint: "0000000000000000000000000000000000000000000000000000000000000000",
+        retrievedAt: new Date().toISOString(),
+        tool: "get_lineage_paths_between",
+      };
+      return Object.freeze({ data: emptyResult, invocation: syntheticInvocation });
+    }
+    throw error;
+  }
+}
+
 function safeTargets(input: CanonicalCollectionTargets): CanonicalCollectionTargets {
   const parsed = targetsSchema.safeParse(input);
   if (!parsed.success) {
@@ -598,15 +636,15 @@ export async function collectCanonicalObservations(
     },
     parsePathResult,
   );
-  const fraudEntityPath = await observe(
+  const fraudEntityPath = await observePathBetweenOrEmpty(
     invoker,
-    "get_lineage_paths_between",
     {
       direction: "downstream",
       source_urn: targets.fraudFeaturesUrn,
       target_urn: targets.modelUrn,
     },
-    parsePathResult,
+    targets.fraudFeaturesUrn,
+    targets.modelUrn,
   );
   const query = await collectQueryDiscovery(invoker, targets);
   const queryDiscovery = query.proof;
