@@ -28,6 +28,7 @@
   "devDependencies": {
     "@biomejs/biome": "2.5.7",
     "@lineageguard/db": "workspace:*",
+    "@lineageguard/domain": "workspace:*",
     "@playwright/test": "1.62.1",
     "@types/node": "24.13.3",
     "@types/pg": "^8.20.4",
