@@ -58,7 +58,10 @@ function reject(message: string): never {
 
 const fingerprint = /^[a-f0-9]{64}$/;
 const sha = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/;
-const runHead = /^lineageguard\/run_[a-f0-9]{24}$/;
+// Must track `deterministicHead`: the generated head is content-addressed on the candidate
+// fingerprint prefix, with an optional source-PR segment. A run-scoped pattern here would reject
+// every receipt the live adapter now produces.
+const generatedHead = /^lineageguard\/generated\/(?:pr-[1-9][0-9]{0,9}-)?[a-f0-9]{12}$/;
 const repository = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 
 function parseReceipt(value: unknown): GitHubReviewReceipt {
@@ -80,7 +83,7 @@ function parseReceipt(value: unknown): GitHubReviewReceipt {
     typeof receipt.baseBranch !== "string" ||
     receipt.baseBranch.length > 240 ||
     !sha.test(receipt.baseSha) ||
-    !runHead.test(receipt.headBranch) ||
+    !generatedHead.test(receipt.headBranch) ||
     !sha.test(receipt.headSha) ||
     !Number.isSafeInteger(receipt.prNumber) ||
     receipt.prNumber <= 0 ||
