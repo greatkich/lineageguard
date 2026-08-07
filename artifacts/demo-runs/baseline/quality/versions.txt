@@ -1,0 +1,12 @@
+node: v24.18.0
+pnpm: 11.20.0
+python: Python 3.11.3
+uv: uv 0.11.32 (3010295ae 2026-07-23 aarch64-apple-darwin)
+docker: Docker version 29.6.2, build dfc4efb
+docker-compose: Docker Compose version v5.3.1
+postgres: not available locally
+datahub-mcp: resolved at runtime
+gh: gh version 2.96.0 (2026-07-02)
+biome: 2.5.7
+typescript: Version 5.9.3
+vitest: vitest/4.1.10 darwin-arm64 node-v24.18.0

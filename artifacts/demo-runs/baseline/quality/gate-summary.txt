@@ -1,0 +1,25 @@
+format:    EXIT: 0
+lint:      EXIT: 0
+typecheck: EXIT: 0
+test:      EXIT: 0
+python:    EXIT: 0
+build:     EXIT: 0
+secrets:   PASS
+
+Test detail:
+  TypeScript: 389 passed, 34 skipped, 0 failed (423 total)
+  Python:     113 passed, 0 failed
+
+Skipped test classification (34 total, all infrastructure-gated, none unexplained):
+  - packages/db/src/simple-runs.test.ts (3 tests): describe.skipIf(!hasIntegrationDb),
+    gated on LINEAGEGUARD_TEST_DATABASE_URL. Requires a live integration Postgres instance.
+  - packages/db/src/store.integration.test.ts (27 tests): describe.skipIf(!hasIntegrationDb),
+    gated on LINEAGEGUARD_TEST_MIGRATION_DATABASE_URL. Requires a live migration-capable
+    Postgres instance.
+  - packages/validation/src/executable.integration.test.ts (4 tests): gated on
+    LINEAGEGUARD_EXECUTABLE_INTEGRATION=1. Requires executing real child-process binaries
+    (execFile) for validation receipt issuance/verification.
+
+All skips are pre-existing env-gated integration suites requiring live DB/process
+infrastructure not present in this sandboxed run; none are undocumented or masking
+regressions introduced by the PR #4/#5 integration.

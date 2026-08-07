@@ -1,0 +1,40 @@
+$ node --test scripts/*.test.mjs && pnpm check:boundaries && vitest run
+✔ extracts static, exported, dynamic, and required module specifiers (4.668334ms)
+✔ accepts imports explicitly allowed for each application boundary (0.622166ms)
+✔ ignores import-shaped text in comments and templates (0.494959ms)
+✔ rejects forbidden package and relative cross-boundary imports (0.321292ms)
+✔ rejects unknown internal package names (0.163416ms)
+✔ accepts allowed internal dependencies across every manifest section (0.1535ms)
+✔ rejects forbidden internal dependencies declared in manifests (0.1315ms)
+✔ accepts the pinned runtime family and disk floor (2.239542ms)
+✔ accepts both supported Compose CLI major versions (0.184167ms)
+✔ reports every failed precondition without short circuiting (0.115375ms)
+✔ accepts a complete immutable vendored snapshot (47.807875ms)
+✔ rejects a tampered vendored file (42.617625ms)
+✔ rejects a missing locked file (41.894833ms)
+✔ rejects an extra vendored file (46.137292ms)
+✔ rejects a declared vendored root that is a symlink (38.051542ms)
+✔ rejects a non-immutable upstream ref (38.670833ms)
+✔ rejects a missing upstream ref (39.212375ms)
+✔ rejects local patch metadata that does not match the vendored file (39.416209ms)
+✔ bootstrap invokes only the offline snapshot verifier (571.3055ms)
+ℹ tests 19
+ℹ suites 0
+ℹ pass 19
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 958.470667
+$ node scripts/check-boundaries.mjs
+dependency boundaries: verified (125 source files, 9 manifests)
+
+ RUN  v4.1.10 /Users/igorgarkusha/Documents/development/lineageguard/.claude/worktrees/fix+demo-readiness-final
+
+
+ Test Files  34 passed | 3 skipped (37)
+      Tests  389 passed | 34 skipped (423)
+   Start at  15:03:28
+   Duration  3.55s (transform 2.13s, setup 0ms, import 5.96s, tests 7.76s, environment 2ms)
+
+EXIT: 0
