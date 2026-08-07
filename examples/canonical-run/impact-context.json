@@ -38,9 +38,7 @@
       ],
       "criticality": "HIGH",
       "fingerprint": "171e9e739d3d518e46aad9ee73a7bad7e89475ef5d185503655385adbe0fe810",
-      "relatedEvidenceIds": [
-        "ev_9e907158dba3dd3b5ea635af"
-      ]
+      "relatedEvidenceIds": ["ev_9e907158dba3dd3b5ea635af"]
     },
     {
       "id": "ev_1816ead46a32f7a9a17199ba",
@@ -67,9 +65,7 @@
       ],
       "criticality": "HIGH",
       "fingerprint": "1816ead46a32f7a9a17199ba1152040b027142ef1bd6ce5074e83b53239814db",
-      "relatedEvidenceIds": [
-        "ev_f0a45b70be19a93cda9c5129"
-      ]
+      "relatedEvidenceIds": ["ev_f0a45b70be19a93cda9c5129"]
     },
     {
       "id": "ev_1f112a8ac95df55ff9bab339",
@@ -105,9 +101,7 @@
       "payload": {
         "platform": "looker",
         "lifecycle": "PRODUCTION",
-        "ownerUrns": [
-          "urn:li:corpGroup:lineageguard-canonical.finance-analytics"
-        ],
+        "ownerUrns": ["urn:li:corpGroup:lineageguard-canonical.finance-analytics"],
         "dashboardUrn": "urn:li:dashboard:(looker,lineageguard-canonical.finance-revenue-dashboard)",
         "downstreamField": "analytics.customer_revenue.customer_id",
         "ownershipObserved": true,
@@ -133,9 +127,7 @@
       ],
       "criticality": "CRITICAL",
       "fingerprint": "59eb5c12bc8d30556ca933fe36a8ffc4f1f5843c9fe0d508fbca7cb2472bc7d2",
-      "relatedEvidenceIds": [
-        "ev_9e907158dba3dd3b5ea635af"
-      ]
+      "relatedEvidenceIds": ["ev_9e907158dba3dd3b5ea635af"]
     },
     {
       "id": "ev_9e907158dba3dd3b5ea635af",
@@ -336,9 +328,7 @@
       ],
       "criticality": "HIGH",
       "fingerprint": "d4164db054a4481b94a2093134f8ad047b9ca2026fc596e958378309dce701c6",
-      "relatedEvidenceIds": [
-        "ev_59eb5c12bc8d30556ca933fe"
-      ]
+      "relatedEvidenceIds": ["ev_59eb5c12bc8d30556ca933fe"]
     },
     {
       "id": "ev_e81b6d759a2158b1562bc984",
@@ -365,9 +355,7 @@
       ],
       "criticality": "HIGH",
       "fingerprint": "e81b6d759a2158b1562bc984b218e9786682643c930aa461dad1d6420b06e609",
-      "relatedEvidenceIds": [
-        "ev_171e9e739d3d518e46aad9ee"
-      ]
+      "relatedEvidenceIds": ["ev_171e9e739d3d518e46aad9ee"]
     },
     {
       "id": "ev_f0a45b70be19a93cda9c5129",
@@ -376,9 +364,7 @@
       "payload": {
         "modelUrn": "urn:li:mlModel:(urn:li:dataPlatform:mlflow,lineageguard-canonical.fraud-model-v3,PROD)",
         "lifecycle": "PRODUCTION",
-        "ownerUrns": [
-          "urn:li:corpGroup:lineageguard-canonical.risk-ml"
-        ],
+        "ownerUrns": ["urn:li:corpGroup:lineageguard-canonical.risk-ml"],
         "featureField": "fraud.customer_features.customer_id",
         "featureDatasetUrn": "urn:li:dataset:(urn:li:dataPlatform:postgres,lineageguard-canonical.lineageguard.fraud.customer_features,PROD)",
         "ownershipObserved": true,
@@ -412,9 +398,7 @@
       ],
       "criticality": "CRITICAL",
       "fingerprint": "f0a45b70be19a93cda9c5129e7667c476f73abe14a47c988fbe9a61ca8956e38",
-      "relatedEvidenceIds": [
-        "ev_a193c7a6f647028a5d17fbac"
-      ]
+      "relatedEvidenceIds": ["ev_a193c7a6f647028a5d17fbac"]
     }
   ],
   "failures": [],

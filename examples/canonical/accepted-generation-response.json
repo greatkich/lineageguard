@@ -33,10 +33,7 @@
       "phase": "MIGRATE",
       "title": "Migrate: update controlled readers",
       "rationale": "Update all dbt consumers to use buyer_id and add compatibility assertions.",
-      "affectedEvidenceIds": [
-        "ev_a193c7a6f647028a5d17fbac",
-        "ev_f0a45b70be19a93cda9c5129"
-      ],
+      "affectedEvidenceIds": ["ev_a193c7a6f647028a5d17fbac", "ev_f0a45b70be19a93cda9c5129"],
       "artifactTargets": [
         "walkthrough/dbt/models/analytics/customer_revenue.sql",
         "walkthrough/dbt/models/fraud/customer_features.sql",
@@ -50,12 +47,8 @@
       "phase": "CONTRACT",
       "title": "Contract: deprecate customer_id",
       "rationale": "Retire the compatibility field after approval and observation.",
-      "affectedEvidenceIds": [
-        "ev_171e9e739d3d518e46aad9ee"
-      ],
-      "artifactTargets": [
-        "docs/migrations/customer-id.md"
-      ]
+      "affectedEvidenceIds": ["ev_171e9e739d3d518e46aad9ee"],
+      "artifactTargets": ["docs/migrations/customer-id.md"]
     }
   ],
   "artifacts": [

@@ -151,11 +151,21 @@ pnpm check:environment
 
 # Copy and configure environment
 cp .env.example .env
-# Edit .env: set DATAHUB_READ_TOKEN, GITHUB_TOKEN, DATAHUB_MUTATION_TOKEN,
-# LINEAGEGUARD_BASE_SHA, LINEAGEGUARD_HEAD_SHA (or SOURCE_PR_NUMBER)
+# Edit .env: set DATAHUB_READ_TOKEN, DATAHUB_INGEST_TOKEN, DATAHUB_MUTATION_TOKEN,
+# DATAHUB_BOOTSTRAP_TOKEN (all 4 must be distinct), GITHUB_TOKEN, SOURCE_PR_NUMBER=3
 
 # Verify everything compiles and passes
 pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build
+
+# Run the canonical demo (full pipeline)
+pnpm demo:preflight          # 19/19 environment checks
+pnpm demo:bootstrap          # seed DataHub graph (first time only)
+pnpm demo:run                # execute: ALLOW → BLOCK → validate → PR → writeback
+pnpm demo:verify             # independently verify the last run (23 checks)
+pnpm demo:repeat -- --count 3  # prove determinism
+```
+
+See [`docs/demo-walkthrough.md`](docs/demo-walkthrough.md) for the full sequence and [`docs/troubleshooting.md`](docs/troubleshooting.md) for common issues.
 
 # Run the canonical scenario
 pnpm demo

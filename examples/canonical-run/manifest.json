@@ -27,12 +27,7 @@
     "baselineDecision": "ALLOW",
     "groundedDecision": "BLOCK",
     "impactConsumers": 4,
-    "triggeredRules": [
-      "LG001",
-      "LG002",
-      "LG003",
-      "LG004"
-    ],
+    "triggeredRules": ["LG001", "LG002", "LG003", "LG004"],
     "generatedArtifacts": 8,
     "prUrl": "https://github.com/greatkich/lineageguard/pull/7",
     "writebackStatus": "SUCCEEDED"

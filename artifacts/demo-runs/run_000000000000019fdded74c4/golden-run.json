@@ -58,9 +58,7 @@
           ],
           "criticality": "HIGH",
           "fingerprint": "171e9e739d3d518e46aad9ee73a7bad7e89475ef5d185503655385adbe0fe810",
-          "relatedEvidenceIds": [
-            "ev_9e907158dba3dd3b5ea635af"
-          ]
+          "relatedEvidenceIds": ["ev_9e907158dba3dd3b5ea635af"]
         },
         {
           "id": "ev_1816ead46a32f7a9a17199ba",
@@ -87,9 +85,7 @@
           ],
           "criticality": "HIGH",
           "fingerprint": "1816ead46a32f7a9a17199ba1152040b027142ef1bd6ce5074e83b53239814db",
-          "relatedEvidenceIds": [
-            "ev_f0a45b70be19a93cda9c5129"
-          ]
+          "relatedEvidenceIds": ["ev_f0a45b70be19a93cda9c5129"]
         },
         {
           "id": "ev_1f112a8ac95df55ff9bab339",
@@ -125,9 +121,7 @@
           "payload": {
             "platform": "looker",
             "lifecycle": "PRODUCTION",
-            "ownerUrns": [
-              "urn:li:corpGroup:lineageguard-canonical.finance-analytics"
-            ],
+            "ownerUrns": ["urn:li:corpGroup:lineageguard-canonical.finance-analytics"],
             "dashboardUrn": "urn:li:dashboard:(looker,lineageguard-canonical.finance-revenue-dashboard)",
             "downstreamField": "analytics.customer_revenue.customer_id",
             "ownershipObserved": true,
@@ -153,9 +147,7 @@
           ],
           "criticality": "CRITICAL",
           "fingerprint": "59eb5c12bc8d30556ca933fe36a8ffc4f1f5843c9fe0d508fbca7cb2472bc7d2",
-          "relatedEvidenceIds": [
-            "ev_9e907158dba3dd3b5ea635af"
-          ]
+          "relatedEvidenceIds": ["ev_9e907158dba3dd3b5ea635af"]
         },
         {
           "id": "ev_9e907158dba3dd3b5ea635af",
@@ -356,9 +348,7 @@
           ],
           "criticality": "HIGH",
           "fingerprint": "d4164db054a4481b94a2093134f8ad047b9ca2026fc596e958378309dce701c6",
-          "relatedEvidenceIds": [
-            "ev_59eb5c12bc8d30556ca933fe"
-          ]
+          "relatedEvidenceIds": ["ev_59eb5c12bc8d30556ca933fe"]
         },
         {
           "id": "ev_e81b6d759a2158b1562bc984",
@@ -385,9 +375,7 @@
           ],
           "criticality": "HIGH",
           "fingerprint": "e81b6d759a2158b1562bc984b218e9786682643c930aa461dad1d6420b06e609",
-          "relatedEvidenceIds": [
-            "ev_171e9e739d3d518e46aad9ee"
-          ]
+          "relatedEvidenceIds": ["ev_171e9e739d3d518e46aad9ee"]
         },
         {
           "id": "ev_f0a45b70be19a93cda9c5129",
@@ -396,9 +384,7 @@
           "payload": {
             "modelUrn": "urn:li:mlModel:(urn:li:dataPlatform:mlflow,lineageguard-canonical.fraud-model-v3,PROD)",
             "lifecycle": "PRODUCTION",
-            "ownerUrns": [
-              "urn:li:corpGroup:lineageguard-canonical.risk-ml"
-            ],
+            "ownerUrns": ["urn:li:corpGroup:lineageguard-canonical.risk-ml"],
             "featureField": "fraud.customer_features.customer_id",
             "featureDatasetUrn": "urn:li:dataset:(urn:li:dataPlatform:postgres,lineageguard-canonical.lineageguard.fraud.customer_features,PROD)",
             "ownershipObserved": true,
@@ -432,9 +418,7 @@
           ],
           "criticality": "CRITICAL",
           "fingerprint": "f0a45b70be19a93cda9c5129e7667c476f73abe14a47c988fbe9a61ca8956e38",
-          "relatedEvidenceIds": [
-            "ev_a193c7a6f647028a5d17fbac"
-          ]
+          "relatedEvidenceIds": ["ev_a193c7a6f647028a5d17fbac"]
         }
       ],
       "failures": [],
@@ -501,22 +485,15 @@
             "walkthrough/dbt/tests/orders_buyer_id_not_null.sql",
             "walkthrough/dbt/tests/orders_compat.sql"
           ],
-          "affectedEvidenceIds": [
-            "ev_a193c7a6f647028a5d17fbac",
-            "ev_f0a45b70be19a93cda9c5129"
-          ]
+          "affectedEvidenceIds": ["ev_a193c7a6f647028a5d17fbac", "ev_f0a45b70be19a93cda9c5129"]
         },
         {
           "id": "step_contract",
           "phase": "CONTRACT",
           "title": "Contract: deprecate customer_id",
           "rationale": "Retire the compatibility field after approval and observation.",
-          "artifactTargets": [
-            "docs/migrations/customer-id.md"
-          ],
-          "affectedEvidenceIds": [
-            "ev_171e9e739d3d518e46aad9ee"
-          ]
+          "artifactTargets": ["docs/migrations/customer-id.md"],
+          "affectedEvidenceIds": ["ev_171e9e739d3d518e46aad9ee"]
         }
       ],
       "summary": "A rename is a breaking change for all downstream consumers. The expand-migrate-contract strategy avoids downtime and breakage by first making the new column available alongside the old one (expand), then systematically migrating each consumer — prioritizing CRITICAL dependencies — while asserting data equivalence (migrate), and finally removing the old column only after a monitored deprecation window confirms zero residual usage (contract). This approach is especially critical here given 5 downstream consumers including CRITICAL dashboards and ML models that cannot tolerate disruption. Rollback instructions: At any step before contract, the old column 'customer_id' remains fully functional. If issues arise during migration, revert consumer queries to reference 'customer_id', remove the buyer_id column and associated triggers/constraints, and restore original schema. After contract (column drop), rollback requires restoring from backup or re-adding customer_id with data backfilled from buyer_id.",
@@ -625,34 +602,25 @@
             "ruleId": "LG001",
             "message": "The incompatible field rename has downstream field-level lineage.",
             "severity": "CRITICAL",
-            "evidenceIds": [
-              "ev_9e907158dba3dd3b5ea635af",
-              "ev_a193c7a6f647028a5d17fbac"
-            ]
+            "evidenceIds": ["ev_9e907158dba3dd3b5ea635af", "ev_a193c7a6f647028a5d17fbac"]
           },
           {
             "ruleId": "LG002",
             "message": "A production ML model depends on the renamed field.",
             "severity": "CRITICAL",
-            "evidenceIds": [
-              "ev_f0a45b70be19a93cda9c5129"
-            ]
+            "evidenceIds": ["ev_f0a45b70be19a93cda9c5129"]
           },
           {
             "ruleId": "LG003",
             "message": "An observed system query references the renamed field.",
             "severity": "HIGH",
-            "evidenceIds": [
-              "ev_171e9e739d3d518e46aad9ee"
-            ]
+            "evidenceIds": ["ev_171e9e739d3d518e46aad9ee"]
           },
           {
             "ruleId": "LG004",
             "message": "A critical dashboard depends on the incompatible field change.",
             "severity": "CRITICAL",
-            "evidenceIds": [
-              "ev_59eb5c12bc8d30556ca933fe"
-            ]
+            "evidenceIds": ["ev_59eb5c12bc8d30556ca933fe"]
           }
         ],
         "changeId": "chg_81cda26ad872f06f0a456bcf",
@@ -664,12 +632,7 @@
       },
       "transition": "ALLOW→BLOCK",
       "decisionChanged": true,
-      "triggeredRuleIds": [
-        "LG001",
-        "LG002",
-        "LG003",
-        "LG004"
-      ],
+      "triggeredRuleIds": ["LG001", "LG002", "LG003", "LG004"],
       "changedBecauseEvidenceIds": [
         "ev_171e9e739d3d518e46aad9ee",
         "ev_59eb5c12bc8d30556ca933fe",
