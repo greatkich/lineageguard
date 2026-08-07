@@ -408,11 +408,16 @@ test.beforeAll(async () => {
   await seedCompletedRun();
 });
 
-// No explicit pool.end() here: Playwright's fullyParallel mode may shard
-// this file's tests across multiple workers/processes, each importing this
-// module independently, and there is no reliable single point at which
-// "all tests in this file, across all workers" have finished. The pool is
-// small (max: 2) and closes naturally when its worker process exits.
+test.afterAll(async () => {
+  // Remove the E2E fixture row so it does not interfere with demo:verify
+  // (which picks the most recent simple_run by default).
+  try {
+    await pool.query("DELETE FROM lineageguard.simple_runs WHERE id = $1", [FIXTURE_RUN_ID]);
+  } catch {
+    // Best-effort cleanup; the row may not exist if seeding was skipped.
+  }
+  await pool.end();
+});
 
 test.describe("Mission Control — Dashboard", () => {
   test("shows the fixture COMPLETED run from Postgres", async ({ page }) => {
