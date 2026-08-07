@@ -30,6 +30,10 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Create lineageguard schema
+        run: |
+          PGPASSWORD=lineageguard psql -h 127.0.0.1 -U lineageguard -d lineageguard \
+            -c "CREATE SCHEMA IF NOT EXISTS lineageguard;"
       - run: pnpm format:check
       - run: pnpm lint
       - run: pnpm build
