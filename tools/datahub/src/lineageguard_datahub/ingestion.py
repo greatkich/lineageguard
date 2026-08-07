@@ -31,7 +31,7 @@ from lineageguard_datahub.receipts import (
 
 RECIPE_DIGESTS = {
     "walkthrough/metadata/postgres-ingestion.yml": (
-        "14683e7c5bdfd10a3b3c1a75562e952bc43ff5bfb939d2e73f732b26b50eaa76"
+        "839660f8e446b4d864583c6fb01c21157c3f513ba419ab058da20d5948442c82"
     ),
     "walkthrough/metadata/dbt-ingestion.yml": (
         "53d74a2f471bc2561b604bb60141729370cba1ce8dc0d9c84e05f9f1e5a605eb"
@@ -41,10 +41,10 @@ REQUIRED_POSTGRES_RECIPE_TEXT = (
     "${WALKTHROUGH_INGEST_POSTGRES_USER}",
     "${WALKTHROUGH_INGEST_POSTGRES_PASSWORD}",
     "${WALKTHROUGH_POSTGRES_SSLMODE}",
-    "^commerce\\\\.orders$",
-    "^analytics\\\\.stg_orders$",
-    "^analytics\\\\.customer_revenue$",
-    "^fraud\\\\.customer_features$",
+    "^lineageguard\\\\.commerce\\\\.orders$",
+    "^lineageguard\\\\.analytics\\\\.stg_orders$",
+    "^lineageguard\\\\.analytics\\\\.customer_revenue$",
+    "^lineageguard\\\\.fraud\\\\.customer_features$",
     "include_usage_statistics: false",
     "include_query_lineage: false",
     "include_view_lineage: false",
