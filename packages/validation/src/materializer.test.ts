@@ -32,19 +32,6 @@ async function temporaryRoot(): Promise<string> {
   return root;
 }
 
-async function retryOnTextFileBusy<T>(action: () => Promise<T>, attempts = 5): Promise<T> {
-  for (let attempt = 1; attempt <= attempts; attempt++) {
-    try {
-      return await action();
-    } catch (error) {
-      const code = (error as { code?: string } | undefined)?.code;
-      if (code !== "ETXTBSY" || attempt === attempts) throw error;
-      await new Promise((resolve) => setTimeout(resolve, 20 * attempt));
-    }
-  }
-  throw new Error("unreachable");
-}
-
 async function repository(options: { symlinkModel?: boolean } = {}) {
   const root = await temporaryRoot();
   const repositoryPath = join(root, "repository");
@@ -319,12 +306,7 @@ describe("fixed command runner", () => {
     const running = new SpawnCommandRunner().run(command);
     await new Promise((resolve) => setTimeout(resolve, 50));
     await chmod(executable, 0o700);
-    // On Linux, overwriting a file that's actively mapped for exec by a
-    // running process can transiently fail with ETXTBSY depending on kernel/
-    // filesystem timing. This does not weaken the test: the assertion below
-    // still requires the runner to detect the swapped executable and reject
-    // it — only the setup step retries past an OS-level busy-file race.
-    await retryOnTextFileBusy(() => copyFile("/usr/bin/true", executable));
+    await copyFile("/usr/bin/true", executable);
     await expect(running).rejects.toMatchObject({ code: "MISSING_TOOL" });
     await writeFile(executable, "#!/bin/sh\nexit 0\n");
     await chmod(executable, 0o500);
