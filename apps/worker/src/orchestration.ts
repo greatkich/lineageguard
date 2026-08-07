@@ -87,9 +87,18 @@ function createValidationPort(workerId: string): AgentValidationPort | undefined
     return undefined;
   }
 
-  const dockerExecutable = process.env.VALIDATION_DOCKER_EXECUTABLE ?? process.env.LINEAGEGUARD_DOCKER_EXECUTABLE ?? "/usr/local/bin/docker";
-  const runnerImageId = process.env.VALIDATION_RUNNER_IMAGE_ID ?? process.env.LINEAGEGUARD_VALIDATION_RUNNER_IMAGE_ID ?? "";
-  const postgresImageId = process.env.VALIDATION_POSTGRES_IMAGE_ID ?? process.env.LINEAGEGUARD_VALIDATION_POSTGRES_IMAGE_ID ?? "";
+  const dockerExecutable =
+    process.env.VALIDATION_DOCKER_EXECUTABLE ??
+    process.env.LINEAGEGUARD_DOCKER_EXECUTABLE ??
+    "/usr/local/bin/docker";
+  const runnerImageId =
+    process.env.VALIDATION_RUNNER_IMAGE_ID ??
+    process.env.LINEAGEGUARD_VALIDATION_RUNNER_IMAGE_ID ??
+    "";
+  const postgresImageId =
+    process.env.VALIDATION_POSTGRES_IMAGE_ID ??
+    process.env.LINEAGEGUARD_VALIDATION_POSTGRES_IMAGE_ID ??
+    "";
   const baseFixturePath = process.env.VALIDATION_BASE_FIXTURE_PATH ?? "";
 
   return {
@@ -128,7 +137,8 @@ function createValidationPort(workerId: string): AgentValidationPort | undefined
         const { resolve } = await import("node:path");
 
         const repositoryPath = resolve(process.cwd());
-        const sandboxRoot = process.env.VALIDATION_SANDBOX_ROOT ?? process.env.TMPDIR ?? "/private/tmp";
+        const sandboxRoot =
+          process.env.VALIDATION_SANDBOX_ROOT ?? process.env.TMPDIR ?? "/private/tmp";
         const baseSha =
           parsed.artifacts.find((a) => a.operation === "MODIFY")?.expectedBaseSha ?? "HEAD";
         const sandboxId = `validation-${Date.now()}`;
@@ -531,7 +541,9 @@ export function createWritebackPort(): AgentWritebackPort | undefined {
         const resp = response as { aspect?: Record<string, unknown> } | null;
         if (!resp?.aspect) return null;
         // GMS wraps the value in the fully-qualified class name: { "com.linkedin.common.X": {...} }
-        const keys = Object.keys(resp.aspect).filter((k) => k !== "version" && k.startsWith("com."));
+        const keys = Object.keys(resp.aspect).filter(
+          (k) => k !== "version" && k.startsWith("com."),
+        );
         if (keys.length === 1 && keys[0] !== undefined) return resp.aspect[keys[0]];
         // Fallback: if there's a `value` field (some endpoints use this)
         if ("value" in resp.aspect) return resp.aspect.value;
@@ -564,7 +576,10 @@ export function createWritebackPort(): AgentWritebackPort | undefined {
 
         // Parse existing tags to preserve unrelated ones
         const existingTagsValue = extractAspectValue(beforeTags);
-        const existingTagsRaw = typeof existingTagsValue === "string" ? existingTagsValue : JSON.stringify(existingTagsValue ?? {});
+        const existingTagsRaw =
+          typeof existingTagsValue === "string"
+            ? existingTagsValue
+            : JSON.stringify(existingTagsValue ?? {});
         const existingTags = JSON.parse(existingTagsRaw) as { tags?: Array<{ tag: string }> };
         const existingTagList = existingTags.tags ?? [];
 
@@ -581,8 +596,13 @@ export function createWritebackPort(): AgentWritebackPort | undefined {
 
         // Parse existing institutional memory to preserve unrelated elements
         const existingMemoryValue = extractAspectValue(beforeMemory);
-        const existingMemoryRaw = typeof existingMemoryValue === "string" ? existingMemoryValue : JSON.stringify(existingMemoryValue ?? {});
-        const existingMemory = JSON.parse(existingMemoryRaw) as { elements?: Array<{ url?: string; description?: string; createStamp?: unknown }> };
+        const existingMemoryRaw =
+          typeof existingMemoryValue === "string"
+            ? existingMemoryValue
+            : JSON.stringify(existingMemoryValue ?? {});
+        const existingMemory = JSON.parse(existingMemoryRaw) as {
+          elements?: Array<{ url?: string; description?: string; createStamp?: unknown }>;
+        };
         const existingElements = existingMemory.elements ?? [];
 
         // Check idempotency: if our marker already exists, skip write
@@ -664,7 +684,11 @@ export function createWritebackPort(): AgentWritebackPort | undefined {
           `/aspects/${encodeURIComponent(datasetUrn)}?aspect=globalTags&version=0`,
         );
         const afterTagsValue = extractAspectValue(afterTags);
-        const afterTagData = (typeof afterTagsValue === "object" && afterTagsValue !== null ? afterTagsValue : JSON.parse(typeof afterTagsValue === "string" ? afterTagsValue : "{}")) as { tags?: Array<{ tag: string }> };
+        const afterTagData = (
+          typeof afterTagsValue === "object" && afterTagsValue !== null
+            ? afterTagsValue
+            : JSON.parse(typeof afterTagsValue === "string" ? afterTagsValue : "{}")
+        ) as { tags?: Array<{ tag: string }> };
         const reviewedPresent = (afterTagData.tags ?? []).some(
           (t) => t.tag === "urn:li:tag:lineageguard-canonical.Reviewed",
         );
@@ -678,7 +702,11 @@ export function createWritebackPort(): AgentWritebackPort | undefined {
           `/aspects/${encodeURIComponent(datasetUrn)}?aspect=institutionalMemory&version=0`,
         );
         const afterMemoryValue = extractAspectValue(afterMemory);
-        const afterMemoryData = (typeof afterMemoryValue === "object" && afterMemoryValue !== null ? afterMemoryValue : JSON.parse(typeof afterMemoryValue === "string" ? afterMemoryValue : "{}")) as { elements?: Array<{ description?: string }> };
+        const afterMemoryData = (
+          typeof afterMemoryValue === "object" && afterMemoryValue !== null
+            ? afterMemoryValue
+            : JSON.parse(typeof afterMemoryValue === "string" ? afterMemoryValue : "{}")
+        ) as { elements?: Array<{ description?: string }> };
         const docVerified = (afterMemoryData.elements ?? []).some((el) =>
           el.description?.includes(markerPhrase),
         );

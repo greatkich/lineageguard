@@ -23,7 +23,7 @@ const glossaryTermUrn = "urn:li:glossaryTerm:lineageguard-canonical.CustomerIden
 
 const canonicalTrainingDataBody = JSON.stringify({
   value: {
-    trainingData: [{ datasetUrn: fraudFeaturesUrn, motivation: "FEATURE_TABLE" }],
+    trainingData: [{ dataset: fraudFeaturesUrn, motivation: "FEATURE_TABLE" }],
   },
 });
 

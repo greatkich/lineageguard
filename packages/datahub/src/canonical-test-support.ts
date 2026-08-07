@@ -31,7 +31,7 @@ ORDER BY lifetime_revenue DESC;`;
 
 const canonicalTrainingDataResponse = JSON.stringify({
   value: {
-    trainingData: [{ datasetUrn: canonicalFraudFeaturesUrn, motivation: "FEATURE_TABLE" }],
+    trainingData: [{ dataset: canonicalFraudFeaturesUrn, motivation: "FEATURE_TABLE" }],
   },
 });
 

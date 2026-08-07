@@ -28,7 +28,7 @@ const canonicalTrainingDataBody = JSON.stringify({
   value: {
     trainingData: [
       {
-        datasetUrn:
+        dataset:
           "urn:li:dataset:(urn:li:dataPlatform:postgres,lineageguard-canonical.lineageguard.fraud.customer_features,PROD)",
         motivation: "FEATURE_TABLE",
       },

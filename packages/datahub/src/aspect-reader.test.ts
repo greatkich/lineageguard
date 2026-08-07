@@ -12,8 +12,8 @@ function validTrainingDataResponse() {
   return JSON.stringify({
     value: {
       trainingData: [
-        { datasetUrn: expectedDatasetUrn, motivation: "FEATURE_TABLE" },
-        { datasetUrn: "urn:li:dataset:(urn:li:dataPlatform:postgres,other.dataset,PROD)" },
+        { dataset: expectedDatasetUrn, motivation: "FEATURE_TABLE" },
+        { dataset: "urn:li:dataset:(urn:li:dataPlatform:postgres,other.dataset,PROD)" },
       ],
     },
   });
@@ -68,8 +68,7 @@ describe("readTrainingDataAspect", () => {
       value: {
         trainingData: [
           {
-            datasetUrn:
-              "urn:li:dataset:(urn:li:dataPlatform:postgres,other.unrelated.dataset,PROD)",
+            dataset: "urn:li:dataset:(urn:li:dataPlatform:postgres,other.unrelated.dataset,PROD)",
           },
         ],
       },
