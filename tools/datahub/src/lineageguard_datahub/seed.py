@@ -32,6 +32,7 @@ from datahub.metadata.schema_classes import (
     OwnershipClass,
     OwnershipTypeClass,
     QueryPropertiesClass,
+    SchemaMetadataClass,
     StatusClass,
     TagAssociationClass,
     TagPropertiesClass,
@@ -383,6 +384,28 @@ def _is_expected_dbt_sibling_dataset(dataset_urn: str, downstream_urn: str) -> b
     return dataset_urn == _expected_dbt_sibling_urn(downstream_urn)
 
 
+def _connector_entity_exists(reader: EntityReader, urn: str) -> bool:
+    """Existence check tolerant of schema-field URNs.
+
+    A schema field is not a standalone DataHub entity with its own key aspect; it is
+    part of the parent dataset's ``SchemaMetadata``. The generic ``reader.exists()``
+    (backed by the official SDK's key-aspect lookup) can therefore never confirm a
+    schema field exists, even when the ingesting connector has already published it.
+    For schema-field URNs, treat the field as present if either the generic existence
+    check succeeds (covering readers/fixtures that model schema fields directly) or
+    the parent dataset's schema lists a matching field path (the real DataHub SDK
+    reader's behavior).
+    """
+    if reader.exists(urn):
+        return True
+    dataset_urn = _dataset_urn_from_schema_field_urn(urn)
+    if dataset_urn is None:
+        return False
+    field_path = urn.rsplit(",", 1)[-1].rstrip(")")
+    schema = reader.get_aspect(dataset_urn, SchemaMetadataClass)
+    return schema is not None and any(field.fieldPath == field_path for field in schema.fields)
+
+
 def build_seed_plan(
     graph: ExpectedGraph,
     root: Path,
@@ -656,7 +679,7 @@ def _seed_metadata_under_lock(
     owned: set[str] = set()
     for (urn, entity_type), operations in by_entity.items():
         if urn in connector_references:
-            if not reader.exists(urn):
+            if not _connector_entity_exists(reader, urn):
                 operation = operations[0]
                 receipt_store.append(
                     OperationReceipt.create(
@@ -936,12 +959,19 @@ def reconcile_seed_metadata(
                 after = "EXACT"
                 if pending.status is ReceiptStatus.FAILURE:
                     applied_after_failure.add(operation.proposal.entityUrn)
-            elif current is None or (
-                isinstance(expected, StatusClass)
-                and isinstance(current, StatusClass)
-                and current.removed is True
-                and expected.removed is False
+            elif (
+                current is None
+                or (
+                    isinstance(expected, StatusClass)
+                    and isinstance(current, StatusClass)
+                    and current.removed is True
+                    and expected.removed is False
+                )
+                or isinstance(expected, UpstreamLineageClass)
             ):
+                # Lineage aspects were already reconciled (foreign edges rejected) when
+                # the plan was rebuilt above; a live value that has not yet converged to
+                # that reconciled result is a pending additive change, not a conflict.
                 detail = "LIVE_RECONCILED_NOT_APPLIED"
                 after = "ABSENT"
             else:

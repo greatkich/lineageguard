@@ -76,8 +76,32 @@ class LiveQueryUpsert:
     idempotency_key: str
 
 
+def _canonical_proposal_obj(proposal: MetadataChangeProposalWrapper) -> dict[str, object]:
+    """A proposal's wire form with any embedded JSON string normalized to a stable key order.
+
+    ``to_obj()`` serializes generic aspects as ``{"contentType": ..., "value": <json string>}``.
+    That inner JSON string's key order reflects whatever order the aspect's own dict-valued
+    fields (for example ``customProperties``) happened to have at construction or after a
+    server round-trip; it is not guaranteed to be stable. Re-parsing and re-dumping that inner
+    string with ``sort_keys=True`` makes the resulting hash depend only on aspect content, not
+    incidental dict ordering.
+    """
+    obj = proposal.to_obj()
+    aspect = obj.get("aspect")
+    if isinstance(aspect, dict) and isinstance(aspect.get("value"), str):
+        try:
+            parsed_value = json.loads(aspect["value"])
+        except json.JSONDecodeError:
+            return obj
+        canonical_value = json.dumps(parsed_value, sort_keys=True, separators=(",", ":"))
+        obj = {**obj, "aspect": {**aspect, "value": canonical_value}}
+    return obj
+
+
 def _idempotency_key(proposal: MetadataChangeProposalWrapper) -> str:
-    payload = json.dumps(proposal.to_obj(), sort_keys=True, separators=(",", ":")).encode()
+    payload = json.dumps(
+        _canonical_proposal_obj(proposal), sort_keys=True, separators=(",", ":")
+    ).encode()
     return hashlib.sha256(payload).hexdigest()
 
 
