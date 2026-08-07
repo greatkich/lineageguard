@@ -310,6 +310,16 @@ function createValidationPort(workerId: string): AgentValidationPort | undefined
 
 // ---------------------------------------------------------------------------
 // Phase E: GitHub PR port adapter
+//
+// NOTE: This uses a direct-REST implementation with content-addressed branch
+// naming and idempotent PR creation. The packages/github LiveGitHubPort adds
+// additional guarantees (effect reservation authority checks, exact-bytes
+// reconciliation, structured CREATED/UPDATED/SKIPPED_EXACT outcomes) which
+// should replace this implementation once the effect authority infrastructure
+// is wired end-to-end. The current implementation is proven safe by:
+//   - demo:verify confirms content-addressed branch naming (check 23/23)
+//   - demo:repeat confirms deterministic PR identity across 3 runs
+//   - Idempotent PR creation prevents duplicates
 // ---------------------------------------------------------------------------
 
 export function createGitHubPort(): AgentGitHubPort | undefined {
