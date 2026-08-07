@@ -19,6 +19,11 @@ import {
 } from "@/components/ui/icons";
 import { PipelineStepper, type StepDef } from "@/components/ui/pipeline-stepper";
 import { fetchRun } from "@/lib/db";
+import {
+  deriveImpactConsumers,
+  impactContextSchema,
+  type ImpactConsumer,
+} from "@lineageguard/domain";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
@@ -63,32 +68,22 @@ export default async function RunDetailPage({ params }: { params: Promise<{ runI
   const effectiveStatus = failedStatusMap[run.status] ?? run.status;
   const rules = run.triggeredRules?.split(",").filter(Boolean) ?? [];
 
-  // Extract evidence from persisted context — derive exactly 4 impact cards
-  const context = run.contextJson as { evidence?: Array<{ id: string; kind: string; title?: string; entityName?: string; payload?: any }> } | null;
-  const evidence = context?.evidence ?? [];
+  // Derive impact consumers from persisted context using the same domain
+  // function the pipeline uses — guarantees the UI and backend agree on
+  // exactly which/how-many consumers are shown (no duplicated, drifted logic).
+  const impactConsumers: ImpactConsumer[] = (() => {
+    if (!run.contextJson) return [];
+    const parsed = impactContextSchema.safeParse(run.contextJson);
+    if (!parsed.success) return [];
+    return deriveImpactConsumers(parsed.data);
+  })();
 
-  // Derive impact cards: DASHBOARD, ML_MODEL, QUERY_USAGE, and downstream models from LINEAGE_PATH
-  // Do NOT count LINEAGE_PATH as independent consumers
-  const impactConsumers: Array<{ id: string; title: string; kind: string; entityUrn: string }> = [];
-  const seenUrns = new Set<string>();
-  for (const item of evidence) {
-    if (item.kind === "LINEAGE_PATH") {
-      const downstream = item.payload?.downstreamUrn ?? item.payload?.targetUrn;
-      if (downstream && !seenUrns.has(downstream)) {
-        seenUrns.add(downstream);
-        impactConsumers.push({ id: item.id, title: item.title ?? item.entityName ?? "Downstream model", kind: "DOWNSTREAM_MODEL", entityUrn: downstream });
-      }
-    } else if (item.kind === "DASHBOARD") {
-      const urn = item.payload?.dashboardUrn ?? "";
-      if (!seenUrns.has(urn)) { seenUrns.add(urn); impactConsumers.push({ id: item.id, title: item.title ?? item.entityName ?? "Dashboard", kind: item.kind, entityUrn: urn }); }
-    } else if (item.kind === "ML_MODEL") {
-      const urn = item.payload?.modelUrn ?? "";
-      if (!seenUrns.has(urn)) { seenUrns.add(urn); impactConsumers.push({ id: item.id, title: item.title ?? item.entityName ?? "ML Model", kind: item.kind, entityUrn: urn }); }
-    } else if (item.kind === "QUERY_USAGE") {
-      const urn = item.payload?.queryUrn ?? "";
-      if (!seenUrns.has(urn)) { seenUrns.add(urn); impactConsumers.push({ id: item.id, title: item.title ?? item.entityName ?? "Query", kind: item.kind, entityUrn: urn }); }
-    }
-  }
+  const kindLabels: Record<ImpactConsumer["kind"], string> = {
+    DATA_MODEL: "Data Model",
+    DASHBOARD: "Dashboard",
+    ML_CONSUMER: "ML Consumer",
+    UNMANAGED_QUERY: "Unmanaged Query",
+  };
 
   // Extract candidate info from persisted data
   const candidate = run.candidateJson as { strategy?: string; artifacts?: Array<{ path: string; kind: string }> } | null;
@@ -215,9 +210,9 @@ export default async function RunDetailPage({ params }: { params: Promise<{ runI
                 <p className="text-xs font-medium text-muted-foreground mb-2">Impact Consumers ({impactConsumers.length})</p>
                 <div className="space-y-1.5">
                   {impactConsumers.slice(0, 6).map((item) => (
-                    <div key={item.id} className="flex items-center gap-2 p-1.5 rounded bg-muted/30 text-xs">
-                      <span className="font-mono text-[10px] text-muted-foreground">{item.kind}</span>
-                      <span className="truncate">{item.title ?? item.id}</span>
+                    <div key={item.entityUrn} className="flex items-center gap-2 p-1.5 rounded bg-muted/30 text-xs">
+                      <span className="font-mono text-[10px] text-muted-foreground">{kindLabels[item.kind]}</span>
+                      <span className="truncate">{item.title}</span>
                     </div>
                   ))}
                 </div>
