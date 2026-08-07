@@ -1,0 +1,80 @@
+name: LIVE Integration Verification
+
+# Manual-dispatch-only workflow that runs the full LIVE canonical demo
+# (pnpm demo), separate from the deterministic CI workflow (ci.yml).
+#
+# Unlike ci.yml, this requires real external state to succeed:
+#   - a reachable DataHub GMS instance with the canonical walkthrough
+#     metadata already ingested (see walkthrough/README.md)
+#   - a PostgreSQL instance with the walkthrough schema seeded
+#   - Docker with the pre-built content-addressed validation images
+#     (see scripts/build-validation-images.sh)
+#   - a reachable LLM endpoint (OMNIROUTE_*) for the migration-plan step
+#   - GitHub and DataHub credentials with least-privilege scopes
+#
+# This workflow does not provision that infrastructure itself — it
+# assumes the runner (self-hosted, or a job with configured service
+# containers) already has access to it. Provide the connection details
+# via repository/environment secrets and variables.
+on:
+  workflow_dispatch:
+    inputs:
+      commit_sha:
+        description: "Exact commit SHA to verify (default: HEAD)"
+        required: false
+
+jobs:
+  live-verification:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: live-demo
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.commit_sha || github.sha }}
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: "pnpm"
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Quality gates
+        run: |
+          pnpm format:check
+          pnpm lint
+          pnpm typecheck
+          pnpm test
+          pnpm build
+
+      - name: LIVE demo run
+        env:
+          LINEAGEGUARD_DATABASE_URL: ${{ secrets.LINEAGEGUARD_DATABASE_URL }}
+          DATAHUB_GMS_URL: ${{ vars.DATAHUB_GMS_URL }}
+          DATAHUB_READ_TOKEN: ${{ secrets.DATAHUB_READ_TOKEN }}
+          DATAHUB_MUTATION_TOKEN: ${{ secrets.DATAHUB_MUTATION_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.LINEAGEGUARD_GITHUB_TOKEN }}
+          GITHUB_OWNER: ${{ vars.GITHUB_OWNER }}
+          GITHUB_REPO: ${{ vars.GITHUB_REPO }}
+          OMNIROUTE_BASE_URL: ${{ secrets.OMNIROUTE_BASE_URL }}
+          OMNIROUTE_MODEL: ${{ vars.OMNIROUTE_MODEL }}
+          OMNIROUTE_API_KEY: ${{ secrets.OMNIROUTE_API_KEY }}
+          SOURCE_PR_NUMBER: ${{ vars.SOURCE_PR_NUMBER }}
+          LINEAGEGUARD_BASE_SHA: ${{ vars.LINEAGEGUARD_BASE_SHA }}
+          LINEAGEGUARD_HEAD_SHA: ${{ vars.LINEAGEGUARD_HEAD_SHA }}
+          VALIDATION_ENABLED: "true"
+          WRITEBACK_ENABLED: "true"
+        run: pnpm demo
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: live-verification-evidence
+          path: |
+            artifacts/demo-readiness/
+            examples/canonical-run/
+          if-no-files-found: warn
