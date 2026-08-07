@@ -96,7 +96,8 @@ function parseReceipt(value: unknown): GitHubReviewReceipt {
     !fingerprint.test(receipt.inputFingerprint) ||
     typeof receipt.idempotencyKey !== "string" ||
     receipt.idempotencyKey.length > 240 ||
-    typeof receipt.reconciled !== "boolean"
+    typeof receipt.reconciled !== "boolean" ||
+    !["CREATED", "UPDATED", "SKIPPED_EXACT"].includes(receipt.outcome)
   )
     reject("Replay receipt is not normalized");
   return structuredClone(receipt);

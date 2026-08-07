@@ -10,6 +10,7 @@ import { GitHubEffectError } from "./errors.js";
 import { sha256Buffer } from "./hash.js";
 import { FetchGitHubTransport } from "./transport.js";
 import type {
+  EffectOutcome,
   GitHubHttpRequest,
   GitHubHttpResponse,
   GitHubOperation,
@@ -187,7 +188,9 @@ export class LiveGitHubPort implements GitHubPort<GitHubReviewRequest> {
       const failure = this.normalizeTransportError(error, "RECONCILE", "RECONCILE");
       if (failure.retry === "NEVER") throw failure;
       for (let attempt = 1; attempt <= this.#options.maxAttempts; attempt += 1) {
-        const found = await this.reconcile(boundedInput, true);
+        // This call attempted to create the effect and got an ambiguous transport response.
+        // If reconciliation now finds it, this call caused it to exist — not a pre-existing skip.
+        const found = await this.reconcile(boundedInput, true, "CREATED");
         if (found) return found;
         if (attempt < this.#options.maxAttempts)
           await new Promise((resolve) => setTimeout(resolve, 1));
@@ -533,6 +536,7 @@ export class LiveGitHubPort implements GitHubPort<GitHubReviewRequest> {
     pull: Json,
     headSha: string,
     reconciled: boolean,
+    outcome: EffectOutcome,
   ): GitHubReviewReceipt {
     const base = object(pull.base);
     const head = object(pull.head);
@@ -590,12 +594,14 @@ export class LiveGitHubPort implements GitHubPort<GitHubReviewRequest> {
       idempotencyKey: input.idempotencyKey,
       inputFingerprint: input.inputFingerprint,
       reconciled,
+      outcome,
     };
   }
 
   private async reconcile(
     input: GitHubReviewRequest,
     allowIncomplete = false,
+    outcomeOnFound: EffectOutcome = "SKIPPED_EXACT",
   ): Promise<GitHubReviewReceipt | undefined> {
     const ref = await this.getHead(input);
     if (!ref) return undefined;
@@ -652,7 +658,7 @@ export class LiveGitHubPort implements GitHubPort<GitHubReviewRequest> {
         retry: "NEVER",
         message: "GitHub pull response is malformed",
       });
-    return this.receipt(input, pull, headSha, true);
+    return this.receipt(input, pull, headSha, true, outcomeOnFound);
   }
 
   private async create(
@@ -817,13 +823,16 @@ export class LiveGitHubPort implements GitHubPort<GitHubReviewRequest> {
         retry: "RECONCILE",
         message: "GitHub branch receipt is malformed",
       });
-    return this.createPull(input, headSha, false);
+    // This call just authored the commit, tree, and branch ref — it is the cause of the effect
+    // existing, regardless of whether the pull request itself still needs to be opened below.
+    return this.createPull(input, headSha, false, "CREATED");
   }
 
   private async createPull(
     input: GitHubReviewRequest,
     headSha: string,
     reconciled: boolean,
+    outcome: EffectOutcome,
   ): Promise<GitHubReviewReceipt> {
     const existing = await this.pulls(input);
     if (existing.length > 1)
@@ -842,7 +851,7 @@ export class LiveGitHubPort implements GitHubPort<GitHubReviewRequest> {
           retry: "NEVER",
           message: "GitHub pull response is malformed",
         });
-      return this.receipt(input, pull, headSha, true);
+      return this.receipt(input, pull, headSha, true, outcome);
     }
     const pull = object(
       (
@@ -862,6 +871,6 @@ export class LiveGitHubPort implements GitHubPort<GitHubReviewRequest> {
         retry: "RECONCILE",
         message: "GitHub pull receipt is malformed",
       });
-    return this.receipt(input, pull, headSha, reconciled);
+    return this.receipt(input, pull, headSha, reconciled, outcome);
   }
 }

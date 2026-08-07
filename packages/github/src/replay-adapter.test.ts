@@ -28,6 +28,7 @@ const receipt: GitHubReviewReceipt = {
   idempotencyKey: "github:run_0123456789abcdef01234567:review",
   inputFingerprint: fp("7"),
   reconciled: false,
+  outcome: "CREATED",
 };
 const expected = {
   repository: receipt.repository,
