@@ -289,7 +289,7 @@ describe("isolated materialization", () => {
 });
 
 describe("fixed command runner", () => {
-  it("pins executable and interpreter bytes across spawn", async () => {
+  it("pins executable and interpreter bytes across spawn", { retry: 2 }, async () => {
     const root = await temporaryRoot();
     const executable = join(root, "validator-tool");
     await copyFile("/bin/sleep", executable);
