@@ -9,7 +9,7 @@ import {
 } from "@lineageguard/domain";
 import { type AgentLLMConfig, agentLLMConfigFromEnv, directLLMCall } from "./llm/client.js";
 import { migrationPlanPrompt } from "./llm/prompts.js";
-import { migrationPlanSchema } from "./llm/schemas.js";
+import { migrationPlanSchema, type MigrationPlan } from "./llm/schemas.js";
 import { buildCanonicalCandidate } from "./steps/build-canonical-candidate.js";
 import { deriveImpactCards } from "./steps/derive-impact-cards.js";
 import type { AgentDataHubContextPort, StepContext } from "./steps/index.js";
@@ -233,7 +233,7 @@ export function createAgentPipeline(config: AgentPipelineConfig) {
 
       // ─── Step 5: Plan migration (LLM — rationale only) ────────────────
       console.log(`  [pipeline] Step 5: Planning migration...`);
-      let plan;
+      let plan: MigrationPlan;
       try {
         // Filter evidence to consumer-relevant kinds for the LLM prompt
         const consumerKinds = new Set(["LINEAGE_PATH", "DASHBOARD", "ML_MODEL", "QUERY_USAGE"]);

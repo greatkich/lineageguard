@@ -167,7 +167,8 @@ export default async function RunDetailPage({ params }: { params: Promise<{ runI
               <pre className="text-xs font-mono leading-relaxed">
                 {(run.patch || "No patch data available").split("\n").map((line, i) => (
                   <div
-                    key={i}
+                    // biome-ignore lint/suspicious/noArrayIndexKey: diff lines have no stable identity; order is the only meaningful key for this static, non-reorderable render.
+                    key={`${i}-${line}`}
                     className={
                       line.startsWith("+")
                         ? "text-status-allow"

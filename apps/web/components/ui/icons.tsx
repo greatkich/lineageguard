@@ -12,6 +12,7 @@ export function IconDatabase(props: IconProps) {
       strokeWidth="1.5"
       strokeLinecap="round"
       strokeLinejoin="round"
+      aria-hidden="true"
       {...props}
     >
       <ellipse cx="12" cy="5" rx="9" ry="3" />
@@ -31,6 +32,7 @@ export function IconShield(props: IconProps) {
       strokeWidth="1.5"
       strokeLinecap="round"
       strokeLinejoin="round"
+      aria-hidden="true"
       {...props}
     >
       <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
@@ -48,6 +50,7 @@ export function IconShieldCheck(props: IconProps) {
       strokeWidth="1.5"
       strokeLinecap="round"
       strokeLinejoin="round"
+      aria-hidden="true"
       {...props}
     >
       <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
@@ -66,6 +69,7 @@ export function IconShieldAlert(props: IconProps) {
       strokeWidth="1.5"
       strokeLinecap="round"
       strokeLinejoin="round"
+      aria-hidden="true"
       {...props}
     >
       <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
@@ -85,6 +89,7 @@ export function IconGitBranch(props: IconProps) {
       strokeWidth="1.5"
       strokeLinecap="round"
       strokeLinejoin="round"
+      aria-hidden="true"
       {...props}
     >
       <line x1="6" y1="3" x2="6" y2="15" />
@@ -105,6 +110,7 @@ export function IconCode(props: IconProps) {
       strokeWidth="1.5"
       strokeLinecap="round"
       strokeLinejoin="round"
+      aria-hidden="true"
       {...props}
     >
       <polyline points="16 18 22 12 16 6" />
@@ -123,6 +129,7 @@ export function IconCheck(props: IconProps) {
       strokeWidth="1.5"
       strokeLinecap="round"
       strokeLinejoin="round"
+      aria-hidden="true"
       {...props}
     >
       <polyline points="20 6 9 17 4 12" />
@@ -140,6 +147,7 @@ export function IconX(props: IconProps) {
       strokeWidth="1.5"
       strokeLinecap="round"
       strokeLinejoin="round"
+      aria-hidden="true"
       {...props}
     >
       <line x1="18" y1="6" x2="6" y2="18" />
@@ -158,6 +166,7 @@ export function IconActivity(props: IconProps) {
       strokeWidth="1.5"
       strokeLinecap="round"
       strokeLinejoin="round"
+      aria-hidden="true"
       {...props}
     >
       <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
@@ -175,6 +184,7 @@ export function IconLayers(props: IconProps) {
       strokeWidth="1.5"
       strokeLinecap="round"
       strokeLinejoin="round"
+      aria-hidden="true"
       {...props}
     >
       <polygon points="12 2 2 7 12 12 22 7 12 2" />
@@ -194,6 +204,7 @@ export function IconFileText(props: IconProps) {
       strokeWidth="1.5"
       strokeLinecap="round"
       strokeLinejoin="round"
+      aria-hidden="true"
       {...props}
     >
       <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
@@ -215,6 +226,7 @@ export function IconSearch(props: IconProps) {
       strokeWidth="1.5"
       strokeLinecap="round"
       strokeLinejoin="round"
+      aria-hidden="true"
       {...props}
     >
       <circle cx="11" cy="11" r="8" />
@@ -233,6 +245,7 @@ export function IconZap(props: IconProps) {
       strokeWidth="1.5"
       strokeLinecap="round"
       strokeLinejoin="round"
+      aria-hidden="true"
       {...props}
     >
       <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
@@ -250,6 +263,7 @@ export function IconCpu(props: IconProps) {
       strokeWidth="1.5"
       strokeLinecap="round"
       strokeLinejoin="round"
+      aria-hidden="true"
       {...props}
     >
       <rect x="4" y="4" width="16" height="16" rx="2" ry="2" />
@@ -276,6 +290,7 @@ export function IconContainer(props: IconProps) {
       strokeWidth="1.5"
       strokeLinecap="round"
       strokeLinejoin="round"
+      aria-hidden="true"
       {...props}
     >
       <path d="M22 8.5V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v2.5" />
@@ -299,6 +314,7 @@ export function IconGitPullRequest(props: IconProps) {
       strokeWidth="1.5"
       strokeLinecap="round"
       strokeLinejoin="round"
+      aria-hidden="true"
       {...props}
     >
       <circle cx="18" cy="18" r="3" />
@@ -319,6 +335,7 @@ export function IconUpload(props: IconProps) {
       strokeWidth="1.5"
       strokeLinecap="round"
       strokeLinejoin="round"
+      aria-hidden="true"
       {...props}
     >
       <polyline points="16 16 12 12 8 16" />
@@ -338,6 +355,7 @@ export function IconArrowRight(props: IconProps) {
       strokeWidth="1.5"
       strokeLinecap="round"
       strokeLinejoin="round"
+      aria-hidden="true"
       {...props}
     >
       <line x1="5" y1="12" x2="19" y2="12" />
@@ -356,6 +374,7 @@ export function IconCircle(props: IconProps) {
       strokeWidth="1.5"
       strokeLinecap="round"
       strokeLinejoin="round"
+      aria-hidden="true"
       {...props}
     >
       <circle cx="12" cy="12" r="10" />
@@ -373,6 +392,7 @@ export function IconCheckCircle(props: IconProps) {
       strokeWidth="1.5"
       strokeLinecap="round"
       strokeLinejoin="round"
+      aria-hidden="true"
       {...props}
     >
       <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
@@ -391,6 +411,7 @@ export function IconAlertCircle(props: IconProps) {
       strokeWidth="1.5"
       strokeLinecap="round"
       strokeLinejoin="round"
+      aria-hidden="true"
       {...props}
     >
       <circle cx="12" cy="12" r="10" />
