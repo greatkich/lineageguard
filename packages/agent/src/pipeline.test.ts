@@ -69,8 +69,23 @@ const MOCK_PLAN_RESPONSE = JSON.stringify({
 // pairs (dashboard, fraud model) + query usage + glossary + two owners —
 // the same 4-consumer canonical scenario the real DataHub adapter produces.
 function provenanceEntry(
-  role: "SCHEMA" | "LINEAGE_DISCOVERY" | "FIELD_PATH" | "ENTITY_PATH" | "ENTITY_DETAILS" | "QUERY_DISCOVERY" | "QUERY_DETAILS" | "OWNER" | "GLOSSARY_BINDING" | "GLOSSARY_DETAILS",
-  tool: "get_entities" | "list_schema_fields" | "get_lineage" | "get_lineage_paths_between" | "get_dataset_queries",
+  role:
+    | "SCHEMA"
+    | "LINEAGE_DISCOVERY"
+    | "FIELD_PATH"
+    | "ENTITY_PATH"
+    | "ENTITY_DETAILS"
+    | "QUERY_DISCOVERY"
+    | "QUERY_DETAILS"
+    | "OWNER"
+    | "GLOSSARY_BINDING"
+    | "GLOSSARY_DETAILS",
+  tool:
+    | "get_entities"
+    | "list_schema_fields"
+    | "get_lineage"
+    | "get_lineage_paths_between"
+    | "get_dataset_queries",
   invocationId: string,
 ) {
   return {
@@ -89,7 +104,13 @@ function liveCanonicalContext(changeId: string): ImpactContext {
     datasetUrn: canonicalDatasetUrn,
     schemaFieldUrn: canonicalSchemaFieldUrn,
     nativeFieldPath: canonicalNativeFieldPath,
-    provenance: [{ ...provenanceEntry("SCHEMA", "get_entities", "resolution"), tool: "search" as const, role: "RESOLUTION" as const }],
+    provenance: [
+      {
+        ...provenanceEntry("SCHEMA", "get_entities", "resolution"),
+        tool: "search" as const,
+        role: "RESOLUTION" as const,
+      },
+    ],
   });
   const schema = createEvidence({
     kind: "SCHEMA",
@@ -124,7 +145,12 @@ function liveCanonicalContext(changeId: string): ImpactContext {
     payload: {
       direction: "DOWNSTREAM",
       fieldLevel: true,
-      nodes: [canonicalDatasetUrn, canonicalAnalyticsStagingUrn, canonicalAnalyticsRevenueUrn, canonicalDashboardUrn],
+      nodes: [
+        canonicalDatasetUrn,
+        canonicalAnalyticsStagingUrn,
+        canonicalAnalyticsRevenueUrn,
+        canonicalDashboardUrn,
+      ],
       segments: [
         {
           granularity: "FIELD",
@@ -186,7 +212,12 @@ function liveCanonicalContext(changeId: string): ImpactContext {
     payload: {
       direction: "DOWNSTREAM",
       fieldLevel: true,
-      nodes: [canonicalDatasetUrn, canonicalAnalyticsStagingUrn, canonicalFraudFeaturesUrn, canonicalFraudModelUrn],
+      nodes: [
+        canonicalDatasetUrn,
+        canonicalAnalyticsStagingUrn,
+        canonicalFraudFeaturesUrn,
+        canonicalFraudModelUrn,
+      ],
       segments: [
         {
           granularity: "FIELD",
@@ -236,7 +267,8 @@ function liveCanonicalContext(changeId: string): ImpactContext {
     targetUrn: canonicalQueryUrn,
     fieldPath: canonicalFieldPath,
     title: "Finance close SYSTEM query",
-    summary: "A cataloged PostgreSQL query subject references analytics.customer_revenue.customer_id.",
+    summary:
+      "A cataloged PostgreSQL query subject references analytics.customer_revenue.customer_id.",
     criticality: "HIGH",
     relatedEvidenceIds: [dashboardPath.id],
     provenance: [
@@ -337,17 +369,22 @@ function liveCanonicalContext(changeId: string): ImpactContext {
 function stubLlmFetch() {
   return vi.stubGlobal(
     "fetch",
-    vi.fn(async () =>
-      new Response(JSON.stringify({ choices: [{ message: { content: MOCK_PLAN_RESPONSE } }] }), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      }),
+    vi.fn(
+      async () =>
+        new Response(JSON.stringify({ choices: [{ message: { content: MOCK_PLAN_RESPONSE } }] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
     ),
   );
 }
 
 function unusedLlm() {
-  return createAgentModel({ baseURL: "http://unused.invalid/v1", model: "unused", apiKey: "unused" });
+  return createAgentModel({
+    baseURL: "http://unused.invalid/v1",
+    model: "unused",
+    apiKey: "unused",
+  });
 }
 
 function baseRunInput(runId: string) {

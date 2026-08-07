@@ -86,14 +86,20 @@ export default async function RunDetailPage({ params }: { params: Promise<{ runI
   };
 
   // Extract candidate info from persisted data
-  const candidate = run.candidateJson as { strategy?: string; artifacts?: Array<{ path: string; kind: string }> } | null;
+  const candidate = run.candidateJson as {
+    strategy?: string;
+    artifacts?: Array<{ path: string; kind: string }>;
+  } | null;
 
   return (
     <div className="mx-auto max-w-7xl px-6 py-6 space-y-6">
       {/* Breadcrumb + header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <Link href="/" className="text-sm text-muted-foreground hover:text-foreground transition-colors">
+          <Link
+            href="/"
+            className="text-sm text-muted-foreground hover:text-foreground transition-colors"
+          >
             Dashboard
           </Link>
           <span className="text-muted-foreground/40">/</span>
@@ -115,7 +121,18 @@ export default async function RunDetailPage({ params }: { params: Promise<{ runI
         <p className="text-sm text-muted-foreground mt-1">
           {run.repository} &middot; {new Date(run.createdAt).toLocaleString()}
           {run.sourcePrUrl && (
-            <> &middot; <a href={run.sourcePrUrl} target="_blank" rel="noopener noreferrer" className="text-status-info hover:underline">Source PR</a></>
+            <>
+              {" "}
+              &middot;{" "}
+              <a
+                href={run.sourcePrUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-status-info hover:underline"
+              >
+                Source PR
+              </a>
+            </>
           )}
         </p>
       </div>
@@ -143,19 +160,22 @@ export default async function RunDetailPage({ params }: { params: Promise<{ runI
               <IconCode className="w-4 h-4 text-muted-foreground" />
               <h3 className="text-sm font-medium">Proposed Change</h3>
             </div>
-            {run.baselineDecision && (
-              <Badge status="allow">{run.baselineDecision}</Badge>
-            )}
+            {run.baselineDecision && <Badge status="allow">{run.baselineDecision}</Badge>}
           </CardHeader>
           <CardBody>
             <div className="rounded-md bg-muted/50 p-3 overflow-x-auto">
               <pre className="text-xs font-mono leading-relaxed">
                 {(run.patch || "No patch data available").split("\n").map((line, i) => (
-                  <div key={i} className={
-                    line.startsWith("+") ? "text-status-allow" :
-                    line.startsWith("-") ? "text-status-block" :
-                    "text-muted-foreground"
-                  }>
+                  <div
+                    key={i}
+                    className={
+                      line.startsWith("+")
+                        ? "text-status-allow"
+                        : line.startsWith("-")
+                          ? "text-status-block"
+                          : "text-muted-foreground"
+                    }
+                  >
                     {line || " "}
                   </div>
                 ))}
@@ -207,11 +227,18 @@ export default async function RunDetailPage({ params }: { params: Promise<{ runI
             {/* Impact consumers from persisted context */}
             {impactConsumers.length > 0 && (
               <div>
-                <p className="text-xs font-medium text-muted-foreground mb-2">Impact Consumers ({impactConsumers.length})</p>
+                <p className="text-xs font-medium text-muted-foreground mb-2">
+                  Impact Consumers ({impactConsumers.length})
+                </p>
                 <div className="space-y-1.5">
                   {impactConsumers.slice(0, 6).map((item) => (
-                    <div key={item.entityUrn} className="flex items-center gap-2 p-1.5 rounded bg-muted/30 text-xs">
-                      <span className="font-mono text-[10px] text-muted-foreground">{kindLabels[item.kind]}</span>
+                    <div
+                      key={item.entityUrn}
+                      className="flex items-center gap-2 p-1.5 rounded bg-muted/30 text-xs"
+                    >
+                      <span className="font-mono text-[10px] text-muted-foreground">
+                        {kindLabels[item.kind]}
+                      </span>
                       <span className="truncate">{item.title}</span>
                     </div>
                   ))}
@@ -222,19 +249,31 @@ export default async function RunDetailPage({ params }: { params: Promise<{ runI
             {/* Triggered rules */}
             {rules.length > 0 && (
               <div>
-                <p className="text-xs font-medium text-muted-foreground mb-2">Policy Rules Triggered</p>
+                <p className="text-xs font-medium text-muted-foreground mb-2">
+                  Policy Rules Triggered
+                </p>
                 <div className="space-y-2">
                   {rules.map((rule) => {
                     const desc = ruleDescriptions[rule];
                     return (
-                      <div key={rule} className="flex items-start gap-2.5 p-2 rounded-md bg-status-block/5">
+                      <div
+                        key={rule}
+                        className="flex items-start gap-2.5 p-2 rounded-md bg-status-block/5"
+                      >
                         <IconAlertCircle className="w-3.5 h-3.5 text-status-block mt-0.5 flex-shrink-0" />
                         <div className="min-w-0">
-                          <span className="text-xs font-mono font-medium text-status-block">{rule}</span>
-                          {desc && <p className="text-[11px] text-muted-foreground mt-0.5">{desc.title}</p>}
+                          <span className="text-xs font-mono font-medium text-status-block">
+                            {rule}
+                          </span>
+                          {desc && (
+                            <p className="text-[11px] text-muted-foreground mt-0.5">{desc.title}</p>
+                          )}
                         </div>
                         {desc && (
-                          <Badge status={desc.severity === "CRITICAL" ? "fail" : "review"} className="ml-auto flex-shrink-0 text-[10px]">
+                          <Badge
+                            status={desc.severity === "CRITICAL" ? "fail" : "review"}
+                            className="ml-auto flex-shrink-0 text-[10px]"
+                          >
                             {desc.severity}
                           </Badge>
                         )}
@@ -248,11 +287,15 @@ export default async function RunDetailPage({ params }: { params: Promise<{ runI
             {/* Stats */}
             <div className="grid grid-cols-2 gap-3">
               <div className="p-2.5 rounded-md bg-muted/50">
-                <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Consumers</p>
+                <p className="text-[10px] text-muted-foreground uppercase tracking-wider">
+                  Consumers
+                </p>
                 <p className="text-lg font-semibold mt-0.5">{run.consumersFound || "—"}</p>
               </div>
               <div className="p-2.5 rounded-md bg-muted/50">
-                <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Evidence</p>
+                <p className="text-[10px] text-muted-foreground uppercase tracking-wider">
+                  Evidence
+                </p>
                 <p className="text-lg font-semibold mt-0.5">{run.evidenceItems || "—"}</p>
               </div>
             </div>
@@ -273,23 +316,35 @@ export default async function RunDetailPage({ params }: { params: Promise<{ runI
               <p className="text-xs text-muted-foreground mb-1">Strategy</p>
               <p className="text-sm font-medium">
                 {candidate?.strategy
-                  ? candidate.strategy.replace(/_/g, " → ").replace("EXPAND → MIGRATE → CONTRACT", "Expand → Migrate → Contract")
+                  ? candidate.strategy
+                      .replace(/_/g, " → ")
+                      .replace("EXPAND → MIGRATE → CONTRACT", "Expand → Migrate → Contract")
                   : "—"}
               </p>
             </div>
 
             <div className="grid grid-cols-2 gap-3">
               <div className="p-2.5 rounded-md bg-muted/50">
-                <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Artifacts</p>
+                <p className="text-[10px] text-muted-foreground uppercase tracking-wider">
+                  Artifacts
+                </p>
                 <p className="text-lg font-semibold mt-0.5">{run.artifactsGenerated || "—"}</p>
               </div>
               <div className="p-2.5 rounded-md bg-muted/50">
-                <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Validation</p>
+                <p className="text-[10px] text-muted-foreground uppercase tracking-wider">
+                  Validation
+                </p>
                 <p className="text-lg font-semibold mt-0.5 flex items-center gap-1">
                   {run.validationReceiptFingerprint ? (
-                    <><IconCheck className="w-4 h-4 text-status-pass" /> <span className="text-sm">PASS</span></>
+                    <>
+                      <IconCheck className="w-4 h-4 text-status-pass" />{" "}
+                      <span className="text-sm">PASS</span>
+                    </>
                   ) : isFailed && run.status === "FAILED_VALIDATION" ? (
-                    <><IconX className="w-4 h-4 text-status-fail" /> <span className="text-sm">FAIL</span></>
+                    <>
+                      <IconX className="w-4 h-4 text-status-fail" />{" "}
+                      <span className="text-sm">FAIL</span>
+                    </>
                   ) : (
                     <span className="text-sm text-muted-foreground">—</span>
                   )}
@@ -303,7 +358,10 @@ export default async function RunDetailPage({ params }: { params: Promise<{ runI
                 <p className="text-xs font-medium text-muted-foreground mb-2">Generated Files</p>
                 <div className="space-y-1">
                   {candidate.artifacts.map((a) => (
-                    <div key={a.path} className="text-[11px] font-mono text-muted-foreground truncate">
+                    <div
+                      key={a.path}
+                      className="text-[11px] font-mono text-muted-foreground truncate"
+                    >
                       {a.path}
                     </div>
                   ))}
@@ -320,7 +378,9 @@ export default async function RunDetailPage({ params }: { params: Promise<{ runI
                   <p className="text-[11px] text-muted-foreground">
                     {run.writebackStatus}
                     {run.writebackReceiptFingerprint && (
-                      <span className="ml-1 font-mono">[{run.writebackReceiptFingerprint.slice(0, 8)}]</span>
+                      <span className="ml-1 font-mono">
+                        [{run.writebackReceiptFingerprint.slice(0, 8)}]
+                      </span>
                     )}
                   </p>
                 </div>
@@ -353,7 +413,9 @@ export default async function RunDetailPage({ params }: { params: Promise<{ runI
             <div>
               <p className="text-sm font-medium">Breaking change prevented</p>
               <p className="text-xs text-muted-foreground mt-0.5">
-                DataHub lineage revealed {run.consumersFound} downstream {run.consumersFound === 1 ? "dependency" : "dependencies"} invisible from the repository.
+                DataHub lineage revealed {run.consumersFound} downstream{" "}
+                {run.consumersFound === 1 ? "dependency" : "dependencies"} invisible from the
+                repository.
                 {run.validationReceiptFingerprint && " A safe migration was validated"}
                 {run.writebackReceiptFingerprint && " and written back to DataHub"}.
               </p>
@@ -368,9 +430,12 @@ export default async function RunDetailPage({ params }: { params: Promise<{ runI
               <IconAlertCircle className="w-5 h-5 text-status-fail" />
             </div>
             <div>
-              <p className="text-sm font-medium">Pipeline halted: {run.status.replace(/^FAILED_/, "").toLowerCase()}</p>
+              <p className="text-sm font-medium">
+                Pipeline halted: {run.status.replace(/^FAILED_/, "").toLowerCase()}
+              </p>
               <p className="text-xs text-muted-foreground mt-0.5">
-                The change was blocked before reaching production. Review the pipeline step above for details.
+                The change was blocked before reaching production. Review the pipeline step above
+                for details.
               </p>
             </div>
           </CardBody>

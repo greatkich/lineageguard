@@ -171,9 +171,7 @@ export function createSimpleRunStore(pool: pg.Pool): SimpleRunStore {
         "source_file_path TEXT",
       ];
       for (const col of columns) {
-        await pool.query(
-          `ALTER TABLE lineageguard.simple_runs ADD COLUMN IF NOT EXISTS ${col}`
-        );
+        await pool.query(`ALTER TABLE lineageguard.simple_runs ADD COLUMN IF NOT EXISTS ${col}`);
       }
     },
 
@@ -293,10 +291,7 @@ export function createSimpleRunStore(pool: pg.Pool): SimpleRunStore {
     },
 
     async get(id): Promise<SimpleRun | null> {
-      const result = await pool.query(
-        "SELECT * FROM lineageguard.simple_runs WHERE id = $1",
-        [id],
-      );
+      const result = await pool.query("SELECT * FROM lineageguard.simple_runs WHERE id = $1", [id]);
       return result.rows[0] ? mapRow(result.rows[0]) : null;
     },
 

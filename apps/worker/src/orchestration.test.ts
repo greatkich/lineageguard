@@ -26,12 +26,22 @@ function jsonResponse(body: unknown, status = 200) {
   });
 }
 
-function reviewInput(overrides: Partial<Parameters<NonNullable<ReturnType<typeof createGitHubPort>>["createReview"]>[0]> = {}) {
+function reviewInput(
+  overrides: Partial<
+    Parameters<NonNullable<ReturnType<typeof createGitHubPort>>["createReview"]>[0]
+  > = {},
+) {
   return {
     runId: "run_test_0000000000000001",
     candidate: {
       strategy: "EXPAND_MIGRATE_CONTRACT",
-      artifacts: [{ path: "docs/migrations/customer-id.md", kind: "MIGRATION_DOCUMENT", content: "# Migration\n" }],
+      artifacts: [
+        {
+          path: "docs/migrations/customer-id.md",
+          kind: "MIGRATION_DOCUMENT",
+          content: "# Migration\n",
+        },
+      ],
     } as never,
     comparison: { transition: "ALLOW→BLOCK", triggeredRuleIds: ["LG001"] } as never,
     context: { evidence: [{ kind: "SCHEMA" }] } as never,
@@ -55,18 +65,24 @@ describe("createGitHubPort", () => {
       vi.fn(async (url: string, init?: RequestInit) => {
         const method = init?.method ?? "GET";
         calls.push({ url, method });
-        if (url.endsWith("/git/ref/heads/main")) return jsonResponse({ object: { sha: "a".repeat(40) } });
+        if (url.endsWith("/git/ref/heads/main"))
+          return jsonResponse({ object: { sha: "a".repeat(40) } });
         if (url.endsWith("/git/blobs")) return jsonResponse({ sha: "blob-sha" });
-        if (url.includes("/git/commits/") && method === "GET") return jsonResponse({ tree: { sha: "tree-sha" } });
+        if (url.includes("/git/commits/") && method === "GET")
+          return jsonResponse({ tree: { sha: "tree-sha" } });
         if (url.endsWith("/git/trees")) return jsonResponse({ sha: "new-tree-sha" });
-        if (url.endsWith("/git/commits") && method === "POST") return jsonResponse({ sha: "c".repeat(40) });
-        if (url.endsWith("/git/refs") && method === "POST") return jsonResponse({ ref: "refs/heads/lineageguard/run-run_test_0000000000000001" });
+        if (url.endsWith("/git/commits") && method === "POST")
+          return jsonResponse({ sha: "c".repeat(40) });
+        if (url.endsWith("/git/refs") && method === "POST")
+          return jsonResponse({ ref: "refs/heads/lineageguard/run-run_test_0000000000000001" });
         if (url.endsWith("/pulls") && method === "POST") {
           // Simulate GitHub rejecting creation because a PR for this head already exists.
           return jsonResponse({ message: "A pull request already exists" }, 422);
         }
         if (url.includes("/pulls?state=open")) {
-          return jsonResponse([{ html_url: "https://github.com/org/walkthrough/pull/7", number: 7 }]);
+          return jsonResponse([
+            { html_url: "https://github.com/org/walkthrough/pull/7", number: 7 },
+          ]);
         }
         throw new Error(`Unexpected fetch: ${method} ${url}`);
       }),
@@ -88,12 +104,16 @@ describe("createGitHubPort", () => {
       "fetch",
       vi.fn(async (url: string, init?: RequestInit) => {
         const method = init?.method ?? "GET";
-        if (url.endsWith("/git/ref/heads/main")) return jsonResponse({ object: { sha: "a".repeat(40) } });
+        if (url.endsWith("/git/ref/heads/main"))
+          return jsonResponse({ object: { sha: "a".repeat(40) } });
         if (url.endsWith("/git/blobs")) return jsonResponse({ sha: "blob-sha" });
-        if (url.includes("/git/commits/") && method === "GET") return jsonResponse({ tree: { sha: "tree-sha" } });
+        if (url.includes("/git/commits/") && method === "GET")
+          return jsonResponse({ tree: { sha: "tree-sha" } });
         if (url.endsWith("/git/trees")) return jsonResponse({ sha: "new-tree-sha" });
-        if (url.endsWith("/git/commits") && method === "POST") return jsonResponse({ sha: "c".repeat(40) });
-        if (url.endsWith("/git/refs") && method === "POST") return jsonResponse({ ref: "refs/heads/x" });
+        if (url.endsWith("/git/commits") && method === "POST")
+          return jsonResponse({ sha: "c".repeat(40) });
+        if (url.endsWith("/git/refs") && method === "POST")
+          return jsonResponse({ ref: "refs/heads/x" });
         if (url.endsWith("/pulls") && method === "POST") {
           return jsonResponse({ message: "Validation failed" }, 422);
         }
@@ -223,7 +243,9 @@ describe("createWritebackPort", () => {
     const port = createWritebackPort();
     if (!port) throw new Error("Writeback port should be configured");
 
-    await expect(port.write(writebackInput())).rejects.toThrow(/Reviewed tag not found on read-back/);
+    await expect(port.write(writebackInput())).rejects.toThrow(
+      /Reviewed tag not found on read-back/,
+    );
     expect(ingestCalls).toBe(2); // tags + document — both attempted before verification caught the mismatch
   });
 
@@ -233,7 +255,11 @@ describe("createWritebackPort", () => {
       aspect: { value: JSON.stringify({ tags: [{ tag: "urn:li:tag:team-finance" }] }) },
     };
     const existingMemoryAspect = {
-      aspect: { value: JSON.stringify({ elements: [{ url: "https://example.invalid", description: "unrelated note" }] }) },
+      aspect: {
+        value: JSON.stringify({
+          elements: [{ url: "https://example.invalid", description: "unrelated note" }],
+        }),
+      },
     };
     let tagBody: { proposal?: { aspect?: { value?: string } } } | undefined;
     let readCount = 0;
@@ -265,14 +291,19 @@ describe("createWritebackPort", () => {
               value: JSON.stringify({
                 elements: [
                   { url: "https://example.invalid", description: "unrelated note" },
-                  { url: "https://github.com/org/walkthrough/pull/1", description: "lineageguard:decision:v1:lineageguard-run_test_0000000000000002" },
+                  {
+                    url: "https://github.com/org/walkthrough/pull/1",
+                    description: "lineageguard:decision:v1:lineageguard-run_test_0000000000000002",
+                  },
                 ],
               }),
             },
           });
         }
         if (url.includes("ingestProposal")) {
-          const body = JSON.parse((init?.body as string) ?? "{}") as { proposal?: { aspectName?: string; aspect?: { value?: string } } };
+          const body = JSON.parse((init?.body as string) ?? "{}") as {
+            proposal?: { aspectName?: string; aspect?: { value?: string } };
+          };
           if (body.proposal?.aspectName === "globalTags") tagBody = body;
           return jsonResponse({ status: "ok" });
         }
@@ -285,9 +316,13 @@ describe("createWritebackPort", () => {
     const result = await port.write(writebackInput());
 
     expect(result.status).toBe("SUCCEEDED");
-    const writtenTags = JSON.parse(tagBody?.proposal?.aspect?.value ?? "{}") as { tags?: Array<{ tag: string }> };
+    const writtenTags = JSON.parse(tagBody?.proposal?.aspect?.value ?? "{}") as {
+      tags?: Array<{ tag: string }>;
+    };
     expect(writtenTags.tags?.some((t) => t.tag === "urn:li:tag:team-finance")).toBe(true);
-    expect(writtenTags.tags?.some((t) => t.tag === "urn:li:tag:lineageguard-canonical.Reviewed")).toBe(true);
+    expect(
+      writtenTags.tags?.some((t) => t.tag === "urn:li:tag:lineageguard-canonical.Reviewed"),
+    ).toBe(true);
   });
 
   it("is idempotent: skips re-writing when the decision marker and tag already exist", async () => {
@@ -303,14 +338,22 @@ describe("createWritebackPort", () => {
         }
         if (method === "GET" && url.includes("aspect=globalTags")) {
           return jsonResponse({
-            aspect: { value: JSON.stringify({ tags: [{ tag: "urn:li:tag:lineageguard-canonical.Reviewed" }] }) },
+            aspect: {
+              value: JSON.stringify({
+                tags: [{ tag: "urn:li:tag:lineageguard-canonical.Reviewed" }],
+              }),
+            },
           });
         }
         if (method === "GET" && url.includes("aspect=institutionalMemory")) {
           return jsonResponse({
             aspect: {
               value: JSON.stringify({
-                elements: [{ description: "lineageguard:decision:v1:lineageguard-run_test_0000000000000002" }],
+                elements: [
+                  {
+                    description: "lineageguard:decision:v1:lineageguard-run_test_0000000000000002",
+                  },
+                ],
               }),
             },
           });

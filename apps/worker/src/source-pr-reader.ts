@@ -36,7 +36,9 @@ export async function readSourcePR(options: {
   });
   if (!prRes.ok) {
     const text = await prRes.text().catch(() => "");
-    throw new Error(`Failed to read source PR #${prNumber}: HTTP ${prRes.status} — ${text.slice(0, 200)}`);
+    throw new Error(
+      `Failed to read source PR #${prNumber}: HTTP ${prRes.status} — ${text.slice(0, 200)}`,
+    );
   }
   const pr = (await prRes.json()) as {
     number: number;
@@ -46,13 +48,16 @@ export async function readSourcePR(options: {
   };
 
   // Fetch changed files
-  const filesRes = await fetch(`${apiBase}/repos/${owner}/${repo}/pulls/${prNumber}/files?per_page=100`, {
-    headers: {
-      Accept: "application/vnd.github+json",
-      Authorization: `Bearer ${token}`,
-      "X-GitHub-Api-Version": "2022-11-28",
+  const filesRes = await fetch(
+    `${apiBase}/repos/${owner}/${repo}/pulls/${prNumber}/files?per_page=100`,
+    {
+      headers: {
+        Accept: "application/vnd.github+json",
+        Authorization: `Bearer ${token}`,
+        "X-GitHub-Api-Version": "2022-11-28",
+      },
     },
-  });
+  );
   if (!filesRes.ok) {
     throw new Error(`Failed to read source PR files: HTTP ${filesRes.status}`);
   }
@@ -83,10 +88,7 @@ export async function readSourcePR(options: {
  *
  * Returns null if no single canonical SQL file is found.
  */
-export function buildSourceChange(
-  info: SourcePRInfo,
-  repository: string,
-): SourceChange | null {
+export function buildSourceChange(info: SourcePRInfo, repository: string): SourceChange | null {
   const renamePattern = /RENAME\s+COLUMN\s+customer_id\s+TO\s+buyer_id/i;
   const sqlPatches = info.patches.filter(
     (p) => p.filename.endsWith(".sql") && renamePattern.test(p.patch),

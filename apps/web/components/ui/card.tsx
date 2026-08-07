@@ -10,22 +10,19 @@ export function Card({ className, children }: { className?: string; children: Re
 }
 
 export function CardHeader({ className, children }: { className?: string; children: ReactNode }) {
-  return (
-    <div className={cn("px-5 py-4 border-b border-border", className)}>
-      {children}
-    </div>
-  );
+  return <div className={cn("px-5 py-4 border-b border-border", className)}>{children}</div>;
 }
 
 export function CardBody({ className, children }: { className?: string; children: ReactNode }) {
-  return (
-    <div className={cn("px-5 py-4", className)}>
-      {children}
-    </div>
-  );
+  return <div className={cn("px-5 py-4", className)}>{children}</div>;
 }
 
-export function StatCard({ label, value, icon, accent }: {
+export function StatCard({
+  label,
+  value,
+  icon,
+  accent,
+}: {
   label: string;
   value: string | number;
   icon: ReactNode;
@@ -46,7 +43,9 @@ export function StatCard({ label, value, icon, accent }: {
           {icon}
         </div>
         <div>
-          <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide">{label}</p>
+          <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide">
+            {label}
+          </p>
           <p className="text-2xl font-semibold tracking-tight mt-0.5">{value}</p>
         </div>
       </CardBody>

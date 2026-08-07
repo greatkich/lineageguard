@@ -13,7 +13,10 @@ export interface PlanMigrationInput {
 
 function extractJson(text: string): unknown {
   // Strip markdown code fences if present
-  const stripped = text.replace(/^```(?:json)?\n?/m, "").replace(/\n?```$/m, "").trim();
+  const stripped = text
+    .replace(/^```(?:json)?\n?/m, "")
+    .replace(/\n?```$/m, "")
+    .trim();
   // Try direct parse first
   try {
     return JSON.parse(stripped);
@@ -28,11 +31,12 @@ export async function planMigration(
   ctx: StepContext,
   input: PlanMigrationInput,
 ): Promise<PlanMigrationResult> {
-  const consumers = (input.context as any).evidence?.map((evidence: any) => ({
-    name: evidence.title ?? evidence.entityName ?? "unknown",
-    type: evidence.kind,
-    criticality: evidence.criticality,
-  })) ?? [];
+  const consumers =
+    (input.context as any).evidence?.map((evidence: any) => ({
+      name: evidence.title ?? evidence.entityName ?? "unknown",
+      type: evidence.kind,
+      criticality: evidence.criticality,
+    })) ?? [];
 
   const prompt = migrationPlanPrompt({
     table: input.table,
@@ -44,7 +48,9 @@ export async function planMigration(
 
   const { text } = await generateText({
     model: ctx.llm,
-    prompt: prompt + "\n\nRespond with ONLY a JSON object matching this schema: {strategy: string, steps: [{order: number, action: string, description: string}], rationale: string}. No markdown, no explanation.",
+    prompt:
+      prompt +
+      "\n\nRespond with ONLY a JSON object matching this schema: {strategy: string, steps: [{order: number, action: string, description: string}], rationale: string}. No markdown, no explanation.",
   });
 
   const raw = extractJson(text);

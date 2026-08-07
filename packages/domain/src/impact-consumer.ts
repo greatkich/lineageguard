@@ -28,7 +28,11 @@ export interface UnmanagedQueryConsumer extends BaseConsumer {
   kind: "UNMANAGED_QUERY";
 }
 
-export type ImpactConsumer = DataModelConsumer | DashboardConsumer | MlConsumer | UnmanagedQueryConsumer;
+export type ImpactConsumer =
+  | DataModelConsumer
+  | DashboardConsumer
+  | MlConsumer
+  | UnmanagedQueryConsumer;
 
 /**
  * Derives exactly the canonical impact consumer groups from DataHub evidence.
