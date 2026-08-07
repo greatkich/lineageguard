@@ -220,21 +220,21 @@ describe("canonical impact evidence", () => {
       }).success,
     ).toBe(false);
     expect(first.impactContextFingerprint).toBe(
-      "fc5ce646e9317fd4314f4356f214a12eeddccfb13bd19af6c3eb7c0a9a44c76f",
+      "14e335290bf5f7123e0cc44037182541b8938acd9500e9760fff28ef0bdd04ff",
     );
     expect(first.collectionFingerprint).toBe(
-      "eff48edf5c15c229b478229c652beac14f591b7cae1ba75415189c7161cb06cb",
+      "146bd20828068b3df98ef0ddfd61dff66cc13f59d97b7feee9836143c1ac0431",
     );
     expect(first.evidence.map((item) => `${item.kind}:${item.id}`)).toEqual([
       "SCHEMA:ev_09d0ce72de399bd52bd82247",
       "QUERY_USAGE:ev_171e9e739d3d518e46aad9ee",
+      "OWNER:ev_3c7004115fc0597e35a9af8e",
       "DASHBOARD:ev_59eb5c12bc8d30556ca933fe",
-      "OWNER:ev_6978b44631d58088fb428f8b",
       "LINEAGE_PATH:ev_9e907158dba3dd3b5ea635af",
-      "ML_MODEL:ev_9fcccd9cd20afda2f0635602",
       "LINEAGE_PATH:ev_a193c7a6f647028a5d17fbac",
       "GLOSSARY_TERM:ev_ba2121f8360a611382d3a157",
       "OWNER:ev_d4164db054a4481b94a20931",
+      "ML_MODEL:ev_e139c2bb47d3dd57af36b4b9",
       "OWNER:ev_e81b6d759a2158b1562bc984",
     ]);
     expect(first.evidence.some((item) => item.kind === "SCHEMA")).toBe(true);

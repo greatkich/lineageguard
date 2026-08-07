@@ -268,6 +268,18 @@ const dashboardEvidenceSchema = z
   })
   .strict();
 
+const trainingDataReceiptSchema = z
+  .object({
+    aspectName: z.literal("trainingData"),
+    credentialClass: z.literal("READ"),
+    endpoint: z.string().min(1).max(2_048),
+    modelUrn: urnSchema,
+    provenDatasetUrn: urnSchema,
+    responseSha256: fingerprintSchema,
+    retrievedAt: isoDateTimeSchema,
+  })
+  .strict();
+
 const modelEvidenceSchema = z
   .object({
     ...baseEvidenceShape,
@@ -281,6 +293,7 @@ const modelEvidenceSchema = z
         ownerUrns: z.array(urnSchema).max(20),
         featureDatasetUrn: urnSchema,
         featureField: z.string().min(1).max(500),
+        trainingDataReceipt: trainingDataReceiptSchema,
       })
       .strict(),
   })
@@ -347,7 +360,27 @@ const evidenceUnionSchema = z.discriminatedUnion("kind", [
 export type EvidenceItem = z.infer<typeof evidenceUnionSchema>;
 export type EvidenceKind = EvidenceItem["kind"];
 
-function normalizedEvidenceIdentity(item: Omit<EvidenceItem, "fingerprint" | "id">) {
+/**
+ * Reduces a payload to its semantically meaningful shape. A retrieval receipt records when and how
+ * a fact was observed; those details are bound by the collection fingerprint, not by semantic
+ * identity, so the same proven relationship yields a stable fingerprint across repeated live runs
+ * and across environments serving different GMS hosts.
+ */
+function semanticPayload(item: EvidenceDraft) {
+  if (item.kind !== "ML_MODEL") return item.payload;
+  const { trainingDataReceipt, ...rest } = item.payload;
+  return {
+    ...rest,
+    trainingDataProof: {
+      aspectName: trainingDataReceipt.aspectName,
+      credentialClass: trainingDataReceipt.credentialClass,
+      modelUrn: trainingDataReceipt.modelUrn,
+      provenDatasetUrn: trainingDataReceipt.provenDatasetUrn,
+    },
+  };
+}
+
+function normalizedEvidenceIdentity(item: EvidenceDraft) {
   const semanticProvenance = item.provenance.reduce<
     Array<Pick<z.infer<typeof evidenceProvenanceSchema>, "source" | "tool" | "role">>
   >((steps, entry) => {
@@ -370,7 +403,7 @@ function normalizedEvidenceIdentity(item: Omit<EvidenceItem, "fingerprint" | "id
     title: item.title,
     summary: item.summary,
     criticality: item.criticality,
-    payload: item.payload,
+    payload: semanticPayload(item),
     relatedEvidenceIds: [...item.relatedEvidenceIds].sort(),
     provenance: semanticProvenance,
   };
@@ -819,6 +852,16 @@ export const impactContextSchema = z
             index,
           ]);
         }
+        if (
+          item.payload.trainingDataReceipt.modelUrn !== item.payload.modelUrn ||
+          item.payload.trainingDataReceipt.provenDatasetUrn !== item.payload.featureDatasetUrn
+        ) {
+          issue(
+            refinement,
+            "ML model training data receipt does not match the model/feature relationship",
+            ["evidence", index, "payload", "trainingDataReceipt"],
+          );
+        }
       }
       if (item.kind === "QUERY_USAGE") {
         const relatedPathId =
@@ -945,6 +988,10 @@ export const impactContextSchema = z
           JSON.stringify(models[0]?.payload.ownerUrns),
         ) ||
         models[0]?.criticality !== "CRITICAL" ||
+        models[0]?.payload.trainingDataReceipt.modelUrn !== canonicalFraudModelUrn ||
+        models[0]?.payload.trainingDataReceipt.provenDatasetUrn !== canonicalFraudFeaturesUrn ||
+        models[0]?.payload.trainingDataReceipt.aspectName !== "trainingData" ||
+        models[0]?.payload.trainingDataReceipt.credentialClass !== "READ" ||
         queries.length !== 1 ||
         queries[0]?.payload.queryUrn !== canonicalQueryUrn ||
         queries[0]?.payload.subjectDatasetUrn !== canonicalAnalyticsRevenueUrn ||
@@ -1198,6 +1245,15 @@ export function createCanonicalImpactContextFixture(changeId: string): ImpactCon
       ownerUrns: [canonicalRiskOwnerUrn],
       featureDatasetUrn: canonicalFraudFeaturesUrn,
       featureField: "fraud.customer_features.customer_id",
+      trainingDataReceipt: {
+        aspectName: "trainingData",
+        credentialClass: "READ",
+        endpoint: `http://127.0.0.1:8080/openapi/v3/entity/mlModel/${encodeURIComponent(canonicalFraudModelUrn)}/trainingData`,
+        modelUrn: canonicalFraudModelUrn,
+        provenDatasetUrn: canonicalFraudFeaturesUrn,
+        responseSha256: sha256("canonical-training-data-response"),
+        retrievedAt,
+      },
     },
   });
   const query = createEvidence({

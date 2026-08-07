@@ -29,18 +29,34 @@ FROM analytics.customer_revenue
 WHERE lifetime_revenue >= 100
 ORDER BY lifetime_revenue DESC;`;
 
+const canonicalTrainingDataResponse = JSON.stringify({
+  value: {
+    trainingData: [{ datasetUrn: canonicalFraudFeaturesUrn, motivation: "FEATURE_TABLE" }],
+  },
+});
+
 const targets: CanonicalCollectionTargets = {
   dashboardUrn: canonicalDashboardUrn,
   database: "lineageguard",
   dataset: "orders",
   environment: "PROD",
+  fetchImpl: (async () => ({
+    ok: true,
+    status: 200,
+    headers: new Headers({
+      "content-length": String(new TextEncoder().encode(canonicalTrainingDataResponse).length),
+    }),
+    text: async () => canonicalTrainingDataResponse,
+  })) as unknown as typeof fetch,
   field,
   fraudFeaturesUrn: canonicalFraudFeaturesUrn,
   glossaryTermUrn: canonicalGlossaryTermUrn,
+  gmsBaseUrl: "http://127.0.0.1:8080",
   modelUrn: canonicalFraudModelUrn,
   platform: "postgres",
   platformInstance: "lineageguard-canonical",
   queryUrn: canonicalQueryUrn,
+  readToken: "test-read-token-12345678",
   revenueUrn: canonicalAnalyticsRevenueUrn,
   schema: "commerce",
   sourceUrn: canonicalDatasetUrn,

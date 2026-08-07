@@ -259,6 +259,15 @@ function liveCanonicalContext(changeId: string): ImpactContext {
       ownerUrns: [canonicalRiskOwnerUrn],
       featureDatasetUrn: canonicalFraudFeaturesUrn,
       featureField: "fraud.customer_features.customer_id",
+      trainingDataReceipt: {
+        aspectName: "trainingData",
+        credentialClass: "READ",
+        endpoint: `http://127.0.0.1:8080/openapi/v3/entity/mlModel/${encodeURIComponent(canonicalFraudModelUrn)}/trainingData`,
+        modelUrn: canonicalFraudModelUrn,
+        provenDatasetUrn: canonicalFraudFeaturesUrn,
+        responseSha256: "a".repeat(64),
+        retrievedAt: "2026-08-04T08:00:00.000Z",
+      },
     },
   });
   const query = createEvidence({

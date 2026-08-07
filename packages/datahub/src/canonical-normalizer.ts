@@ -580,6 +580,14 @@ export function normalizeCanonicalLiveCollection(
     "DATASET",
     "MLMODEL",
   ]);
+  if (!observations.trainingDataProof.proven) {
+    throw new DataHubAdapterError(
+      "NOT_FOUND",
+      "Canonical DataHub ML model training data relationship was not proven. " +
+        "The TrainingData aspect on Fraud Model v3 does not reference the expected feature dataset.",
+    );
+  }
+  const trainingDataReceipt = observations.trainingDataProof.proof;
   normalizeQueryDiscovery(observations.queryDiscovery);
   normalizeQueryDetails(observations.queryDetails);
   normalizeGlossaryDetails(observations.glossaryDetails);
@@ -705,6 +713,7 @@ export function normalizeCanonicalLiveCollection(
       ownerUrns: modelAsset.owner === undefined ? [] : [modelAsset.owner.urn],
       featureDatasetUrn: canonicalFraudFeaturesUrn,
       featureField: "fraud.customer_features.customer_id",
+      trainingDataReceipt,
     },
   });
   const query = createEvidence({

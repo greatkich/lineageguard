@@ -1,5 +1,6 @@
 import { canonicalAnalyticsStagingUrn } from "@lineageguard/domain";
 import { z } from "zod";
+import { type TrainingDataResult, readTrainingDataAspect } from "./aspect-reader.js";
 import { DataHubAdapterError } from "./errors.js";
 import {
   type OfficialEntity,
@@ -44,17 +45,22 @@ const targetsSchema = z
     field: identifier,
     fraudFeaturesUrn: urn,
     glossaryTermUrn: urn,
+    gmsBaseUrl: z.string().min(1).max(2_048),
     modelUrn: urn,
     platform: platformIdentifier,
     platformInstance: identifier,
     queryUrn: urn,
+    readToken: z.string().min(8).max(4_096),
     revenueUrn: urn,
     schema: identifier,
     sourceUrn: urn,
   })
   .strict();
 
-export type CanonicalCollectionTargets = z.infer<typeof targetsSchema>;
+export type CanonicalCollectionTargets = z.infer<typeof targetsSchema> & {
+  /** Injected fetch implementation for testing. Uses global `fetch` when omitted. */
+  fetchImpl?: typeof fetch;
+};
 
 export interface CanonicalToolInvoker {
   invoke(
@@ -87,6 +93,7 @@ export type CanonicalObservations = Readonly<{
   revenueDetails: OfficialObservation<readonly OfficialEntity[]>;
   schemaFieldPages: readonly OfficialObservation<OfficialSchemaFieldsPage>[];
   schemaFields: OfficialObservation<OfficialSchemaFieldsPage>;
+  trainingDataProof: TrainingDataResult;
 }>;
 
 async function observe<T>(
@@ -118,14 +125,15 @@ async function observe<T>(
 }
 
 function safeTargets(input: CanonicalCollectionTargets): CanonicalCollectionTargets {
-  const parsed = targetsSchema.safeParse(input);
+  const { fetchImpl, ...zodFields } = input;
+  const parsed = targetsSchema.safeParse(zodFields);
   if (!parsed.success) {
     throw new DataHubAdapterError(
       "CONFIGURATION",
       "Canonical DataHub collection targets are invalid.",
     );
   }
-  return parsed.data;
+  return { ...parsed.data, ...(fetchImpl === undefined ? {} : { fetchImpl }) };
 }
 
 function requireUniqueResolution(
@@ -598,10 +606,6 @@ export async function collectCanonicalObservations(
     },
     parsePathResult,
   );
-  // TODO: Task 3 implements truthful ML proof via TrainingData aspect reader.
-  // mlModel entities don't support UpstreamLineage, so get_lineage_paths_between
-  // returns isError "No lineage found" here and this observation fails — expected
-  // until Task 3 replaces it with a reader over the TrainingData aspect.
   const fraudEntityPath = await observe(
     invoker,
     "get_lineage_paths_between",
@@ -612,6 +616,13 @@ export async function collectCanonicalObservations(
     },
     parsePathResult,
   );
+  const trainingDataProof = await readTrainingDataAspect({
+    gmsBaseUrl: targets.gmsBaseUrl,
+    readToken: targets.readToken,
+    modelUrn: targets.modelUrn,
+    expectedDatasetUrn: targets.fraudFeaturesUrn,
+    ...(targets.fetchImpl === undefined ? {} : { fetchImpl: targets.fetchImpl }),
+  });
   const query = await collectQueryDiscovery(invoker, targets);
   const queryDiscovery = query.proof;
   const queryDiscoveryPages = query.pages;
@@ -665,5 +676,6 @@ export async function collectCanonicalObservations(
     revenueDetails,
     schemaFieldPages,
     schemaFields,
+    trainingDataProof,
   });
 }

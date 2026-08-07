@@ -21,18 +21,36 @@ const queryUrn =
   "urn:li:query:lineageguard-canonical.system.e4bbe7075754d05de68f76ff0a9b127532e044da8ab0a357bce7e0d41f7ad22c";
 const glossaryTermUrn = "urn:li:glossaryTerm:lineageguard-canonical.CustomerIdentifier";
 
+const canonicalTrainingDataBody = JSON.stringify({
+  value: {
+    trainingData: [{ datasetUrn: fraudFeaturesUrn, motivation: "FEATURE_TABLE" }],
+  },
+});
+
+const testFetchImpl = (async () => ({
+  ok: true,
+  status: 200,
+  headers: new Headers({
+    "content-length": String(new TextEncoder().encode(canonicalTrainingDataBody).length),
+  }),
+  text: async () => canonicalTrainingDataBody,
+})) as unknown as typeof fetch;
+
 const targets: CanonicalCollectionTargets = {
   dashboardUrn,
   database: "lineageguard",
   dataset: "orders",
   environment: "PROD",
+  fetchImpl: testFetchImpl,
   field: "customer_id",
   fraudFeaturesUrn,
   glossaryTermUrn,
+  gmsBaseUrl: "http://127.0.0.1:8080",
   modelUrn,
   platform: "postgres",
   platformInstance: "lineageguard-canonical",
   queryUrn,
+  readToken: "test-read-token-12345678",
   revenueUrn,
   schema: "commerce",
   sourceUrn,
