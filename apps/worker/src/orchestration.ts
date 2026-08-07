@@ -23,6 +23,12 @@ import {
 } from "@lineageguard/agent";
 import type { SimpleRunStore, SimpleRunUpdateExtra } from "@lineageguard/db";
 import { canonicalBaseFixtureSql } from "./canonical-base-fixture.js";
+import {
+  canonicalCandidateFingerprint,
+  decisionMarker,
+  generatedBranchName,
+  sourcePrNumberFromEnv,
+} from "./effect-identity.js";
 
 // ---------------------------------------------------------------------------
 // Phase B: DataHub context port (MCP stdio → full ImpactContext)
@@ -309,7 +315,11 @@ export function createGitHubPort(): AgentGitHubPort | undefined {
   return {
     async createReview(input: GitHubReviewInput): Promise<GitHubReviewOutput> {
       const { createHash } = await import("node:crypto");
-      const branchName = `lineageguard/run-${input.runId}`;
+      // Content-addressed publication identity. Derived from the candidate's stable source
+      // bindings, never from the run id: repeated rehearsals of the same source and candidate must
+      // reconcile onto one branch and one draft PR instead of accumulating a PR per run.
+      const candidateFingerprint = canonicalCandidateFingerprint(input.candidate);
+      const branchName = generatedBranchName(candidateFingerprint, sourcePrNumberFromEnv());
       const baseBranch = process.env.GITHUB_BASE_BRANCH ?? "main";
       const apiBase = "https://api.github.com";
 
@@ -517,9 +527,9 @@ export function createWritebackPort(): AgentWritebackPort | undefined {
       }
 
       const documentContent = [
-        `Marker: lineageguard:decision:v1:lineageguard-${input.runId}`,
+        `Marker: ${decisionMarker(canonicalCandidateFingerprint(input.candidate))}`,
         `Decision: ${input.comparison.grounded.decision}`,
-        `Run: ${input.runId}`,
+        `Latest verified run: ${input.runId}`,
         `Source field: customer_id`,
         `Replacement field: buyer_id`,
         `Compatibility window: 30 days`,
@@ -568,7 +578,8 @@ export function createWritebackPort(): AgentWritebackPort | undefined {
         const existingElements = existingMemory.elements ?? [];
 
         // Check idempotency: if our marker already exists, skip write
-        const markerPhrase = `lineageguard:decision:v1:lineageguard-${input.runId}`;
+        const decisionFingerprint = canonicalCandidateFingerprint(input.candidate);
+        const markerPhrase = decisionMarker(decisionFingerprint);
         const alreadyWritten = existingElements.some((el) =>
           el.description?.includes(markerPhrase),
         );

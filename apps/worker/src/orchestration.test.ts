@@ -35,6 +35,11 @@ function reviewInput(
     runId: "run_test_0000000000000001",
     candidate: {
       strategy: "EXPAND_MIGRATE_CONTRACT",
+      sourceChangeFingerprint: "1".repeat(64),
+      sourcePatchFingerprint: "2".repeat(64),
+      sourceImpactContextFingerprint: "3".repeat(64),
+      sourceDecision: "BLOCK",
+      sourceEvidenceIds: ["ev_0123456789abcdef01234567"],
       artifacts: [
         {
           path: "docs/migrations/customer-id.md",
@@ -157,7 +162,15 @@ function writebackInput() {
     runId: "run_test_0000000000000002",
     comparison: { grounded: { decision: "BLOCK" }, triggeredRuleIds: ["LG001"] } as never,
     context: { evidence: [] } as never,
-    candidate: { strategy: "EXPAND_MIGRATE_CONTRACT" } as never,
+    candidate: {
+      strategy: "EXPAND_MIGRATE_CONTRACT",
+      sourceChangeFingerprint: "1".repeat(64),
+      sourcePatchFingerprint: "2".repeat(64),
+      sourceImpactContextFingerprint: "3".repeat(64),
+      sourceDecision: "BLOCK",
+      sourceEvidenceIds: ["ev_0123456789abcdef01234567"],
+      artifacts: [],
+    } as never,
     githubPrUrl: "https://github.com/org/walkthrough/pull/1",
     githubReceiptFingerprint: "f".repeat(64),
     validationReceiptFingerprint: "e".repeat(64),
@@ -293,7 +306,7 @@ describe("createWritebackPort", () => {
                   { url: "https://example.invalid", description: "unrelated note" },
                   {
                     url: "https://github.com/org/walkthrough/pull/1",
-                    description: "lineageguard:decision:v1:lineageguard-run_test_0000000000000002",
+                    description: "lineageguard:decision:v1:candidate-46c580779287ba5f",
                   },
                 ],
               }),
@@ -351,7 +364,7 @@ describe("createWritebackPort", () => {
               value: JSON.stringify({
                 elements: [
                   {
-                    description: "lineageguard:decision:v1:lineageguard-run_test_0000000000000002",
+                    description: "lineageguard:decision:v1:candidate-46c580779287ba5f",
                   },
                 ],
               }),

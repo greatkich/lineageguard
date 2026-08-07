@@ -44,7 +44,7 @@ export function canonicalGitHubEffect(
     repository: input.repository,
     baseBranch: input.baseBranch,
     baseSha: input.baseSha,
-    headBranch: deterministicHead(input.runId),
+    headBranch: deterministicHead(input.candidateFingerprint, input.sourcePrNumber),
     target: input.target,
     idempotencyKey: input.idempotencyKey,
     intentFingerprint: input.intentFingerprint,

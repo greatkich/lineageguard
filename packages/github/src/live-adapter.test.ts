@@ -196,7 +196,7 @@ describe("LiveGitHubPort", () => {
       repository: "lineageguard/demo",
       baseBranch: "main",
       baseSha: sha("a"),
-      headBranch: "lineageguard/run_0123456789abcdef01234567",
+      headBranch: "lineageguard/generated/222222222222",
       headSha: sha("e"),
       prNumber: 17,
       prUrl: "https://github.com/lineageguard/demo/pull/17",
@@ -209,18 +209,18 @@ describe("LiveGitHubPort", () => {
     expect(transport.calls.map(({ method, url }) => `${method} ${url}`)).toEqual([
       "GET https://api.github.com/repos/lineageguard/demo",
       "GET https://api.github.com/repos/lineageguard/demo/git/ref/heads/main",
-      "GET https://api.github.com/repos/lineageguard/demo/git/ref/heads/lineageguard%2Frun_0123456789abcdef01234567",
+      "GET https://api.github.com/repos/lineageguard/demo/git/ref/heads/lineageguard%2Fgenerated%2F222222222222",
       `GET https://api.github.com/repos/lineageguard/demo/git/commits/${sha("a")}`,
       `GET https://api.github.com/repos/lineageguard/demo/git/trees/${sha("b")}?recursive=1`,
       "POST https://api.github.com/repos/lineageguard/demo/git/blobs",
       "POST https://api.github.com/repos/lineageguard/demo/git/trees",
       "POST https://api.github.com/repos/lineageguard/demo/git/commits",
       "POST https://api.github.com/repos/lineageguard/demo/git/refs",
-      "GET https://api.github.com/repos/lineageguard/demo/pulls?state=all&head=lineageguard%3Alineageguard%2Frun_0123456789abcdef01234567&base=main&per_page=2",
+      "GET https://api.github.com/repos/lineageguard/demo/pulls?state=all&head=lineageguard%3Alineageguard%2Fgenerated%2F222222222222&base=main&per_page=2",
       "POST https://api.github.com/repos/lineageguard/demo/pulls",
     ]);
     expect(transport.calls.find((call) => call.url.endsWith("/git/refs"))?.body).toEqual({
-      ref: "refs/heads/lineageguard/run_0123456789abcdef01234567",
+      ref: "refs/heads/lineageguard/generated/222222222222",
       sha: sha("e"),
     });
     expect(
@@ -228,7 +228,7 @@ describe("LiveGitHubPort", () => {
     ).toMatchObject({
       draft: true,
       base: "main",
-      head: "lineageguard/run_0123456789abcdef01234567",
+      head: "lineageguard/generated/222222222222",
     });
   });
 

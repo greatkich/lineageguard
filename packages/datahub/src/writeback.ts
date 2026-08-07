@@ -287,16 +287,19 @@ function deriveInternalDataHubWritebackPayloads(
   const request = requestObjectSchema
     .omit({ documentPayloadHash: true, tagPayloadHash: true })
     .parse(candidate);
+  // Institutional memory is keyed on the semantic decision, not on the run that produced it.
+  // A run-scoped key created a new decision record per rehearsal, so repeated identical runs
+  // accumulated duplicate metadata instead of converging on one remembered decision.
   const id = stableId("lineageguard-migration-decision", {
-    runId: request.runId,
+    candidateFingerprint: request.candidateFingerprint,
     sourceUrn: request.sourceUrn,
   });
   const marker = `lineageguard:decision:v1:${request.idempotencyKey}`;
-  const title = `LineageGuard migration decision · ${request.runId}`;
+  const title = `LineageGuard migration decision · ${request.candidateFingerprint.slice(0, 12)}`;
   const content = [
     `Marker: ${marker}`,
     `Decision: ${request.decision}`,
-    `Run: ${request.runId}`,
+    `Latest verified run: ${request.runId}`,
     `Reasons: ${request.reasonEvidenceIds.join(", ")}`,
     `Candidate: ${request.candidateFingerprint}`,
     `Artifact: ${request.artifactFingerprint}`,

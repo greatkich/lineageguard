@@ -503,7 +503,7 @@ export class LiveGitHubPort implements GitHubPort<GitHubReviewRequest> {
   }
 
   private async getHead(input: GitHubReviewRequest): Promise<Json | undefined> {
-    const head = deterministicHead(input.runId);
+    const head = deterministicHead(input.candidateFingerprint, input.sourcePrNumber);
     const response = await this.call(
       "GET",
       `/git/ref/heads/${encodeURIComponent(head)}`,
@@ -515,7 +515,7 @@ export class LiveGitHubPort implements GitHubPort<GitHubReviewRequest> {
   }
 
   private async pulls(input: GitHubReviewRequest): Promise<unknown[]> {
-    const head = deterministicHead(input.runId);
+    const head = deterministicHead(input.candidateFingerprint, input.sourcePrNumber);
     const query = `?state=all&head=${encodeURIComponent(`${this.#options.owner}:${head}`)}&base=${encodeURIComponent(input.baseBranch)}&per_page=2`;
     const response = await this.call("GET", `/pulls${query}`, "RECONCILE");
     if (!Array.isArray(response.body) || response.body.length > 2)
@@ -554,7 +554,7 @@ export class LiveGitHubPort implements GitHubPort<GitHubReviewRequest> {
       text(base?.ref) !== input.baseBranch ||
       text(base?.sha) !== input.baseSha ||
       text(baseRepository?.full_name) !== input.repository ||
-      text(head?.ref) !== deterministicHead(input.runId) ||
+      text(head?.ref) !== deterministicHead(input.candidateFingerprint, input.sourcePrNumber) ||
       text(head?.sha) !== headSha ||
       text(headRepository?.full_name) !== input.repository ||
       !Number.isFinite(createdTime) ||
@@ -575,7 +575,7 @@ export class LiveGitHubPort implements GitHubPort<GitHubReviewRequest> {
       repository: input.repository,
       baseBranch: input.baseBranch,
       baseSha: input.baseSha,
-      headBranch: deterministicHead(input.runId),
+      headBranch: deterministicHead(input.candidateFingerprint, input.sourcePrNumber),
       headSha,
       prNumber: number,
       prUrl: url,
@@ -602,7 +602,8 @@ export class LiveGitHubPort implements GitHubPort<GitHubReviewRequest> {
     const refObject = object(ref.object);
     const headSha = text(refObject?.sha);
     if (
-      text(ref.ref) !== `refs/heads/${deterministicHead(input.runId)}` ||
+      text(ref.ref) !==
+        `refs/heads/${deterministicHead(input.candidateFingerprint, input.sourcePrNumber)}` ||
       text(refObject?.type) !== "commit" ||
       !headSha ||
       !gitObjectId.test(headSha)
@@ -800,13 +801,14 @@ export class LiveGitHubPort implements GitHubPort<GitHubReviewRequest> {
     const createdRef = object(
       (
         await this.call("POST", "/git/refs", "CREATE_REF", {
-          ref: `refs/heads/${deterministicHead(input.runId)}`,
+          ref: `refs/heads/${deterministicHead(input.candidateFingerprint, input.sourcePrNumber)}`,
           sha: headSha,
         })
       ).body,
     );
     if (
-      text(createdRef?.ref) !== `refs/heads/${deterministicHead(input.runId)}` ||
+      text(createdRef?.ref) !==
+        `refs/heads/${deterministicHead(input.candidateFingerprint, input.sourcePrNumber)}` ||
       text(object(createdRef?.object)?.sha) !== headSha
     )
       throw new GitHubEffectError({
@@ -847,7 +849,7 @@ export class LiveGitHubPort implements GitHubPort<GitHubReviewRequest> {
         await this.call("POST", "/pulls", "CREATE_PULL_REQUEST", {
           title: input.title,
           body: this.pullBody(input),
-          head: deterministicHead(input.runId),
+          head: deterministicHead(input.candidateFingerprint, input.sourcePrNumber),
           base: input.baseBranch,
           draft: true,
         })

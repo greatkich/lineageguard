@@ -67,6 +67,8 @@ export interface GitHubReviewRequest {
   baseBranch: string;
   baseSha: string;
   candidateFingerprint: string;
+  /** Source PR number, used only to make the generated branch name human-readable. */
+  sourcePrNumber?: number;
   artifactSetFingerprint: string;
   validationReceiptFingerprint: string;
   approvalFingerprint: string;

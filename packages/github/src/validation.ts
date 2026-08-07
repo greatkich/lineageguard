@@ -348,7 +348,21 @@ function validateRequestRuntime(input: GitHubReviewRequest, options: LiveGitHubO
     reject("artifact order differs from signed validation", "VALIDATION_BINDING_MISMATCH");
 }
 
-export function deterministicHead(run: string): string {
-  if (!runId.test(run)) reject("invalid run identity");
-  return `lineageguard/${run}`;
+/**
+ * The generated branch name.
+ *
+ * Derived from the candidate fingerprint, not the run id, so the same source and the same candidate
+ * always reconcile onto one branch and one draft PR. A run-scoped name created a new branch and a
+ * new PR for every rehearsal, which made the three-run repeatability proof impossible.
+ *
+ * The candidate fingerprint already binds the source fingerprint, base and head SHAs, the impact
+ * context, the grounded decision, and the artifact set, so this name is content-addressed: different
+ * inputs necessarily produce a different branch.
+ */
+export function deterministicHead(candidateFingerprintValue: string, prNumber?: number): string {
+  if (!fingerprint.test(candidateFingerprintValue)) reject("invalid candidate fingerprint");
+  const prefix = candidateFingerprintValue.slice(0, 12);
+  if (prNumber === undefined) return `lineageguard/generated/${prefix}`;
+  if (!Number.isInteger(prNumber) || prNumber <= 0) reject("invalid source pull request number");
+  return `lineageguard/generated/pr-${String(prNumber)}-${prefix}`;
 }
