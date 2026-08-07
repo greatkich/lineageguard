@@ -3,23 +3,40 @@
   "scenario": "canonical-customer-id-rename",
   "description": "ALTER TABLE commerce.orders RENAME COLUMN customer_id TO buyer_id",
   "executionMode": "LIVE",
-  "note": "Populate with real fingerprints after a successful live run",
+  "runId": "run_000000000000019fdded74c4",
+  "status": "COMPLETED",
+  "repository": "greatkich/lineageguard",
+  "source": {
+    "prUrl": "https://github.com/greatkich/lineageguard/pull/3",
+    "prNumber": 3,
+    "baseSha": "d130fd2a0307eaec187b6a764cd164e76b0062ac",
+    "headSha": "1be5ee50f14ba2d31122dc8d21e71eb516a2bf78",
+    "diffFingerprint": "6c981734adda29d0d6d86dc1f71411505b40a3993316690f49217e629bb0f08e",
+    "filePath": "walkthrough/migrations/001_rename_customer_id.sql"
+  },
   "fingerprints": {
-    "change": "PLACEHOLDER_AFTER_LIVE_RUN",
-    "impactContext": "PLACEHOLDER_AFTER_LIVE_RUN",
-    "candidate": "PLACEHOLDER_AFTER_LIVE_RUN",
-    "validation": "PLACEHOLDER_AFTER_LIVE_RUN",
-    "github": "PLACEHOLDER_AFTER_LIVE_RUN",
-    "writeback": "PLACEHOLDER_AFTER_LIVE_RUN"
+    "change": "6c981734adda29d0d6d86dc1f71411505b40a3993316690f49217e629bb0f08e",
+    "impactContext": "sha256:a2900d03976114bcc7136ad8ccba6884d737d2571bd35248b12dee6e2174b74c",
+    "candidate": "sha256:43a6e41d92118498871fccf84dbb7d0ca6e754ebc1aa522ec2458d327997a02f",
+    "comparison": "sha256:77142c4f4b1563e9ee69029f068da4bbae81019946655b57727f18c627ba781a",
+    "validation": "7eb57f43fcb904937e2ea4a66262be1b6df3a61b570d6d8bb8dc61c0b1f34826",
+    "github": "31a457bc98ffd525119eb072c0aa2e827132803633a4a51f0de01f34e9e7954c",
+    "writeback": "368e8e9f57051c19b79e49cee15dc5ef7fc9f135ba1d745e23d0bed1f5c5651c"
   },
   "expectedOutcome": {
     "baselineDecision": "ALLOW",
     "groundedDecision": "BLOCK",
     "impactConsumers": 4,
-    "triggeredRules": ["LG001", "LG002", "LG003", "LG004", "LG005"],
-    "strategy": "EXPAND_MIGRATE_CONTRACT",
+    "triggeredRules": [
+      "LG001",
+      "LG002",
+      "LG003",
+      "LG004"
+    ],
     "generatedArtifacts": 8,
-    "validationChecks": 8,
-    "writebackVerified": true
-  }
+    "prUrl": "https://github.com/greatkich/lineageguard/pull/7",
+    "writebackStatus": "SUCCEEDED"
+  },
+  "createdAt": "2026-08-07T20:32:35.698Z",
+  "exportedAt": "2026-08-07T20:33:50.360Z"
 }

@@ -1,0 +1,12 @@
+{
+  "sourceRunId": "run_000000000000019fdded74c4",
+  "sourceCommitSha": "1be5ee50f14ba2d31122dc8d21e71eb516a2bf78",
+  "sourceChangeFingerprint": "6c981734adda29d0d6d86dc1f71411505b40a3993316690f49217e629bb0f08e",
+  "impactContextFingerprint": "sha256:a2900d03976114bcc7136ad8ccba6884d737d2571bd35248b12dee6e2174b74c",
+  "riskComparisonFingerprint": "sha256:77142c4f4b1563e9ee69029f068da4bbae81019946655b57727f18c627ba781a",
+  "candidateFingerprint": "sha256:43a6e41d92118498871fccf84dbb7d0ca6e754ebc1aa522ec2458d327997a02f",
+  "validationReceiptFingerprint": "7eb57f43fcb904937e2ea4a66262be1b6df3a61b570d6d8bb8dc61c0b1f34826",
+  "githubReceiptFingerprint": "31a457bc98ffd525119eb072c0aa2e827132803633a4a51f0de01f34e9e7954c",
+  "writebackReceiptFingerprint": "368e8e9f57051c19b79e49cee15dc5ef7fc9f135ba1d745e23d0bed1f5c5651c",
+  "exportedAt": "2026-08-07T20:33:50.364Z"
+}

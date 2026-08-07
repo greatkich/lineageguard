@@ -2,14 +2,14 @@
   "strategy": "EXPAND_MIGRATE_CONTRACT",
   "sourceChangeFingerprint": "2965b0b838f5664b7fe5d2124c1b795aee1cbb0f2055b586aa38d1bbf5367e30",
   "sourcePatchFingerprint": "094a30ad9e050fb61f8feaed4831e025a2fb25066bebaff3033ac406d37b6e61",
-  "sourceImpactContextFingerprint": "8f21dababd198fe18479634392f1f080980dd62aeac520015fc24cb8d9c5bf21",
+  "sourceImpactContextFingerprint": "206da7c0900fb9bfb05c5ad3bbc69dc0261e46f8bd94a1b8b670b1b5823e7b13",
   "sourceDecision": "BLOCK",
   "sourceEvidenceIds": [
     "ev_171e9e739d3d518e46aad9ee",
     "ev_59eb5c12bc8d30556ca933fe",
     "ev_9e907158dba3dd3b5ea635af",
     "ev_a193c7a6f647028a5d17fbac",
-    "ev_e139c2bb47d3dd57af36b4b9"
+    "ev_f0a45b70be19a93cda9c5129"
   ],
   "summary": "Add buyer_id, migrate readers, then retire customer_id after compatibility window.",
   "steps": [
@@ -33,7 +33,10 @@
       "phase": "MIGRATE",
       "title": "Migrate: update controlled readers",
       "rationale": "Update all dbt consumers to use buyer_id and add compatibility assertions.",
-      "affectedEvidenceIds": ["ev_a193c7a6f647028a5d17fbac", "ev_e139c2bb47d3dd57af36b4b9"],
+      "affectedEvidenceIds": [
+        "ev_a193c7a6f647028a5d17fbac",
+        "ev_f0a45b70be19a93cda9c5129"
+      ],
       "artifactTargets": [
         "walkthrough/dbt/models/analytics/customer_revenue.sql",
         "walkthrough/dbt/models/fraud/customer_features.sql",
@@ -47,8 +50,12 @@
       "phase": "CONTRACT",
       "title": "Contract: deprecate customer_id",
       "rationale": "Retire the compatibility field after approval and observation.",
-      "affectedEvidenceIds": ["ev_171e9e739d3d518e46aad9ee"],
-      "artifactTargets": ["docs/migrations/customer-id.md"]
+      "affectedEvidenceIds": [
+        "ev_171e9e739d3d518e46aad9ee"
+      ],
+      "artifactTargets": [
+        "docs/migrations/customer-id.md"
+      ]
     }
   ],
   "artifacts": [

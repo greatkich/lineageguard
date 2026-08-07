@@ -1,0 +1,454 @@
+{
+  "changeId": "chg_81cda26ad872f06f0a456bcf",
+  "evidence": [
+    {
+      "id": "ev_171e9e739d3d518e46aad9ee",
+      "kind": "QUERY_USAGE",
+      "title": "Finance close SYSTEM query",
+      "payload": {
+        "source": "SYSTEM",
+        "queryUrn": "urn:li:query:lineageguard-canonical.system.e4bbe7075754d05de68f76ff0a9b127532e044da8ab0a357bce7e0d41f7ad22c",
+        "observationBasis": "DATAHUB_QUERY_ENTITY",
+        "subjectFieldPath": "customer_id",
+        "subjectDatasetUrn": "urn:li:dataset:(urn:li:dataPlatform:postgres,lineageguard-canonical.lineageguard.analytics.customer_revenue,PROD)",
+        "subjectSchemaFieldUrn": "urn:li:schemaField:(urn:li:dataset:(urn:li:dataPlatform:postgres,lineageguard-canonical.lineageguard.analytics.customer_revenue,PROD),customer_id)",
+        "normalizedStatementFingerprint": "64e7b3dc02cac7ee25acb65562fa7c075f08abc48310bf8dd16d0c9f6ef45638"
+      },
+      "summary": "A cataloged PostgreSQL query subject references analytics.customer_revenue.customer_id.",
+      "fieldPath": "commerce.orders.customer_id",
+      "sourceUrn": "urn:li:dataset:(urn:li:dataPlatform:postgres,lineageguard-canonical.lineageguard.commerce.orders,PROD)",
+      "targetUrn": "urn:li:query:lineageguard-canonical.system.e4bbe7075754d05de68f76ff0a9b127532e044da8ab0a357bce7e0d41f7ad22c",
+      "provenance": [
+        {
+          "role": "QUERY_DISCOVERY",
+          "tool": "get_dataset_queries",
+          "source": "DATAHUB_MCP",
+          "retrievedAt": "2026-08-07T20:32:44.032Z",
+          "invocationId": "mcp_af5ea21f-8148-4d8b-b7c3-713c67f61b73",
+          "responseFingerprint": "5ae6ad2907e34df653bca7481e4eaf051e8fe240067e7fad0bdac1139b68b91b"
+        },
+        {
+          "role": "QUERY_DETAILS",
+          "tool": "get_entities",
+          "source": "DATAHUB_MCP",
+          "retrievedAt": "2026-08-07T20:32:45.377Z",
+          "invocationId": "mcp_62c3a078-f191-4e69-a093-e0254f49c343",
+          "responseFingerprint": "049e633c4c9c6bcdd50381eda7831a516fa7cc94021f09944eb0e38a43ae823c"
+        }
+      ],
+      "criticality": "HIGH",
+      "fingerprint": "171e9e739d3d518e46aad9ee73a7bad7e89475ef5d185503655385adbe0fe810",
+      "relatedEvidenceIds": [
+        "ev_9e907158dba3dd3b5ea635af"
+      ]
+    },
+    {
+      "id": "ev_1816ead46a32f7a9a17199ba",
+      "kind": "OWNER",
+      "title": "Risk ML owner",
+      "payload": {
+        "assetUrn": "urn:li:mlModel:(urn:li:dataPlatform:mlflow,lineageguard-canonical.fraud-model-v3,PROD)",
+        "ownerUrn": "urn:li:corpGroup:lineageguard-canonical.risk-ml",
+        "displayName": "Risk ML",
+        "ownershipType": "TECHNICAL_OWNER"
+      },
+      "summary": "Risk ML owns Fraud Model v3.",
+      "sourceUrn": "urn:li:mlModel:(urn:li:dataPlatform:mlflow,lineageguard-canonical.fraud-model-v3,PROD)",
+      "targetUrn": "urn:li:corpGroup:lineageguard-canonical.risk-ml",
+      "provenance": [
+        {
+          "role": "OWNER",
+          "tool": "get_entities",
+          "source": "DATAHUB_MCP",
+          "retrievedAt": "2026-08-07T20:32:44.935Z",
+          "invocationId": "mcp_792ffb52-161d-4980-abd8-f4cef453909f",
+          "responseFingerprint": "79ed448c90e6fbb774c967436e07a08662448a081b76a368099fc0d53c019c89"
+        }
+      ],
+      "criticality": "HIGH",
+      "fingerprint": "1816ead46a32f7a9a17199ba1152040b027142ef1bd6ce5074e83b53239814db",
+      "relatedEvidenceIds": [
+        "ev_f0a45b70be19a93cda9c5129"
+      ]
+    },
+    {
+      "id": "ev_1f112a8ac95df55ff9bab339",
+      "kind": "SCHEMA",
+      "title": "orders.customer_id schema",
+      "payload": {
+        "nullable": false,
+        "nativeType": "uuid",
+        "schemaFieldUrn": "urn:li:schemaField:(urn:li:dataset:(urn:li:dataPlatform:postgres,lineageguard-canonical.lineageguard.commerce.orders,PROD),customer_id)",
+        "nativeFieldPath": "customer_id"
+      },
+      "summary": "The source field is a non-null uuid in PostgreSQL.",
+      "fieldPath": "commerce.orders.customer_id",
+      "sourceUrn": "urn:li:dataset:(urn:li:dataPlatform:postgres,lineageguard-canonical.lineageguard.commerce.orders,PROD)",
+      "provenance": [
+        {
+          "role": "SCHEMA",
+          "tool": "list_schema_fields",
+          "source": "DATAHUB_MCP",
+          "retrievedAt": "2026-08-07T20:32:41.053Z",
+          "invocationId": "mcp_00fc2297-371f-436e-9aa3-a4836256dd01",
+          "responseFingerprint": "36f66680231e9f7f085900065d34c28c9f0e3a65887fb44b644852b124894a3e"
+        }
+      ],
+      "criticality": "HIGH",
+      "fingerprint": "1f112a8ac95df55ff9bab339978b06524588410cf436f0098861533d88d0b997",
+      "relatedEvidenceIds": []
+    },
+    {
+      "id": "ev_59eb5c12bc8d30556ca933fe",
+      "kind": "DASHBOARD",
+      "title": "Finance Revenue Dashboard",
+      "payload": {
+        "platform": "looker",
+        "lifecycle": "PRODUCTION",
+        "ownerUrns": [
+          "urn:li:corpGroup:lineageguard-canonical.finance-analytics"
+        ],
+        "dashboardUrn": "urn:li:dashboard:(looker,lineageguard-canonical.finance-revenue-dashboard)",
+        "downstreamField": "analytics.customer_revenue.customer_id",
+        "ownershipObserved": true,
+        "classificationUrns": [
+          "urn:li:tag:lineageguard-canonical.Critical",
+          "urn:li:tag:lineageguard-canonical.Production"
+        ],
+        "downstreamDatasetUrn": "urn:li:dataset:(urn:li:dataPlatform:postgres,lineageguard-canonical.lineageguard.analytics.customer_revenue,PROD)"
+      },
+      "summary": "A critical Finance dashboard consumes the revenue lineage path.",
+      "fieldPath": "commerce.orders.customer_id",
+      "sourceUrn": "urn:li:dataset:(urn:li:dataPlatform:postgres,lineageguard-canonical.lineageguard.commerce.orders,PROD)",
+      "targetUrn": "urn:li:dashboard:(looker,lineageguard-canonical.finance-revenue-dashboard)",
+      "provenance": [
+        {
+          "role": "ENTITY_DETAILS",
+          "tool": "get_entities",
+          "source": "DATAHUB_MCP",
+          "retrievedAt": "2026-08-07T20:32:44.499Z",
+          "invocationId": "mcp_e6b1cc4c-a11d-4eee-a79b-11d5a1cba60c",
+          "responseFingerprint": "e890ee62c31f04a17570e6b2208a6972b81f18445f55eaf86da8f25cbfa323fa"
+        }
+      ],
+      "criticality": "CRITICAL",
+      "fingerprint": "59eb5c12bc8d30556ca933fe36a8ffc4f1f5843c9fe0d508fbca7cb2472bc7d2",
+      "relatedEvidenceIds": [
+        "ev_9e907158dba3dd3b5ea635af"
+      ]
+    },
+    {
+      "id": "ev_9e907158dba3dd3b5ea635af",
+      "kind": "LINEAGE_PATH",
+      "title": "Finance dashboard lineage path",
+      "payload": {
+        "nodes": [
+          "urn:li:dataset:(urn:li:dataPlatform:postgres,lineageguard-canonical.lineageguard.commerce.orders,PROD)",
+          "urn:li:dataset:(urn:li:dataPlatform:postgres,lineageguard-canonical.lineageguard.analytics.stg_orders,PROD)",
+          "urn:li:dataset:(urn:li:dataPlatform:postgres,lineageguard-canonical.lineageguard.analytics.customer_revenue,PROD)",
+          "urn:li:dashboard:(looker,lineageguard-canonical.finance-revenue-dashboard)"
+        ],
+        "segments": [
+          {
+            "sourceUrn": "urn:li:dataset:(urn:li:dataPlatform:postgres,lineageguard-canonical.lineageguard.commerce.orders,PROD)",
+            "targetUrn": "urn:li:dataset:(urn:li:dataPlatform:postgres,lineageguard-canonical.lineageguard.analytics.stg_orders,PROD)",
+            "granularity": "FIELD",
+            "sourceFieldPath": "customer_id",
+            "targetFieldPath": "customer_id"
+          },
+          {
+            "sourceUrn": "urn:li:dataset:(urn:li:dataPlatform:postgres,lineageguard-canonical.lineageguard.analytics.stg_orders,PROD)",
+            "targetUrn": "urn:li:dataset:(urn:li:dataPlatform:postgres,lineageguard-canonical.lineageguard.analytics.customer_revenue,PROD)",
+            "granularity": "FIELD",
+            "sourceFieldPath": "customer_id",
+            "targetFieldPath": "customer_id"
+          },
+          {
+            "sourceUrn": "urn:li:dataset:(urn:li:dataPlatform:postgres,lineageguard-canonical.lineageguard.analytics.customer_revenue,PROD)",
+            "targetUrn": "urn:li:dashboard:(looker,lineageguard-canonical.finance-revenue-dashboard)",
+            "granularity": "ENTITY"
+          }
+        ],
+        "direction": "DOWNSTREAM",
+        "fieldLevel": true
+      },
+      "summary": "customer_id flows through the revenue datasets into the Finance dashboard.",
+      "fieldPath": "commerce.orders.customer_id",
+      "sourceUrn": "urn:li:dataset:(urn:li:dataPlatform:postgres,lineageguard-canonical.lineageguard.commerce.orders,PROD)",
+      "targetUrn": "urn:li:dashboard:(looker,lineageguard-canonical.finance-revenue-dashboard)",
+      "provenance": [
+        {
+          "role": "LINEAGE_DISCOVERY",
+          "tool": "get_lineage",
+          "source": "DATAHUB_MCP",
+          "retrievedAt": "2026-08-07T20:32:41.560Z",
+          "invocationId": "mcp_30f68980-1d47-475f-8cd5-4063526693af",
+          "responseFingerprint": "4694c581bc761f4f8f7ecaf54445108161e201191db2148ee61ac0308b774b52"
+        },
+        {
+          "role": "FIELD_PATH",
+          "tool": "get_lineage_paths_between",
+          "source": "DATAHUB_MCP",
+          "retrievedAt": "2026-08-07T20:32:42.082Z",
+          "invocationId": "mcp_934f6f11-77c4-49fe-9cfb-104f4213283b",
+          "responseFingerprint": "a11143f9eb5eba46baeeb20bc8a04553ff5ede4d4470fae17cc8cad7747a6258"
+        },
+        {
+          "role": "ENTITY_PATH",
+          "tool": "get_lineage_paths_between",
+          "source": "DATAHUB_MCP",
+          "retrievedAt": "2026-08-07T20:32:42.660Z",
+          "invocationId": "mcp_39ea4f9c-4939-42b9-a48f-2ad3fca8cbd1",
+          "responseFingerprint": "bc99ab9304e994cebdffefccc5ee1bd556d535070a08c7750bc234f64e9350e7"
+        }
+      ],
+      "criticality": "CRITICAL",
+      "fingerprint": "9e907158dba3dd3b5ea635aff032242f6a347f9855195d3283f7e80fbeac684d",
+      "relatedEvidenceIds": []
+    },
+    {
+      "id": "ev_a193c7a6f647028a5d17fbac",
+      "kind": "LINEAGE_PATH",
+      "title": "Fraud model lineage path",
+      "payload": {
+        "nodes": [
+          "urn:li:dataset:(urn:li:dataPlatform:postgres,lineageguard-canonical.lineageguard.commerce.orders,PROD)",
+          "urn:li:dataset:(urn:li:dataPlatform:postgres,lineageguard-canonical.lineageguard.analytics.stg_orders,PROD)",
+          "urn:li:dataset:(urn:li:dataPlatform:postgres,lineageguard-canonical.lineageguard.fraud.customer_features,PROD)",
+          "urn:li:mlModel:(urn:li:dataPlatform:mlflow,lineageguard-canonical.fraud-model-v3,PROD)"
+        ],
+        "segments": [
+          {
+            "sourceUrn": "urn:li:dataset:(urn:li:dataPlatform:postgres,lineageguard-canonical.lineageguard.commerce.orders,PROD)",
+            "targetUrn": "urn:li:dataset:(urn:li:dataPlatform:postgres,lineageguard-canonical.lineageguard.analytics.stg_orders,PROD)",
+            "granularity": "FIELD",
+            "sourceFieldPath": "customer_id",
+            "targetFieldPath": "customer_id"
+          },
+          {
+            "sourceUrn": "urn:li:dataset:(urn:li:dataPlatform:postgres,lineageguard-canonical.lineageguard.analytics.stg_orders,PROD)",
+            "targetUrn": "urn:li:dataset:(urn:li:dataPlatform:postgres,lineageguard-canonical.lineageguard.fraud.customer_features,PROD)",
+            "granularity": "FIELD",
+            "sourceFieldPath": "customer_id",
+            "targetFieldPath": "customer_id"
+          },
+          {
+            "sourceUrn": "urn:li:dataset:(urn:li:dataPlatform:postgres,lineageguard-canonical.lineageguard.fraud.customer_features,PROD)",
+            "targetUrn": "urn:li:mlModel:(urn:li:dataPlatform:mlflow,lineageguard-canonical.fraud-model-v3,PROD)",
+            "granularity": "ENTITY"
+          }
+        ],
+        "direction": "DOWNSTREAM",
+        "fieldLevel": true
+      },
+      "summary": "customer_id flows through the fraud feature set into the production model.",
+      "fieldPath": "commerce.orders.customer_id",
+      "sourceUrn": "urn:li:dataset:(urn:li:dataPlatform:postgres,lineageguard-canonical.lineageguard.commerce.orders,PROD)",
+      "targetUrn": "urn:li:mlModel:(urn:li:dataPlatform:mlflow,lineageguard-canonical.fraud-model-v3,PROD)",
+      "provenance": [
+        {
+          "role": "LINEAGE_DISCOVERY",
+          "tool": "get_lineage",
+          "source": "DATAHUB_MCP",
+          "retrievedAt": "2026-08-07T20:32:41.560Z",
+          "invocationId": "mcp_30f68980-1d47-475f-8cd5-4063526693af",
+          "responseFingerprint": "4694c581bc761f4f8f7ecaf54445108161e201191db2148ee61ac0308b774b52"
+        },
+        {
+          "role": "FIELD_PATH",
+          "tool": "get_lineage_paths_between",
+          "source": "DATAHUB_MCP",
+          "retrievedAt": "2026-08-07T20:32:43.127Z",
+          "invocationId": "mcp_fc2dfe1f-5396-4236-81bb-26e723a19ab1",
+          "responseFingerprint": "c0e9eeaa94f8b054b80dbae50d57317c1bd8eb19ff255b4355588d807b348656"
+        },
+        {
+          "role": "ENTITY_PATH",
+          "tool": "get_lineage_paths_between",
+          "source": "DATAHUB_MCP",
+          "retrievedAt": "2026-08-07T20:32:43.525Z",
+          "invocationId": "mcp_ad681504-a37f-4b2a-9386-1fdf275e8db5",
+          "responseFingerprint": "389808c1a0bed65cb69e975fe1aa0a3f94e0138c074f7b80d219674f68c3550c"
+        }
+      ],
+      "criticality": "CRITICAL",
+      "fingerprint": "a193c7a6f647028a5d17fbacf3a10f4f4d96e81bcbde975f62e885d572d4baa9",
+      "relatedEvidenceIds": []
+    },
+    {
+      "id": "ev_ba2121f8360a611382d3a157",
+      "kind": "GLOSSARY_TERM",
+      "title": "Customer Identifier",
+      "payload": {
+        "name": "Customer Identifier",
+        "termUrn": "urn:li:glossaryTerm:lineageguard-canonical.CustomerIdentifier",
+        "fieldPath": "commerce.orders.customer_id",
+        "schemaFieldUrn": "urn:li:schemaField:(urn:li:dataset:(urn:li:dataPlatform:postgres,lineageguard-canonical.lineageguard.commerce.orders,PROD),customer_id)"
+      },
+      "summary": "customer_id is governed by the Customer Identifier glossary term.",
+      "fieldPath": "commerce.orders.customer_id",
+      "sourceUrn": "urn:li:dataset:(urn:li:dataPlatform:postgres,lineageguard-canonical.lineageguard.commerce.orders,PROD)",
+      "targetUrn": "urn:li:glossaryTerm:lineageguard-canonical.CustomerIdentifier",
+      "provenance": [
+        {
+          "role": "GLOSSARY_BINDING",
+          "tool": "list_schema_fields",
+          "source": "DATAHUB_MCP",
+          "retrievedAt": "2026-08-07T20:32:41.053Z",
+          "invocationId": "mcp_00fc2297-371f-436e-9aa3-a4836256dd01",
+          "responseFingerprint": "36f66680231e9f7f085900065d34c28c9f0e3a65887fb44b644852b124894a3e"
+        },
+        {
+          "role": "GLOSSARY_DETAILS",
+          "tool": "get_entities",
+          "source": "DATAHUB_MCP",
+          "retrievedAt": "2026-08-07T20:32:46.286Z",
+          "invocationId": "mcp_d6df6220-edff-48e5-811b-a298fa7368e5",
+          "responseFingerprint": "8184f85926ab7fb58a3dcb378fd0334ec8acdc51d3f269236932b638f344aec4"
+        }
+      ],
+      "criticality": "HIGH",
+      "fingerprint": "ba2121f8360a611382d3a15743b34f35adc483bf361cca7e24d4e2a5113e22e5",
+      "relatedEvidenceIds": []
+    },
+    {
+      "id": "ev_d4164db054a4481b94a20931",
+      "kind": "OWNER",
+      "title": "Finance Analytics owner",
+      "payload": {
+        "assetUrn": "urn:li:dashboard:(looker,lineageguard-canonical.finance-revenue-dashboard)",
+        "ownerUrn": "urn:li:corpGroup:lineageguard-canonical.finance-analytics",
+        "displayName": "Finance Analytics",
+        "ownershipType": "BUSINESS_OWNER"
+      },
+      "summary": "Finance Analytics owns the revenue dashboard.",
+      "sourceUrn": "urn:li:dashboard:(looker,lineageguard-canonical.finance-revenue-dashboard)",
+      "targetUrn": "urn:li:corpGroup:lineageguard-canonical.finance-analytics",
+      "provenance": [
+        {
+          "role": "OWNER",
+          "tool": "get_entities",
+          "source": "DATAHUB_MCP",
+          "retrievedAt": "2026-08-07T20:32:44.499Z",
+          "invocationId": "mcp_e6b1cc4c-a11d-4eee-a79b-11d5a1cba60c",
+          "responseFingerprint": "e890ee62c31f04a17570e6b2208a6972b81f18445f55eaf86da8f25cbfa323fa"
+        }
+      ],
+      "criticality": "HIGH",
+      "fingerprint": "d4164db054a4481b94a2093134f8ad047b9ca2026fc596e958378309dce701c6",
+      "relatedEvidenceIds": [
+        "ev_59eb5c12bc8d30556ca933fe"
+      ]
+    },
+    {
+      "id": "ev_e81b6d759a2158b1562bc984",
+      "kind": "OWNER",
+      "title": "Finance Analytics owner",
+      "payload": {
+        "assetUrn": "urn:li:dataset:(urn:li:dataPlatform:postgres,lineageguard-canonical.lineageguard.analytics.customer_revenue,PROD)",
+        "ownerUrn": "urn:li:corpGroup:lineageguard-canonical.finance-analytics",
+        "displayName": "Finance Analytics",
+        "ownershipType": "TECHNICAL_OWNER"
+      },
+      "summary": "Finance Analytics owns analytics.customer_revenue, the dataset the unmanaged Finance query reads from. Review for that query routes through this owner rather than an owner on the Query entity itself.",
+      "sourceUrn": "urn:li:dataset:(urn:li:dataPlatform:postgres,lineageguard-canonical.lineageguard.analytics.customer_revenue,PROD)",
+      "targetUrn": "urn:li:corpGroup:lineageguard-canonical.finance-analytics",
+      "provenance": [
+        {
+          "role": "OWNER",
+          "tool": "get_entities",
+          "source": "DATAHUB_MCP",
+          "retrievedAt": "2026-08-07T20:32:45.859Z",
+          "invocationId": "mcp_4bfeebe4-4192-446b-a0ff-e35c8f4722f1",
+          "responseFingerprint": "83e1717524f88406cd2020948b8ee827f15bd04bdf95753ce03ba2e8f349e250"
+        }
+      ],
+      "criticality": "HIGH",
+      "fingerprint": "e81b6d759a2158b1562bc984b218e9786682643c930aa461dad1d6420b06e609",
+      "relatedEvidenceIds": [
+        "ev_171e9e739d3d518e46aad9ee"
+      ]
+    },
+    {
+      "id": "ev_f0a45b70be19a93cda9c5129",
+      "kind": "ML_MODEL",
+      "title": "Fraud Model v3",
+      "payload": {
+        "modelUrn": "urn:li:mlModel:(urn:li:dataPlatform:mlflow,lineageguard-canonical.fraud-model-v3,PROD)",
+        "lifecycle": "PRODUCTION",
+        "ownerUrns": [
+          "urn:li:corpGroup:lineageguard-canonical.risk-ml"
+        ],
+        "featureField": "fraud.customer_features.customer_id",
+        "featureDatasetUrn": "urn:li:dataset:(urn:li:dataPlatform:postgres,lineageguard-canonical.lineageguard.fraud.customer_features,PROD)",
+        "ownershipObserved": true,
+        "classificationUrns": [
+          "urn:li:tag:lineageguard-canonical.Critical",
+          "urn:li:tag:lineageguard-canonical.Production"
+        ],
+        "trainingDataReceipt": {
+          "endpoint": "http://127.0.0.1:8080/openapi/v3/entity/mlModel/urn%3Ali%3AmlModel%3A(urn%3Ali%3AdataPlatform%3Amlflow%2Clineageguard-canonical.fraud-model-v3%2CPROD)/mlModelTrainingData",
+          "modelUrn": "urn:li:mlModel:(urn:li:dataPlatform:mlflow,lineageguard-canonical.fraud-model-v3,PROD)",
+          "aspectName": "mlModelTrainingData",
+          "retrievedAt": "2026-08-07T20:32:43.545Z",
+          "responseSha256": "80faac3cadf4a038184693756a8ae33978c88cbb83af17bd2366bf560ae5c6df",
+          "credentialClass": "READ",
+          "provenDatasetUrn": "urn:li:dataset:(urn:li:dataPlatform:postgres,lineageguard-canonical.lineageguard.fraud.customer_features,PROD)"
+        }
+      },
+      "summary": "The production fraud model consumes customer_features.customer_id.",
+      "fieldPath": "commerce.orders.customer_id",
+      "sourceUrn": "urn:li:dataset:(urn:li:dataPlatform:postgres,lineageguard-canonical.lineageguard.commerce.orders,PROD)",
+      "targetUrn": "urn:li:mlModel:(urn:li:dataPlatform:mlflow,lineageguard-canonical.fraud-model-v3,PROD)",
+      "provenance": [
+        {
+          "role": "ENTITY_DETAILS",
+          "tool": "get_entities",
+          "source": "DATAHUB_MCP",
+          "retrievedAt": "2026-08-07T20:32:44.935Z",
+          "invocationId": "mcp_792ffb52-161d-4980-abd8-f4cef453909f",
+          "responseFingerprint": "79ed448c90e6fbb774c967436e07a08662448a081b76a368099fc0d53c019c89"
+        }
+      ],
+      "criticality": "CRITICAL",
+      "fingerprint": "f0a45b70be19a93cda9c5129e7667c476f73abe14a47c988fbe9a61ca8956e38",
+      "relatedEvidenceIds": [
+        "ev_a193c7a6f647028a5d17fbac"
+      ]
+    }
+  ],
+  "failures": [],
+  "fieldPath": "commerce.orders.customer_id",
+  "datasetUrn": "urn:li:dataset:(urn:li:dataPlatform:postgres,lineageguard-canonical.lineageguard.commerce.orders,PROD)",
+  "resolution": {
+    "requested": {
+      "field": "customer_id",
+      "schema": "commerce",
+      "dataset": "orders",
+      "database": "lineageguard",
+      "platform": "postgres",
+      "environment": "PROD",
+      "platformInstance": "lineageguard-canonical"
+    },
+    "datasetUrn": "urn:li:dataset:(urn:li:dataPlatform:postgres,lineageguard-canonical.lineageguard.commerce.orders,PROD)",
+    "provenance": [
+      {
+        "role": "RESOLUTION",
+        "tool": "search",
+        "source": "DATAHUB_MCP",
+        "retrievedAt": "2026-08-07T20:32:40.587Z",
+        "invocationId": "mcp_88cf3fad-c4d5-4e30-9f07-8a4c6ef21f43",
+        "responseFingerprint": "0e5f7d16bb9804be782c0b014c1b97cd5d8ce8eb47cb5195b476f60576304346"
+      }
+    ],
+    "schemaFieldUrn": "urn:li:schemaField:(urn:li:dataset:(urn:li:dataPlatform:postgres,lineageguard-canonical.lineageguard.commerce.orders,PROD),customer_id)",
+    "nativeFieldPath": "customer_id"
+  },
+  "collectedAt": "2026-08-07T20:32:46.286Z",
+  "collectionOrigin": {
+    "mode": "LIVE"
+  },
+  "collectionStatus": "COMPLETE",
+  "collectionFingerprint": "f267c6809c5b0d252080fb188692a1f941cd50d9a0d15003ad9681ef87e7333b",
+  "impactContextFingerprint": "a44ffdb760b53fee35ae94f3f17c39c1630470224c0f6b895bf990bd849bcdc1"
+}
