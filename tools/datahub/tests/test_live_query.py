@@ -183,7 +183,7 @@ def _reconcile_live(
     )
 
 
-def test_live_query_plan_uses_system_provenance_and_official_finance_ownership(
+def test_live_query_plan_uses_system_provenance(
     expected_graph: ExpectedGraph, repository_root: Path
 ) -> None:
     receipt = _query_receipt(expected_graph, repository_root)
@@ -192,15 +192,7 @@ def test_live_query_plan_uses_system_provenance_and_official_finance_ownership(
     assert isinstance(properties, QueryPropertiesClass)
     assert properties.source == QuerySourceClass.SYSTEM
     assert plan[0].proposal.entityUrn == expected_graph.query_evidence[0].query_urn
-    ownership = next(
-        item.proposal.aspect for item in plan if isinstance(item.proposal.aspect, OwnershipClass)
-    )
-    assert [(owner.owner, str(owner.type)) for owner in ownership.owners] == [
-        (
-            "urn:li:corpGroup:lineageguard-canonical.finance-analytics",
-            "BUSINESS_OWNER",
-        )
-    ]
+    assert not any(isinstance(item.proposal.aspect, OwnershipClass) for item in plan)
 
 
 def test_live_query_partial_failure_reconciles_successful_aspects(
@@ -215,11 +207,11 @@ def test_live_query_partial_failure_reconciles_successful_aspects(
     before = len(catalog.emitted)
     with pytest.raises(ValueError, match="SCENARIO_RECONCILIATION_REQUIRED"):
         emit_live_query_evidence(catalog, catalog, store, expected_graph, repository_root)
-    assert _reconcile_live(catalog, store, expected_graph, repository_root) == 4
+    assert _reconcile_live(catalog, store, expected_graph, repository_root) == 3
     emitted = emit_live_query_evidence(catalog, catalog, store, expected_graph, repository_root)
     assert before == 2
-    assert emitted == 4
-    assert len(catalog.emitted) == 6
+    assert emitted == 3
+    assert len(catalog.emitted) == 5
     assert sum(receipt.status is ReceiptStatus.FAILURE for receipt in store.read_all()) == 1
 
 
@@ -326,7 +318,7 @@ def test_ambiguous_usage_apply_is_reconciled_from_live_state(
 ) -> None:
     store = ReceiptStore(tmp_path / "operations.jsonl")
     _prepare_store(store, expected_graph, repository_root)
-    catalog = FakeCatalog(fail_after_at=4)
+    catalog = FakeCatalog(fail_after_at=3)
     with pytest.raises(RuntimeError, match="ambiguous-after-apply"):
         emit_live_query_evidence(catalog, catalog, store, expected_graph, repository_root)
     catalog.fail_after_at = None
@@ -397,7 +389,7 @@ def test_latest_exact_query_receipt_controls_emit_and_postgres_must_follow_it(
         )
     )
     catalog = FakeCatalog()
-    assert emit_live_query_evidence(catalog, catalog, store, expected_graph, repository_root) == 6
+    assert emit_live_query_evidence(catalog, catalog, store, expected_graph, repository_root) == 5
 
 
 def test_query_receipt_before_current_dbt_artifacts_is_rejected(

@@ -83,10 +83,7 @@ def test_graph_fingerprint_is_stable_under_component_permutations(
             for node in reversed(expected_graph.nodes)
         ),
         edges=tuple(reversed(expected_graph.edges)),
-        query_evidence=tuple(
-            replace(query, owner_urns=tuple(reversed(query.owner_urns)))
-            for query in reversed(expected_graph.query_evidence)
-        ),
+        query_evidence=tuple(reversed(expected_graph.query_evidence)),
         impact_cards=tuple(reversed(expected_graph.impact_cards)),
         lineage_intermediates=tuple(reversed(expected_graph.lineage_intermediates)),
     )
@@ -115,7 +112,6 @@ def test_loader_forbids_manifest_target_expansion(repository_root: Path, tmp_pat
     manifest["owners"][0]["urn"] = "urn:li:corpGroup:shared-finance"
     manifest["nodes"][2]["ownerUrns"] = ["urn:li:corpGroup:shared-finance"]
     manifest["nodes"][4]["ownerUrns"] = ["urn:li:corpGroup:shared-finance"]
-    manifest["queryEvidence"][0]["ownerUrns"] = ["urn:li:corpGroup:shared-finance"]
     invalid = tmp_path / "expanded.json"
     invalid.write_text(json.dumps(manifest))
     with pytest.raises(GraphContractError, match="URN allowlist mismatch"):
@@ -164,23 +160,4 @@ def test_loader_freezes_canonical_ownership_types(
         load_expected_graph(invalid)
 
 
-@pytest.mark.parametrize(
-    ("field", "value"),
-    [
-        ("ownerUrns", ["urn:li:corpGroup:lineageguard-canonical.risk-ml"]),
-        ("ownershipType", "TECHNICAL_OWNER"),
-    ],
-)
-def test_loader_freezes_query_finance_ownership(
-    repository_root: Path, tmp_path: Path, field: str, value: object
-) -> None:
-    manifest = json.loads(
-        (
-            repository_root / "walkthrough/scenarios/canonical/expected-datahub-graph.json"
-        ).read_text()
-    )
-    manifest["queryEvidence"][0][field] = value
-    invalid = tmp_path / "query-ownership-drift.json"
-    invalid.write_text(json.dumps(manifest))
-    with pytest.raises(GraphContractError, match="query logical mapping mismatch"):
-        load_expected_graph(invalid)
+

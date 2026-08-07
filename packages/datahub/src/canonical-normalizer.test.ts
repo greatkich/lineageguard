@@ -38,7 +38,7 @@ describe("canonical live DataHub normalization", () => {
     if (result.outcome !== "COLLECTED_LIVE") throw new Error("expected live result");
     expect(result.context.collectionOrigin).toEqual({ mode: "LIVE" });
     expect(result.context.collectionStatus).toBe("COMPLETE");
-    expect(result.context.evidence).toHaveLength(9);
+    expect(result.context.evidence).toHaveLength(10);
     expect(result.context.evidence.map((item) => item.id)).toEqual(
       [...result.context.evidence.map((item) => item.id)].sort(),
     );
@@ -167,10 +167,10 @@ describe("canonical live DataHub normalization", () => {
         {
           editedGlossaryTerms: ["Customer Identifier"],
           fieldPath: "customer_id",
-          nativeDataType: "bigint",
+          nativeDataType: "uuid",
           nullable: false,
         },
-        { fieldPath: "order_id", nativeDataType: "bigint", nullable: false },
+        { fieldPath: "order_id", nativeDataType: "uuid", nullable: false },
         { fieldPath: "amount", nativeDataType: "numeric", nullable: false },
         { fieldPath: "created_at", nativeDataType: "timestamp", nullable: false },
       ],

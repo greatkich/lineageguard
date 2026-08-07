@@ -101,7 +101,7 @@ describe("live DataHub context port", () => {
 
     expect(result.outcome).toBe("COLLECTED_LIVE");
     if (result.outcome !== "COLLECTED_LIVE") throw new Error("expected live result");
-    expect(result.context.evidence).toHaveLength(9);
+    expect(result.context.evidence).toHaveLength(10);
     const lineagePaths = result.context.evidence.filter((item) => item.kind === "LINEAGE_PATH");
     expect(
       lineagePaths
@@ -113,7 +113,7 @@ describe("live DataHub context port", () => {
         .find((item) => item.targetUrn?.includes("mlModel"))
         ?.provenance.map((entry) => entry.invocationId),
     ).toEqual(["inv_live_03", "inv_live_04", "inv_live_07", "inv_live_08"]);
-    expect(transport.callTool).toHaveBeenCalledTimes(13);
+    expect(transport.callTool).toHaveBeenCalledTimes(14);
     expect(transport.close).toHaveBeenCalledTimes(1);
   });
 

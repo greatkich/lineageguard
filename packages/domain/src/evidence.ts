@@ -865,7 +865,9 @@ export const impactContextSchema = z
             relatedAsset.payload.ownerUrns.includes(item.payload.ownerUrn)) ||
           (relatedAsset?.kind === "ML_MODEL" &&
             relatedAsset.payload.modelUrn === item.payload.assetUrn &&
-            relatedAsset.payload.ownerUrns.includes(item.payload.ownerUrn));
+            relatedAsset.payload.ownerUrns.includes(item.payload.ownerUrn)) ||
+          (relatedAsset?.kind === "QUERY_USAGE" &&
+            relatedAsset.payload.subjectDatasetUrn === item.payload.assetUrn);
         if (
           item.sourceUrn !== item.payload.assetUrn ||
           item.targetUrn !== item.payload.ownerUrn ||
@@ -901,6 +903,9 @@ export const impactContextSchema = z
         ...(models[0]?.payload.ownerUrns ?? []).map(
           (ownerUrn) => `${canonicalFraudModelUrn}\u0000${ownerUrn}`,
         ),
+        ...owners
+          .filter((owner) => owner.payload.assetUrn === canonicalAnalyticsRevenueUrn)
+          .map((owner) => `${canonicalAnalyticsRevenueUrn}\u0000${owner.payload.ownerUrn}`),
       ]);
       if (
         schemas.length !== 1 ||
@@ -954,7 +959,7 @@ export const impactContextSchema = z
         glossaries[0]?.payload.schemaFieldUrn !== canonicalSchemaFieldUrn ||
         glossaries[0]?.payload.name !== "Customer Identifier" ||
         glossaries[0]?.criticality !== "HIGH" ||
-        owners.length > 2 ||
+        owners.length > 3 ||
         ownerKeys.size !== owners.length ||
         ownerKeys.size !== declaredOwnerKeys.size ||
         [...ownerKeys].some((key) => !declaredOwnerKeys.has(key)) ||
@@ -966,7 +971,10 @@ export const impactContextSchema = z
                 owner.payload.displayName === "Finance Analytics") ||
               (owner.payload.assetUrn === canonicalFraudModelUrn &&
                 owner.payload.ownerUrn === canonicalRiskOwnerUrn &&
-                owner.payload.displayName === "Risk ML")
+                owner.payload.displayName === "Risk ML") ||
+              (owner.payload.assetUrn === canonicalAnalyticsRevenueUrn &&
+                owner.payload.ownerUrn === canonicalFinanceOwnerUrn &&
+                owner.payload.displayName === "Finance Analytics")
             ),
         )
       ) {
@@ -1248,6 +1256,25 @@ export function createCanonicalImpactContextFixture(changeId: string): ImpactCon
       ownershipType: "TECHNICAL_OWNER",
     },
   });
+  const revenueOwner = createEvidence({
+    kind: "OWNER",
+    sourceUrn: canonicalAnalyticsRevenueUrn,
+    targetUrn: canonicalFinanceOwnerUrn,
+    title: "Finance Analytics owner",
+    summary:
+      "Finance Analytics owns analytics.customer_revenue, the dataset the unmanaged Finance " +
+      "query reads from. Review for that query routes through this owner rather than an " +
+      "owner on the Query entity itself.",
+    criticality: "HIGH",
+    relatedEvidenceIds: [query.id],
+    provenance: [provenance("OWNER", "get_entities", "canonical-revenue-owner")],
+    payload: {
+      assetUrn: canonicalAnalyticsRevenueUrn,
+      ownerUrn: canonicalFinanceOwnerUrn,
+      displayName: "Finance Analytics",
+      ownershipType: "TECHNICAL_OWNER",
+    },
+  });
   const glossary = createEvidence({
     kind: "GLOSSARY_TERM",
     sourceUrn: canonicalDatasetUrn,
@@ -1285,6 +1312,7 @@ export function createCanonicalImpactContextFixture(changeId: string): ImpactCon
       query,
       financeOwner,
       riskOwner,
+      revenueOwner,
       glossary,
     ].sort((left, right) => left.id.localeCompare(right.id)),
     failures: [],
