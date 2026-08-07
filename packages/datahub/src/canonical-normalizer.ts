@@ -322,7 +322,11 @@ function normalizeRevenueOwner(
   const asset = parsed.data;
   const owners = asset.ownership?.owners ?? [];
   if (owners.length > 1) {
-    errorFor(observation, "AMBIGUOUS", "Canonical DataHub revenue dataset ownership was ambiguous.");
+    errorFor(
+      observation,
+      "AMBIGUOUS",
+      "Canonical DataHub revenue dataset ownership was ambiguous.",
+    );
   }
   const owner = owners[0];
   return owner === undefined
@@ -450,9 +454,7 @@ function normalizeSchema(observation: OfficialObservation<OfficialSchemaFieldsPa
   if (glossaryTerms === undefined && editedGlossaryTerms === undefined) {
     // MCP didn't return any glossary information — skip this check.
     // The glossary binding is validated via the glossaryDetails observation.
-  } else if (
-    (glossaryTerms ?? []).filter((name) => name === "Customer Identifier").length !== 1
-  ) {
+  } else if ((glossaryTerms ?? []).filter((name) => name === "Customer Identifier").length !== 1) {
     errorFor(observation, "NOT_FOUND", "Canonical system glossary binding was not found.");
   }
   return schemaField;

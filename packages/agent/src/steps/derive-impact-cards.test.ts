@@ -99,14 +99,14 @@ describe("deriveImpactCards", () => {
     expect(cards).toHaveLength(4);
 
     const kinds = cards.map((card) => card.kind).sort();
-    expect(kinds).toEqual(["DASHBOARD", "DOWNSTREAM_MODEL", "ML_MODEL", "QUERY"].sort());
+    expect(kinds).toEqual(["DASHBOARD", "DATA_MODEL", "ML_CONSUMER", "UNMANAGED_QUERY"].sort());
   });
 
-  it("attaches a DataHub evidence id to every impact card", () => {
+  it("attaches DataHub evidence ids to every impact card", () => {
     const cards = deriveImpactCards(canonicalEvidenceContext());
 
     for (const card of cards) {
-      expect(card.evidenceId).toBeTruthy();
+      expect(card.evidenceIds.length).toBeGreaterThan(0);
       expect(card.entityUrn).toMatch(/^urn:li:/);
     }
   });

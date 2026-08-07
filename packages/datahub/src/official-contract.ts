@@ -231,8 +231,7 @@ const queryPageSchema = z
   })
   .strict()
   .refine(
-    (page) =>
-      page.queries.length === Math.min(page.count, Math.max(page.total - page.start, 0)),
+    (page) => page.queries.length === Math.min(page.count, Math.max(page.total - page.start, 0)),
   );
 
 const entitySchema = z
@@ -243,9 +242,7 @@ const entitySchema = z
   .refine((entity) => !("error" in entity));
 
 const entitiesResultSchema = z.union([
-  z
-    .object({ result: z.array(entitySchema).max(50) })
-    .transform((wrapper) => wrapper.result),
+  z.object({ result: z.array(entitySchema).max(50) }).transform((wrapper) => wrapper.result),
   entitySchema.transform((entity) => [entity]),
   z.array(entitySchema).max(50),
 ]);
