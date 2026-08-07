@@ -131,7 +131,7 @@ Out of scope until the required path passes:
 ### Hard limits (blocking)
 
 - **No class exceeds 300 lines.** A class over the limit holds more than one responsibility. Split it by extracting collaborators.
-- **No function or method exceeds 50 lines.**
+- **No function or method exceeds 50 lines**, subject to the measured ratchet below.
 - **No function takes more than 5 positional parameters.** Use a single typed options object.
 - **Nesting depth stays at or below 4 levels.** Extract a named helper instead.
 - **No boolean expression chains more than 5 conditions.** Extract named predicates that state the business rule.
@@ -151,20 +151,43 @@ A long module that is a flat collection of small pure functions or schema declar
 
 ### Existing violations — ratchet rule
 
-These two classes exceed the limit today and are grandfathered:
+**Classes.** These two exceed the limit today and are grandfathered:
 
 | Class | Lines | File |
 |-------|-------|------|
 | `LiveGitHubPort` | 702 | `packages/github/src/live-adapter.ts` |
 | `InternalValidationSecurityBoundary` | 370 | `packages/validation/src/attestation.ts` |
 
-For grandfathered classes:
+**Functions.** 36 functions exceeded 50 lines when this rule was introduced. They are not listed individually because the list would rot; the enforceable form is a count that only ever decreases. The largest are:
 
-- you may modify them without splitting them first;
-- you must **not increase** their line count — a change that grows them is a blocking finding;
-- when a task substantially reworks one, split it as part of that task and remove it from this table.
+| Lines | Function | File |
+|-------|----------|------|
+| 301 | `buildCanonicalCandidate` | `packages/agent/src/steps/build-canonical-candidate.ts` |
+| 287 | `createAgentPipeline` | `packages/agent/src/pipeline.ts` |
+| 280 | `execute` (inside it) | `packages/agent/src/pipeline.ts` |
+| 258 | `createCanonicalImpactContextFixture` | `packages/domain/src/evidence.ts` |
+| 246 | `LiveDataHubWritebackPort.write` | `packages/datahub/src/writeback.ts` |
+| 234 | `createWritebackPort` | `apps/worker/src/orchestration.ts` |
 
-No new class may be added to this table.
+For every grandfathered class and function:
+
+- you may modify it without splitting it first;
+- you must **not increase** its line count — a change that grows one is a blocking finding;
+- when a task substantially reworks one, split it as part of that task;
+- the repository-wide count of over-limit functions must never increase above 36.
+
+No new class or function may join these baselines. A function you create must be at or under 50 lines from the start.
+
+Both baselines were measured, not assumed. Re-measure before claiming a violation:
+
+```bash
+# classes over 300 lines
+for f in $(grep -rl "^class \|^export class " packages apps scripts \
+  --include="*.ts" --include="*.tsx" | grep -v node_modules | grep -v dist); do
+  awk -v F="$f" '/^(export )?class /{n=$0;s=NR;d=0;ic=1} ic{d+=gsub(/{/,"{");d-=gsub(/}/,"}");
+    if(d==0&&NR>s){print NR-s+1, F, n; ic=0}}' "$f"
+done | sort -rn | awk '$1>300'
+```
 
 ### How to split
 

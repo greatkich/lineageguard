@@ -2,6 +2,17 @@ import type { ImpactContext } from "./evidence.js";
 
 export type ImpactConsumerKind = "DATA_MODEL" | "DASHBOARD" | "ML_CONSUMER" | "UNMANAGED_QUERY";
 
+/**
+ * The canonical consumer groups, in the order the walkthrough presents them. Derivation emits at
+ * most one group per kind, so this doubles as the expected shape of a complete canonical run.
+ */
+export const canonicalConsumerKinds: readonly ImpactConsumerKind[] = Object.freeze([
+  "DATA_MODEL",
+  "DASHBOARD",
+  "ML_CONSUMER",
+  "UNMANAGED_QUERY",
+]);
+
 interface BaseConsumer {
   kind: ImpactConsumerKind;
   title: string;
@@ -140,4 +151,33 @@ function extractDatasetName(urn: string): string {
   // "urn:li:dataset:(urn:li:dataPlatform:dbt,analytics.customer_revenue,PROD)"
   const match = urn.match(/,([^,]+),\w+\)$/);
   return match?.[1] ?? urn;
+}
+
+/**
+ * Fails closed when derivation does not yield the canonical four groups in canonical order.
+ *
+ * The walkthrough's whole claim is that DataHub reveals exactly four hidden consumer groups, so a
+ * count or ordering change is a regression in the product story, not a cosmetic difference. Callers
+ * that render or persist a consumer count must assert through this helper rather than trusting a
+ * separately stored number.
+ */
+export function assertExactlyFourConsumers(consumers: readonly ImpactConsumer[]): void {
+  if (consumers.length !== canonicalConsumerKinds.length) {
+    throw new Error(
+      `IMPACT_CARD_COUNT_MISMATCH: expected ${String(canonicalConsumerKinds.length)}, got ${String(consumers.length)}`,
+    );
+  }
+  const kinds = consumers.map((consumer) => consumer.kind);
+  const mismatch = kinds.findIndex((kind, index) => kind !== canonicalConsumerKinds[index]);
+  if (mismatch !== -1) {
+    throw new Error(`IMPACT_CARD_ORDER_MISMATCH: got ${JSON.stringify(kinds)}`);
+  }
+  const urns = consumers.map((consumer) => consumer.entityUrn);
+  if (new Set(urns).size !== urns.length) {
+    throw new Error(`IMPACT_CARD_DUPLICATE_URN: got ${JSON.stringify(urns)}`);
+  }
+  const unevidenced = consumers.find((consumer) => consumer.evidenceIds.length === 0);
+  if (unevidenced) {
+    throw new Error(`IMPACT_CARD_WITHOUT_EVIDENCE: ${unevidenced.kind}`);
+  }
 }

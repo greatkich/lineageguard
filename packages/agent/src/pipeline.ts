@@ -1,5 +1,6 @@
 import type { LanguageModelV2 } from "@ai-sdk/provider";
 import {
+  assertExactlyFourConsumers,
   bindMigrationCandidate,
   type ImpactContext,
   type MigrationCandidate,
@@ -127,6 +128,26 @@ function extractJson(text: string): unknown {
   throw new Error("No JSON in LLM response");
 }
 
+/**
+ * Collects DataHub context and asserts the canonical four consumer groups before the count is
+ * persisted. The walkthrough's central claim is that DataHub reveals exactly four hidden
+ * consumers, so a derivation regression must fail the run rather than store a wrong number.
+ */
+async function collectAssertedContext(
+  ctx: StepContext,
+  changeId: string,
+  result: PipelineResult,
+): Promise<ImpactContext> {
+  const { context } = await collectContext(ctx, changeId);
+  const impactCards = deriveImpactCards(context);
+  assertExactlyFourConsumers(impactCards);
+  result.consumersFound = impactCards.length;
+  console.log(
+    `  [pipeline] Step 3: Collected ${context.evidence.length} evidence items (${impactCards.length} impact cards)`,
+  );
+  return context;
+}
+
 // ---------------------------------------------------------------------------
 // Pipeline
 // ---------------------------------------------------------------------------
@@ -181,16 +202,9 @@ export function createAgentPipeline(config: AgentPipelineConfig) {
       await notify(input.runId, "CONTEXT_COLLECTING");
       let context: ImpactContext;
       try {
-        const collectResult = await collectContext(ctx, change.id);
-        context = collectResult.context;
-        // Derive exactly 4 canonical impact cards (not raw evidence count)
-        const impactCards = deriveImpactCards(context);
-        result.consumersFound = impactCards.length;
-        console.log(
-          `  [pipeline] Step 3: Collected ${context.evidence.length} evidence items (${impactCards.length} impact cards)`,
-        );
+        context = await collectAssertedContext(ctx, change.id, result);
         await notify(input.runId, "CONTEXT_COLLECTED", {
-          consumersFound: impactCards.length,
+          consumersFound: result.consumersFound,
           evidenceItems: context.evidence.length,
           contextJson: context,
         });

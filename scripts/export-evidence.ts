@@ -11,6 +11,11 @@ import { createHash } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createSimpleRunStore } from "@lineageguard/db";
+import {
+  assertExactlyFourConsumers,
+  deriveImpactConsumers,
+  impactContextSchema,
+} from "@lineageguard/domain";
 import pg from "pg";
 
 function fingerprintOf(value: unknown): string {
@@ -20,6 +25,31 @@ function fingerprintOf(value: unknown): string {
 
 function writeJson(path: string, value: unknown): void {
   writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`);
+}
+
+/**
+ * Re-derives the consumer count from the persisted context instead of trusting the run's stored
+ * scalar, and refuses to export when the two disagree. A stale or wrong column must never become
+ * golden evidence that reviewers read as verified.
+ */
+function derivedConsumerCount(contextJson: unknown, persisted: number): number {
+  if (contextJson === null || contextJson === undefined) {
+    throw new Error(
+      "EVIDENCE_EXPORT_BLOCKED: run has no persisted impact context to re-derive from",
+    );
+  }
+  const parsed = impactContextSchema.safeParse(contextJson);
+  if (!parsed.success) {
+    throw new Error("EVIDENCE_EXPORT_BLOCKED: persisted impact context failed schema validation");
+  }
+  const consumers = deriveImpactConsumers(parsed.data);
+  assertExactlyFourConsumers(consumers);
+  if (consumers.length !== persisted) {
+    throw new Error(
+      `EVIDENCE_EXPORT_BLOCKED: persisted consumersFound=${String(persisted)} disagrees with derived=${String(consumers.length)}`,
+    );
+  }
+  return consumers.length;
 }
 
 async function main(): Promise<void> {
@@ -61,6 +91,10 @@ async function main(): Promise<void> {
     const candidateFingerprint = fingerprintOf(run.candidateJson);
     const comparisonFingerprint = fingerprintOf(run.comparisonJson);
 
+    // The exported consumer count is re-derived from the persisted context rather than copied from
+    // the run's stored scalar, so a stale or wrong column can never become golden evidence.
+    const impactConsumers = derivedConsumerCount(run.contextJson, run.consumersFound);
+
     const manifest = {
       schemaVersion: 1,
       scenario: "canonical-customer-id-rename",
@@ -89,7 +123,7 @@ async function main(): Promise<void> {
       expectedOutcome: {
         baselineDecision: run.baselineDecision,
         groundedDecision: run.groundedDecision,
-        impactConsumers: run.consumersFound,
+        impactConsumers,
         triggeredRules: (run.triggeredRules ?? "").split(",").filter(Boolean),
         generatedArtifacts: run.artifactsGenerated,
         prUrl: run.prUrl,
