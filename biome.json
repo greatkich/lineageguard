@@ -9,7 +9,9 @@
       "!!**/node_modules",
       "!!**/playwright-report",
       "!!**/test-results",
-      "!!**/.venv"
+      "!!**/.venv",
+      "!!artifacts/**",
+      "!!examples/canonical-run/**"
     ]
   },
   "formatter": {

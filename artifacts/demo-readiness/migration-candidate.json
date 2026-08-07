@@ -27,18 +27,25 @@
         "walkthrough/dbt/tests/orders_buyer_id_not_null.sql",
         "walkthrough/dbt/tests/orders_compat.sql"
       ],
-      "affectedEvidenceIds": ["ev_a193c7a6f647028a5d17fbac", "ev_f0a45b70be19a93cda9c5129"]
+      "affectedEvidenceIds": [
+        "ev_a193c7a6f647028a5d17fbac",
+        "ev_f0a45b70be19a93cda9c5129"
+      ]
     },
     {
       "id": "step_contract",
       "phase": "CONTRACT",
       "title": "Contract: deprecate customer_id",
       "rationale": "Retire the compatibility field after approval and observation.",
-      "artifactTargets": ["docs/migrations/customer-id.md"],
-      "affectedEvidenceIds": ["ev_171e9e739d3d518e46aad9ee"]
+      "artifactTargets": [
+        "docs/migrations/customer-id.md"
+      ],
+      "affectedEvidenceIds": [
+        "ev_171e9e739d3d518e46aad9ee"
+      ]
     }
   ],
-  "summary": "A rename is a breaking change for all downstream consumers. The expand-migrate-contract strategy avoids downtime and breakage by first making the new column available alongside the old one (expand), then systematically migrating each consumer — prioritizing CRITICAL dependencies — while asserting data equivalence (migrate), and finally removing the old column only after a monitored deprecation window confirms zero residual usage (contract). This approach is especially critical here given 5 downstream consumers including CRITICAL dashboards and ML models that cannot tolerate disruption. Rollback instructions: At any step before contract, the old column 'customer_id' remains fully functional. If issues arise during migration, revert consumer queries to reference 'customer_id', remove the buyer_id column and associated triggers/constraints, and restore original schema. After contract (column drop), rollback requires restoring from backup or re-adding customer_id with data backfilled from buyer_id.",
+  "summary": "Renaming a column referenced by five downstream consumers—including two CRITICAL dashboards and a production ML model—requires a phased expand-migrate-contract strategy to avoid breaking changes. The expand phase introduces buyer_id as a synchronized duplicate, allowing both old and new names to coexist. Consumers are migrated individually in priority order (CRITICAL systems first after the safe HIGH-priority system validates the path). Data integrity assertions run continuously during the migration window. A 90-day deprecation period gives unmapped or late-discovered consumers time to surface before the contract phase removes customer_id. Rollback paths are defined for each phase to ensure recoverability at any point.",
   "strategy": "EXPAND_MIGRATE_CONTRACT",
   "artifacts": [
     {

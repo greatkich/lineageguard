@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { canonicalCandidateFingerprint, decisionMarker } from "./effect-identity.js";
 import { createGitHubPort, createWritebackPort } from "./orchestration.js";
 
 const ORIGINAL_ENV = { ...process.env };
@@ -177,6 +178,32 @@ function writebackInput() {
   };
 }
 
+/**
+ * The exact institutional-memory description the writeback port composes for an input.
+ *
+ * Derived here from the same inputs and the same identity function rather than hardcoded, so the
+ * idempotency tests below distinguish "byte-identical decision" from "same decision, newer run".
+ */
+function expectedDecisionDocument(input: ReturnType<typeof writebackInput>): string {
+  const candidate = input.candidate as unknown as Parameters<
+    typeof canonicalCandidateFingerprint
+  >[0];
+  return [
+    `Marker: ${decisionMarker(canonicalCandidateFingerprint(candidate))}`,
+    "Decision: BLOCK",
+    `Latest verified run: ${input.runId}`,
+    "Source field: customer_id",
+    "Replacement field: buyer_id",
+    "Compatibility window: 30 days",
+    "Reasons: LG001",
+    "Candidate: EXPAND_MIGRATE_CONTRACT",
+    `Validation receipt: ${input.validationReceiptFingerprint.slice(0, 16)}`,
+    `GitHub review: ${input.githubPrUrl}`,
+    `GitHub receipt: ${input.githubReceiptFingerprint.slice(0, 16)}`,
+    "Rollback: walkthrough/migrations/001_rollback.sql",
+  ].join("\n");
+}
+
 describe("createWritebackPort", () => {
   it("returns undefined when DATAHUB_MUTATION_TOKEN is not configured", () => {
     delete process.env.DATAHUB_MUTATION_TOKEN;
@@ -338,9 +365,10 @@ describe("createWritebackPort", () => {
     ).toBe(true);
   });
 
-  it("is idempotent: skips re-writing when the decision marker and tag already exist", async () => {
+  it("is idempotent: performs no mutation when the remembered decision is already current", async () => {
     writebackEnv();
     let ingestCalls = 0;
+    const current = expectedDecisionDocument(writebackInput());
     vi.stubGlobal(
       "fetch",
       vi.fn(async (url: string, init?: RequestInit) => {
@@ -360,15 +388,7 @@ describe("createWritebackPort", () => {
         }
         if (method === "GET" && url.includes("aspect=institutionalMemory")) {
           return jsonResponse({
-            aspect: {
-              value: JSON.stringify({
-                elements: [
-                  {
-                    description: "lineageguard:decision:v1:candidate-46c580779287ba5f",
-                  },
-                ],
-              }),
-            },
+            aspect: { value: JSON.stringify({ elements: [{ description: current }] }) },
           });
         }
         throw new Error(`Unexpected fetch: ${method} ${url}`);
@@ -381,5 +401,66 @@ describe("createWritebackPort", () => {
 
     expect(result.status).toBe("SUCCEEDED");
     expect(ingestCalls).toBe(0); // no mutation performed — idempotent short-circuit
+  });
+
+  it("refreshes the one decision document when the same decision names an older run", async () => {
+    writebackEnv();
+    const staleRunId = "run_test_0000000000000001";
+    const stale = expectedDecisionDocument(writebackInput()).replace(
+      `Latest verified run: ${writebackInput().runId}`,
+      `Latest verified run: ${staleRunId}`,
+    );
+    const documentWrites: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        const method = init?.method ?? "GET";
+        if (url.includes("ingestProposal")) {
+          const body = JSON.parse(String(init?.body ?? "{}")) as {
+            proposal?: { aspectName?: string; aspect?: { value?: string } };
+          };
+          if (body.proposal?.aspectName === "institutionalMemory") {
+            documentWrites.push(body.proposal.aspect?.value ?? "");
+          }
+          return jsonResponse({ status: "ok" });
+        }
+        if (method === "GET" && url.includes("aspect=globalTags")) {
+          return jsonResponse({
+            aspect: {
+              value: JSON.stringify({
+                tags: [{ tag: "urn:li:tag:lineageguard-canonical.Reviewed" }],
+              }),
+            },
+          });
+        }
+        if (method === "GET" && url.includes("aspect=institutionalMemory")) {
+          // Read-after-write verification re-reads; serve the refreshed document once written.
+          const latest = documentWrites.at(-1);
+          if (latest !== undefined) return jsonResponse({ aspect: { value: latest } });
+          return jsonResponse({
+            aspect: { value: JSON.stringify({ elements: [{ description: stale }] }) },
+          });
+        }
+        throw new Error(`Unexpected fetch: ${method} ${url}`);
+      }),
+    );
+
+    const port = createWritebackPort();
+    if (!port) throw new Error("Writeback port should be configured");
+    const result = await port.write(writebackInput());
+
+    expect(result.status).toBe("SUCCEEDED");
+    expect(documentWrites.length).toBe(1);
+    const written = JSON.parse(documentWrites[0] ?? "{}") as {
+      elements?: Array<{ description?: string }>;
+    };
+    const decisions = (written.elements ?? []).filter((element) =>
+      element.description?.includes("lineageguard:decision:v1:"),
+    );
+    // Exactly one decision element survives, and it names the current run — the identity is stable
+    // while the verified-run reference is not allowed to go stale.
+    expect(decisions.length).toBe(1);
+    expect(decisions[0]?.description).toContain(`Latest verified run: ${writebackInput().runId}`);
+    expect(decisions[0]?.description).not.toContain(staleRunId);
   });
 });

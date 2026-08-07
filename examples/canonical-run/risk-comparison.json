@@ -5,7 +5,7 @@
     "changeId": "chg_81cda26ad872f06f0a456bcf",
     "decision": "ALLOW",
     "contextMode": "REPOSITORY_ONLY",
-    "evaluatedAt": "2026-08-07T20:32:35.709Z",
+    "evaluatedAt": "2026-08-07T22:05:45.850Z",
     "policyVersion": "lineageguard-p0.1"
   },
   "changeId": "chg_81cda26ad872f06f0a456bcf",
@@ -16,37 +16,51 @@
         "ruleId": "LG001",
         "message": "The incompatible field rename has downstream field-level lineage.",
         "severity": "CRITICAL",
-        "evidenceIds": ["ev_9e907158dba3dd3b5ea635af", "ev_a193c7a6f647028a5d17fbac"]
+        "evidenceIds": [
+          "ev_9e907158dba3dd3b5ea635af",
+          "ev_a193c7a6f647028a5d17fbac"
+        ]
       },
       {
         "ruleId": "LG002",
         "message": "A production ML model depends on the renamed field.",
         "severity": "CRITICAL",
-        "evidenceIds": ["ev_f0a45b70be19a93cda9c5129"]
+        "evidenceIds": [
+          "ev_f0a45b70be19a93cda9c5129"
+        ]
       },
       {
         "ruleId": "LG003",
         "message": "An observed system query references the renamed field.",
         "severity": "HIGH",
-        "evidenceIds": ["ev_171e9e739d3d518e46aad9ee"]
+        "evidenceIds": [
+          "ev_171e9e739d3d518e46aad9ee"
+        ]
       },
       {
         "ruleId": "LG004",
         "message": "A critical dashboard depends on the incompatible field change.",
         "severity": "CRITICAL",
-        "evidenceIds": ["ev_59eb5c12bc8d30556ca933fe"]
+        "evidenceIds": [
+          "ev_59eb5c12bc8d30556ca933fe"
+        ]
       }
     ],
     "changeId": "chg_81cda26ad872f06f0a456bcf",
     "decision": "BLOCK",
     "contextMode": "DATAHUB_GROUNDED",
-    "evaluatedAt": "2026-08-07T20:32:46.913Z",
+    "evaluatedAt": "2026-08-07T22:05:55.664Z",
     "policyVersion": "lineageguard-p0.1",
     "impactContextFingerprint": "a44ffdb760b53fee35ae94f3f17c39c1630470224c0f6b895bf990bd849bcdc1"
   },
   "transition": "ALLOW→BLOCK",
   "decisionChanged": true,
-  "triggeredRuleIds": ["LG001", "LG002", "LG003", "LG004"],
+  "triggeredRuleIds": [
+    "LG001",
+    "LG002",
+    "LG003",
+    "LG004"
+  ],
   "changedBecauseEvidenceIds": [
     "ev_171e9e739d3d518e46aad9ee",
     "ev_59eb5c12bc8d30556ca933fe",

@@ -23,22 +23,24 @@
           "role": "QUERY_DISCOVERY",
           "tool": "get_dataset_queries",
           "source": "DATAHUB_MCP",
-          "retrievedAt": "2026-08-07T20:32:44.032Z",
-          "invocationId": "mcp_af5ea21f-8148-4d8b-b7c3-713c67f61b73",
+          "retrievedAt": "2026-08-07T22:05:52.756Z",
+          "invocationId": "mcp_29a3cfd7-626d-4aeb-8645-6cd65965d4a8",
           "responseFingerprint": "5ae6ad2907e34df653bca7481e4eaf051e8fe240067e7fad0bdac1139b68b91b"
         },
         {
           "role": "QUERY_DETAILS",
           "tool": "get_entities",
           "source": "DATAHUB_MCP",
-          "retrievedAt": "2026-08-07T20:32:45.377Z",
-          "invocationId": "mcp_62c3a078-f191-4e69-a093-e0254f49c343",
+          "retrievedAt": "2026-08-07T22:05:54.047Z",
+          "invocationId": "mcp_b0cf39d8-3b5d-401c-907c-7e4fd8e9e15c",
           "responseFingerprint": "049e633c4c9c6bcdd50381eda7831a516fa7cc94021f09944eb0e38a43ae823c"
         }
       ],
       "criticality": "HIGH",
       "fingerprint": "171e9e739d3d518e46aad9ee73a7bad7e89475ef5d185503655385adbe0fe810",
-      "relatedEvidenceIds": ["ev_9e907158dba3dd3b5ea635af"]
+      "relatedEvidenceIds": [
+        "ev_9e907158dba3dd3b5ea635af"
+      ]
     },
     {
       "id": "ev_1816ead46a32f7a9a17199ba",
@@ -58,14 +60,16 @@
           "role": "OWNER",
           "tool": "get_entities",
           "source": "DATAHUB_MCP",
-          "retrievedAt": "2026-08-07T20:32:44.935Z",
-          "invocationId": "mcp_792ffb52-161d-4980-abd8-f4cef453909f",
+          "retrievedAt": "2026-08-07T22:05:53.619Z",
+          "invocationId": "mcp_bc89de84-ca05-4d0b-b57e-e80b83660e5f",
           "responseFingerprint": "79ed448c90e6fbb774c967436e07a08662448a081b76a368099fc0d53c019c89"
         }
       ],
       "criticality": "HIGH",
       "fingerprint": "1816ead46a32f7a9a17199ba1152040b027142ef1bd6ce5074e83b53239814db",
-      "relatedEvidenceIds": ["ev_f0a45b70be19a93cda9c5129"]
+      "relatedEvidenceIds": [
+        "ev_f0a45b70be19a93cda9c5129"
+      ]
     },
     {
       "id": "ev_1f112a8ac95df55ff9bab339",
@@ -85,8 +89,8 @@
           "role": "SCHEMA",
           "tool": "list_schema_fields",
           "source": "DATAHUB_MCP",
-          "retrievedAt": "2026-08-07T20:32:41.053Z",
-          "invocationId": "mcp_00fc2297-371f-436e-9aa3-a4836256dd01",
+          "retrievedAt": "2026-08-07T22:05:49.847Z",
+          "invocationId": "mcp_c00661a8-632d-42cf-a4ac-c7abc9313e6b",
           "responseFingerprint": "36f66680231e9f7f085900065d34c28c9f0e3a65887fb44b644852b124894a3e"
         }
       ],
@@ -101,7 +105,9 @@
       "payload": {
         "platform": "looker",
         "lifecycle": "PRODUCTION",
-        "ownerUrns": ["urn:li:corpGroup:lineageguard-canonical.finance-analytics"],
+        "ownerUrns": [
+          "urn:li:corpGroup:lineageguard-canonical.finance-analytics"
+        ],
         "dashboardUrn": "urn:li:dashboard:(looker,lineageguard-canonical.finance-revenue-dashboard)",
         "downstreamField": "analytics.customer_revenue.customer_id",
         "ownershipObserved": true,
@@ -120,14 +126,16 @@
           "role": "ENTITY_DETAILS",
           "tool": "get_entities",
           "source": "DATAHUB_MCP",
-          "retrievedAt": "2026-08-07T20:32:44.499Z",
-          "invocationId": "mcp_e6b1cc4c-a11d-4eee-a79b-11d5a1cba60c",
+          "retrievedAt": "2026-08-07T22:05:53.194Z",
+          "invocationId": "mcp_b39cc0de-5c4f-4759-8fa4-0d56f1810b7f",
           "responseFingerprint": "e890ee62c31f04a17570e6b2208a6972b81f18445f55eaf86da8f25cbfa323fa"
         }
       ],
       "criticality": "CRITICAL",
       "fingerprint": "59eb5c12bc8d30556ca933fe36a8ffc4f1f5843c9fe0d508fbca7cb2472bc7d2",
-      "relatedEvidenceIds": ["ev_9e907158dba3dd3b5ea635af"]
+      "relatedEvidenceIds": [
+        "ev_9e907158dba3dd3b5ea635af"
+      ]
     },
     {
       "id": "ev_9e907158dba3dd3b5ea635af",
@@ -173,24 +181,24 @@
           "role": "LINEAGE_DISCOVERY",
           "tool": "get_lineage",
           "source": "DATAHUB_MCP",
-          "retrievedAt": "2026-08-07T20:32:41.560Z",
-          "invocationId": "mcp_30f68980-1d47-475f-8cd5-4063526693af",
+          "retrievedAt": "2026-08-07T22:05:50.372Z",
+          "invocationId": "mcp_4c8dc5a5-98c7-4ac8-b2f2-d1a1c384be47",
           "responseFingerprint": "4694c581bc761f4f8f7ecaf54445108161e201191db2148ee61ac0308b774b52"
         },
         {
           "role": "FIELD_PATH",
           "tool": "get_lineage_paths_between",
           "source": "DATAHUB_MCP",
-          "retrievedAt": "2026-08-07T20:32:42.082Z",
-          "invocationId": "mcp_934f6f11-77c4-49fe-9cfb-104f4213283b",
+          "retrievedAt": "2026-08-07T22:05:50.876Z",
+          "invocationId": "mcp_95d827d8-0cd2-4517-8079-0cc2e0e996a2",
           "responseFingerprint": "a11143f9eb5eba46baeeb20bc8a04553ff5ede4d4470fae17cc8cad7747a6258"
         },
         {
           "role": "ENTITY_PATH",
           "tool": "get_lineage_paths_between",
           "source": "DATAHUB_MCP",
-          "retrievedAt": "2026-08-07T20:32:42.660Z",
-          "invocationId": "mcp_39ea4f9c-4939-42b9-a48f-2ad3fca8cbd1",
+          "retrievedAt": "2026-08-07T22:05:51.410Z",
+          "invocationId": "mcp_ff49e38d-0597-4488-a2cb-a2c872d945bc",
           "responseFingerprint": "bc99ab9304e994cebdffefccc5ee1bd556d535070a08c7750bc234f64e9350e7"
         }
       ],
@@ -242,24 +250,24 @@
           "role": "LINEAGE_DISCOVERY",
           "tool": "get_lineage",
           "source": "DATAHUB_MCP",
-          "retrievedAt": "2026-08-07T20:32:41.560Z",
-          "invocationId": "mcp_30f68980-1d47-475f-8cd5-4063526693af",
+          "retrievedAt": "2026-08-07T22:05:50.372Z",
+          "invocationId": "mcp_4c8dc5a5-98c7-4ac8-b2f2-d1a1c384be47",
           "responseFingerprint": "4694c581bc761f4f8f7ecaf54445108161e201191db2148ee61ac0308b774b52"
         },
         {
           "role": "FIELD_PATH",
           "tool": "get_lineage_paths_between",
           "source": "DATAHUB_MCP",
-          "retrievedAt": "2026-08-07T20:32:43.127Z",
-          "invocationId": "mcp_fc2dfe1f-5396-4236-81bb-26e723a19ab1",
+          "retrievedAt": "2026-08-07T22:05:51.896Z",
+          "invocationId": "mcp_aa6a4285-47c6-42b2-8c38-387557d38dbf",
           "responseFingerprint": "c0e9eeaa94f8b054b80dbae50d57317c1bd8eb19ff255b4355588d807b348656"
         },
         {
           "role": "ENTITY_PATH",
           "tool": "get_lineage_paths_between",
           "source": "DATAHUB_MCP",
-          "retrievedAt": "2026-08-07T20:32:43.525Z",
-          "invocationId": "mcp_ad681504-a37f-4b2a-9386-1fdf275e8db5",
+          "retrievedAt": "2026-08-07T22:05:52.335Z",
+          "invocationId": "mcp_51fd0d83-f656-4f7f-b288-010183bad102",
           "responseFingerprint": "389808c1a0bed65cb69e975fe1aa0a3f94e0138c074f7b80d219674f68c3550c"
         }
       ],
@@ -286,16 +294,16 @@
           "role": "GLOSSARY_BINDING",
           "tool": "list_schema_fields",
           "source": "DATAHUB_MCP",
-          "retrievedAt": "2026-08-07T20:32:41.053Z",
-          "invocationId": "mcp_00fc2297-371f-436e-9aa3-a4836256dd01",
+          "retrievedAt": "2026-08-07T22:05:49.847Z",
+          "invocationId": "mcp_c00661a8-632d-42cf-a4ac-c7abc9313e6b",
           "responseFingerprint": "36f66680231e9f7f085900065d34c28c9f0e3a65887fb44b644852b124894a3e"
         },
         {
           "role": "GLOSSARY_DETAILS",
           "tool": "get_entities",
           "source": "DATAHUB_MCP",
-          "retrievedAt": "2026-08-07T20:32:46.286Z",
-          "invocationId": "mcp_d6df6220-edff-48e5-811b-a298fa7368e5",
+          "retrievedAt": "2026-08-07T22:05:55.053Z",
+          "invocationId": "mcp_606316d3-8ed4-466b-8b55-5ae77238c2b8",
           "responseFingerprint": "8184f85926ab7fb58a3dcb378fd0334ec8acdc51d3f269236932b638f344aec4"
         }
       ],
@@ -321,14 +329,16 @@
           "role": "OWNER",
           "tool": "get_entities",
           "source": "DATAHUB_MCP",
-          "retrievedAt": "2026-08-07T20:32:44.499Z",
-          "invocationId": "mcp_e6b1cc4c-a11d-4eee-a79b-11d5a1cba60c",
+          "retrievedAt": "2026-08-07T22:05:53.194Z",
+          "invocationId": "mcp_b39cc0de-5c4f-4759-8fa4-0d56f1810b7f",
           "responseFingerprint": "e890ee62c31f04a17570e6b2208a6972b81f18445f55eaf86da8f25cbfa323fa"
         }
       ],
       "criticality": "HIGH",
       "fingerprint": "d4164db054a4481b94a2093134f8ad047b9ca2026fc596e958378309dce701c6",
-      "relatedEvidenceIds": ["ev_59eb5c12bc8d30556ca933fe"]
+      "relatedEvidenceIds": [
+        "ev_59eb5c12bc8d30556ca933fe"
+      ]
     },
     {
       "id": "ev_e81b6d759a2158b1562bc984",
@@ -348,14 +358,16 @@
           "role": "OWNER",
           "tool": "get_entities",
           "source": "DATAHUB_MCP",
-          "retrievedAt": "2026-08-07T20:32:45.859Z",
-          "invocationId": "mcp_4bfeebe4-4192-446b-a0ff-e35c8f4722f1",
+          "retrievedAt": "2026-08-07T22:05:54.603Z",
+          "invocationId": "mcp_3ea77002-7af4-4190-81aa-11c92bf39aad",
           "responseFingerprint": "83e1717524f88406cd2020948b8ee827f15bd04bdf95753ce03ba2e8f349e250"
         }
       ],
       "criticality": "HIGH",
       "fingerprint": "e81b6d759a2158b1562bc984b218e9786682643c930aa461dad1d6420b06e609",
-      "relatedEvidenceIds": ["ev_171e9e739d3d518e46aad9ee"]
+      "relatedEvidenceIds": [
+        "ev_171e9e739d3d518e46aad9ee"
+      ]
     },
     {
       "id": "ev_f0a45b70be19a93cda9c5129",
@@ -364,7 +376,9 @@
       "payload": {
         "modelUrn": "urn:li:mlModel:(urn:li:dataPlatform:mlflow,lineageguard-canonical.fraud-model-v3,PROD)",
         "lifecycle": "PRODUCTION",
-        "ownerUrns": ["urn:li:corpGroup:lineageguard-canonical.risk-ml"],
+        "ownerUrns": [
+          "urn:li:corpGroup:lineageguard-canonical.risk-ml"
+        ],
         "featureField": "fraud.customer_features.customer_id",
         "featureDatasetUrn": "urn:li:dataset:(urn:li:dataPlatform:postgres,lineageguard-canonical.lineageguard.fraud.customer_features,PROD)",
         "ownershipObserved": true,
@@ -376,7 +390,7 @@
           "endpoint": "http://127.0.0.1:8080/openapi/v3/entity/mlModel/urn%3Ali%3AmlModel%3A(urn%3Ali%3AdataPlatform%3Amlflow%2Clineageguard-canonical.fraud-model-v3%2CPROD)/mlModelTrainingData",
           "modelUrn": "urn:li:mlModel:(urn:li:dataPlatform:mlflow,lineageguard-canonical.fraud-model-v3,PROD)",
           "aspectName": "mlModelTrainingData",
-          "retrievedAt": "2026-08-07T20:32:43.545Z",
+          "retrievedAt": "2026-08-07T22:05:52.354Z",
           "responseSha256": "80faac3cadf4a038184693756a8ae33978c88cbb83af17bd2366bf560ae5c6df",
           "credentialClass": "READ",
           "provenDatasetUrn": "urn:li:dataset:(urn:li:dataPlatform:postgres,lineageguard-canonical.lineageguard.fraud.customer_features,PROD)"
@@ -391,14 +405,16 @@
           "role": "ENTITY_DETAILS",
           "tool": "get_entities",
           "source": "DATAHUB_MCP",
-          "retrievedAt": "2026-08-07T20:32:44.935Z",
-          "invocationId": "mcp_792ffb52-161d-4980-abd8-f4cef453909f",
+          "retrievedAt": "2026-08-07T22:05:53.619Z",
+          "invocationId": "mcp_bc89de84-ca05-4d0b-b57e-e80b83660e5f",
           "responseFingerprint": "79ed448c90e6fbb774c967436e07a08662448a081b76a368099fc0d53c019c89"
         }
       ],
       "criticality": "CRITICAL",
       "fingerprint": "f0a45b70be19a93cda9c5129e7667c476f73abe14a47c988fbe9a61ca8956e38",
-      "relatedEvidenceIds": ["ev_a193c7a6f647028a5d17fbac"]
+      "relatedEvidenceIds": [
+        "ev_a193c7a6f647028a5d17fbac"
+      ]
     }
   ],
   "failures": [],
@@ -420,19 +436,19 @@
         "role": "RESOLUTION",
         "tool": "search",
         "source": "DATAHUB_MCP",
-        "retrievedAt": "2026-08-07T20:32:40.587Z",
-        "invocationId": "mcp_88cf3fad-c4d5-4e30-9f07-8a4c6ef21f43",
+        "retrievedAt": "2026-08-07T22:05:49.383Z",
+        "invocationId": "mcp_ecb9daa5-93c0-4211-b986-7e5c8f7d6967",
         "responseFingerprint": "0e5f7d16bb9804be782c0b014c1b97cd5d8ce8eb47cb5195b476f60576304346"
       }
     ],
     "schemaFieldUrn": "urn:li:schemaField:(urn:li:dataset:(urn:li:dataPlatform:postgres,lineageguard-canonical.lineageguard.commerce.orders,PROD),customer_id)",
     "nativeFieldPath": "customer_id"
   },
-  "collectedAt": "2026-08-07T20:32:46.286Z",
+  "collectedAt": "2026-08-07T22:05:55.053Z",
   "collectionOrigin": {
     "mode": "LIVE"
   },
   "collectionStatus": "COMPLETE",
-  "collectionFingerprint": "f267c6809c5b0d252080fb188692a1f941cd50d9a0d15003ad9681ef87e7333b",
+  "collectionFingerprint": "5a4687f6313197651bf3cf6e45d0a437c74ad26a7a525672baf5014c994ff293",
   "impactContextFingerprint": "a44ffdb760b53fee35ae94f3f17c39c1630470224c0f6b895bf990bd849bcdc1"
 }

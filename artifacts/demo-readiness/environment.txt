@@ -1,31 +1,5 @@
-Branch: fix/demo-readiness-final
-HEAD: d130fd2a0307eaec187b6a764cd164e76b0062ac
-?? artifacts/
-?? docs/superpowers/plans/2026-08-06-demo-readiness-final.md
---- Recent commits ---
-d130fd2 (HEAD -> fix/demo-readiness-final, origin/main, origin/HEAD) docs: lock LineageGuard pitch north star
-7b835d7 (main, fix/data-platform-boundary) refactor(web): use @lineageguard/db SimpleRunStore instead of local db.ts
-915d431 refactor(worker): use @lineageguard/db SimpleRunStore, delete simple-store + dead datahub-rest-port
-c98c6ad feat(db): add SimpleRunStore for simple_runs table
-3147702 fix: wave 3 — source PR stays FIXTURE (domain contract), validation digest/SQL/sources fixed, impact cards use typed fields
-9c2a524 fix: README says 8 executable checks (not 6 validations)
-9462321 fix: 4 impact cards derivation — LINEAGE_PATH not counted as independent consumer
-c89fed1 fix: DataHub write-back preserves existing metadata, uses separate read/mutation tokens
-a737eb3 fix: real source PR analysis — validates canonical rename, passes source type to parser
-ee07c0f fix: backward-compatible migration preserves both fields + correct validation wiring
-cfe9711 fix: verify_dbt_relations array ordering + CLAUDE.md project rules
-a9131a4 (origin/fix/mvp-audit-recovery, fix/mvp-audit-recovery) fix: MCP stdio PATH must include /usr/bin:/bin for system tools
-65bcec9 feat: release package — CI, examples, README, preflight
-5b91e0d fix: Mission Control shows only persisted evidence, no hardcoded values
-63d3a96 fix: real source PR reader + DataHub write-back with read-back verification
-6d4ab65 fix: durable run state + demo exits non-zero on failure
-6c2dfc9 fix: canonical candidate targets real dbt consumers, structural validation removed
-e9262fd fix: Mission Control uses persisted data, no hardcoded fallbacks
-a5a6f93 fix: GitHub PR creation no longer fakes prNumber:0 on failure
-6cbf60f fix: unify worker and demo into single execution path
---- Versions ---
-v24.18.0
-11.20.0
-Python 3.11.3
-Docker version 29.6.2, build dfc4efb
-Docker Compose version v5.3.1
+node v24.18.0
+platform darwin
+runId run_000000000000019fde42c1f0
+codeCommitSha 8cc537c822e5a8dea72e824d452041584da93d25
+exportedAt 2026-08-07T22:07:50.638Z

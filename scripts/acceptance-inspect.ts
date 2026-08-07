@@ -9,7 +9,12 @@
  * Nothing here mutates. These helpers are shared by demo:verify and demo:repeat so both commands
  * derive identical facts from identical reads.
  */
-import { decisionMarker, sha256Bytes } from "@lineageguard/domain";
+import {
+  buildCanonicalSourceEnvelope,
+  decisionMarker,
+  sha256Bytes,
+  type SourceFileInput,
+} from "@lineageguard/domain";
 import { expectedRepository, gmsUrl, readToken, run } from "./demo-support.js";
 
 export type Inspection<T> = Readonly<{ ok: true; value: T } | { ok: false; reason: string }>;
@@ -169,6 +174,79 @@ export async function readFileAtRef(path: string, ref: string): Promise<Inspecti
     return uninspectable(`${path}@${ref.slice(0, 12)} is not base64-encoded content`);
   }
   return inspected(Buffer.from(raw.value.content, "base64").toString("utf8"));
+}
+
+/**
+ * Re-derives a pull request's canonical source-envelope identity straight from GitHub.
+ *
+ * The run store's `sourceDiffFingerprint` is the envelope identity digest — `sha256` over the whole
+ * bound identity (repository, PR, base/head SHAs, every file's path and patch, the selected path,
+ * and the normalized change) — not a hash of any single patch or file.
+ *
+ * So this re-reads the live PR and rebuilds the envelope through `buildCanonicalSourceEnvelope`,
+ * the same domain function the worker binds runs with. Re-implementing the derivation here would
+ * create a second definition of source identity that is free to drift from the one that matters.
+ */
+export async function readPullRequestSourceIdentity(
+  prNumber: number,
+  repository: string = expectedRepository(),
+): Promise<
+  Inspection<{ sourceFingerprint: string; selectedPath: string; files: readonly string[] }>
+> {
+  const pr = await readPullRequest(prNumber);
+  if (!pr.ok) return pr;
+
+  const filesPerPage = 100;
+  const maxPages = 5;
+  const files: SourceFileInput[] = [];
+  let complete = false;
+  for (let page = 1; page <= maxPages && !complete; page += 1) {
+    const batch = await githubGet<Array<{ filename?: string; patch?: string; sha?: string }>>(
+      `/pulls/${String(prNumber)}/files?per_page=${String(filesPerPage)}&page=${String(page)}`,
+    );
+    if (!batch.ok) return batch;
+    if (!Array.isArray(batch.value)) {
+      return uninspectable(`pull request #${String(prNumber)} files response is malformed`);
+    }
+    for (const file of batch.value) {
+      if (typeof file.filename !== "string") {
+        return uninspectable(`pull request #${String(prNumber)} file entry is malformed`);
+      }
+      files.push({
+        path: file.filename,
+        patch: file.patch ?? "",
+        ...(typeof file.sha === "string" ? { blobSha: file.sha } : {}),
+      });
+    }
+    if (batch.value.length < filesPerPage) complete = true;
+  }
+  if (!complete) {
+    return uninspectable(`pull request #${String(prNumber)} has more files than the reader pages`);
+  }
+
+  try {
+    const envelope = buildCanonicalSourceEnvelope({
+      repository,
+      expectedRepository: repository,
+      prNumber: pr.value.number,
+      prUrl: `https://github.com/${repository}/pull/${String(pr.value.number)}`,
+      prState: pr.value.state,
+      baseSha: pr.value.baseSha,
+      headSha: pr.value.headSha,
+      files,
+    });
+    return inspected({
+      sourceFingerprint: envelope.sourceFingerprint,
+      selectedPath: envelope.selectedPath,
+      files: files.map((file) => file.path),
+    });
+  } catch (error) {
+    return uninspectable(
+      `live source PR no longer binds to the canonical envelope: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
 }
 
 // ─── DataHub (read-only) ─────────────────────────────────────────────────────

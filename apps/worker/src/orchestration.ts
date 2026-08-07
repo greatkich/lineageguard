@@ -374,11 +374,18 @@ export function createGitHubPort(): AgentGitHubPort | undefined {
         body: { base_tree: baseCommit.tree.sha, tree: treeEntries },
       })) as { sha: string };
 
-      // Create commit
+      // Create commit.
+      //
+      // The message must not carry the run id. The branch and the PR are already content-addressed
+      // on the candidate, but a run-scoped commit message made the commit SHA differ per rehearsal,
+      // so the branch moved on every run and no run could prove the published head was still its
+      // own. With the message derived only from the candidate, identical input produces an identical
+      // commit and repeated runs converge on one immutable publication. Run-level provenance lives
+      // in the pull request body, which is not part of the commit identity.
       const commit = (await ghFetch(token, `${apiBase}/repos/${owner}/${repo}/git/commits`, {
         method: "POST",
         body: {
-          message: `LineageGuard migration for ${input.runId}\n\nSafe migration: customer_id → buyer_id (expand-migrate-contract)`,
+          message: `LineageGuard migration for candidate ${candidateFingerprint.slice(0, 12)}\n\nSafe migration: customer_id → buyer_id (expand-migrate-contract)`,
           tree: tree.sha,
           parents: [baseSha],
         },
@@ -616,24 +623,34 @@ export function createWritebackPort(): AgentWritebackPort | undefined {
         };
         const existingElements = existingMemory.elements ?? [];
 
-        // Check idempotency: if our marker already exists, skip write
+        // Idempotency is keyed on the semantic decision, so a rehearsal of the same candidate must
+        // not create a second record. But the document's own "Latest verified run" line has to mean
+        // what it says: leaving it pinned to the first writer let it name a run that had since been
+        // reset away, which acceptance could not verify. So an identical decision whose recorded run
+        // is already current is a true no-op, while a new run refreshes the one existing element.
         const decisionFingerprint = canonicalCandidateFingerprint(input.candidate);
         const markerPhrase = decisionMarker(decisionFingerprint);
-        const alreadyWritten = existingElements.some((el) =>
+        const existingDecision = existingElements.find((el) =>
           el.description?.includes(markerPhrase),
         );
         const reviewedTagExists = existingTagList.some(
           (t) => t.tag === "urn:li:tag:lineageguard-canonical.Reviewed",
         );
+        const alreadyCurrent = existingDecision?.description === documentContent;
 
-        if (alreadyWritten && reviewedTagExists) {
-          console.log("[orchestration] DataHub write-back: idempotent — already written");
+        if (alreadyCurrent && reviewedTagExists) {
+          console.log("[orchestration] DataHub write-back: idempotent — already current");
           const receiptFingerprint = createHash("sha256")
             .update(
               JSON.stringify({ documentContent, datasetUrn, runId: input.runId, idempotent: true }),
             )
             .digest("hex");
           return { status: "SUCCEEDED", receiptFingerprint };
+        }
+        if (existingDecision && reviewedTagExists) {
+          console.log(
+            "[orchestration] DataHub write-back: same decision, refreshing the verified-run reference",
+          );
         }
 
         // --- Write tags (preserving existing) ---
@@ -782,6 +799,10 @@ const SIMPLE_RUN_UPDATE_EXTRA_KEYS = [
   "contextJson",
   "candidateJson",
   "comparisonJson",
+  "validationReceiptJson",
+  "githubHeadSha",
+  "githubHeadBranch",
+  "githubBaseSha",
   "sourcePrUrl",
   "failedChecks",
 ] as const satisfies readonly (keyof SimpleRunUpdateExtra)[];

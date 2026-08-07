@@ -31,12 +31,12 @@ import {
   canonicalReviewedTagUrn,
   expectedDecisionMarker,
   hasGitHubToken,
+  readBlobBytes,
   readCommit,
   readDataHubDecisionState,
-  readFileAtRef,
   readPullRequest,
+  readPullRequestSourceIdentity,
   readTreeBlobs,
-  readBlobBytes,
   sha256Bytes,
 } from "./acceptance-inspect.js";
 import {
@@ -183,23 +183,35 @@ async function verifySource(runRecord: StoredRun): Promise<CheckResult[]> {
   );
 
   if (!runRecord.sourceFilePath) {
-    results.push(fail("source pr live bytes", "no selected path to re-read"));
+    results.push(fail("source pr live identity", "no selected path to re-read"));
     return results;
   }
-  const bytes = await readFileAtRef(runRecord.sourceFilePath, live.value.headSha);
-  if (!bytes.ok) {
-    results.push(fail("source pr live bytes", bytes.reason));
+  // Rebuild the envelope from the live PR through the same domain function the worker binds runs
+  // with, then compare identities. This proves the live source still binds to the exact identity
+  // this run analysed, and that it still satisfies the canonical allowlist.
+  const rederived = await readPullRequestSourceIdentity(expected);
+  if (!rederived.ok) {
+    results.push(fail("source pr live identity", rederived.reason));
     return results;
   }
-  // The persisted fingerprint is prefixed by its algorithm in some runs; compare on the digest.
   const persisted = String(runRecord.sourceDiffFingerprint).replace(/^sha256:/, "");
-  const recomputed = sha256Bytes(bytes.value);
   results.push(
-    recomputed === persisted
-      ? pass("source pr live bytes", `re-fingerprinted to ${recomputed.slice(0, 16)}`)
+    rederived.value.sourceFingerprint === persisted
+      ? pass(
+          "source pr live identity",
+          `re-derived ${rederived.value.sourceFingerprint.slice(0, 16)} from ${String(rederived.value.files.length)} changed file(s)`,
+        )
       : fail(
-          "source pr live bytes",
-          `live bytes hash ${recomputed.slice(0, 16)} but run recorded ${persisted.slice(0, 16)}`,
+          "source pr live identity",
+          `live PR re-derives ${rederived.value.sourceFingerprint.slice(0, 16)} but run bound ${persisted.slice(0, 16)}`,
+        ),
+  );
+  results.push(
+    rederived.value.selectedPath === runRecord.sourceFilePath
+      ? pass("source pr selected path", rederived.value.selectedPath)
+      : fail(
+          "source pr selected path",
+          `live envelope selects ${rederived.value.selectedPath} but run recorded ${runRecord.sourceFilePath}`,
         ),
   );
   return results;
@@ -366,14 +378,26 @@ async function verifyGitHub(runRecord: StoredRun): Promise<CheckResult[]> {
   );
 
   if (runRecord.githubHeadSha) {
-    results.push(
-      pr.value.headSha === runRecord.githubHeadSha
-        ? pass("generated head unchanged", `${pr.value.headSha.slice(0, 12)} as published`)
-        : fail(
-            "generated head unchanged",
-            `remote head ${pr.value.headSha.slice(0, 12)} but run published ${runRecord.githubHeadSha.slice(0, 12)}`,
-          ),
-    );
+    // A later rehearsal of the same candidate republishes the same tree, but Git commit identity
+    // includes the commit timestamp, so the SHA legitimately differs. Treat a moved head as
+    // acceptable only when the content still matches — which the tree and blob checks below prove
+    // mandatorily. Claiming "unchanged" here would be false for any run but the most recent.
+    if (pr.value.headSha === runRecord.githubHeadSha) {
+      results.push(
+        pass(
+          "generated head",
+          `${pr.value.headSha.slice(0, 12)} is exactly what this run published`,
+        ),
+      );
+    } else {
+      results.push(
+        pass(
+          "generated head",
+          `moved to ${pr.value.headSha.slice(0, 12)} since this run published ${runRecord.githubHeadSha.slice(0, 12)}; content is re-verified below`,
+          false,
+        ),
+      );
+    }
   }
 
   const commit = await readCommit(pr.value.headSha);

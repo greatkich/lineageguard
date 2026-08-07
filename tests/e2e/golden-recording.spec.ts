@@ -88,8 +88,22 @@ describeGolden("Golden recording (LIVE run)", () => {
 
   test("captures the eight recording states from the live run at 1440x900", async ({ page }) => {
     const captured: string[] = [];
-    const shoot = async (state: (typeof requiredStates)[number]): Promise<void> => {
+    /**
+     * Full-page frames bookend the narrative; the six middle states clip to the element that
+     * carries the claim. Screenshotting the whole page eight times produced eight near-identical
+     * images, which is not evidence of eight states.
+     */
+    const shootPage = async (state: (typeof requiredStates)[number]): Promise<void> => {
       await page.screenshot({ path: `${outputDir}/${state}.png`, fullPage: true });
+      captured.push(state);
+    };
+    const shootElement = async (
+      state: (typeof requiredStates)[number],
+      testId: string,
+    ): Promise<void> => {
+      const target = page.getByTestId(testId);
+      await target.scrollIntoViewIfNeeded();
+      await target.screenshot({ path: `${outputDir}/${state}.png` });
       captured.push(state);
     };
 
@@ -99,51 +113,42 @@ describeGolden("Golden recording (LIVE run)", () => {
 
     await page.goto(`/runs/${goldenRunId}`);
 
-    // 1. Baseline ALLOW — the repository-only assessment.
+    // 1. Baseline ALLOW — the repository-only assessment, in the context of the whole workspace.
     await expect(page.getByTestId("baseline-assessment")).toContainText("Repository-only");
-    await shoot("01-baseline-allow");
+    await shootPage("01-baseline-allow");
 
     // 2. Four DataHub downstream consumers.
     await expect(page.getByTestId("downstream-consumer-count")).toHaveText("4");
     await expect(page.getByTestId("downstream-consumer")).toHaveCount(4);
-    await page.getByTestId("downstream-consumers").scrollIntoViewIfNeeded();
-    await shoot("02-datahub-consumers");
+    await shootElement("02-datahub-consumers", "downstream-consumers");
 
     // 3. ALLOW → BLOCK.
     const transition = page.getByTestId("decision-transition");
     await expect(transition).toContainText("ALLOW");
     await expect(transition).toContainText("BLOCK");
-    await transition.scrollIntoViewIfNeeded();
-    await shoot("03-allow-to-block");
+    await shootElement("03-allow-to-block", "decision-transition");
 
     // 4. UUID-safe expand–migrate–contract migration.
     await expect(page.getByTestId("migration-strategy")).toContainText("Expand");
-    await page.getByTestId("migration-strategy").scrollIntoViewIfNeeded();
-    await shoot("04-uuid-migration");
+    await shootElement("04-uuid-migration", "migration-strategy");
 
     // 5. Validation PASS.
     await expect(page.getByTestId("validation-status")).toContainText("PASS");
-    await page.getByTestId("validation-status").scrollIntoViewIfNeeded();
-    await shoot("05-validation-pass");
+    await shootElement("05-validation-pass", "validation-status");
 
     // 6. The generated pull request.
     const prLink = page.getByTestId("generated-pr-link");
     await expect(prLink).toBeVisible();
     await expect(prLink).toHaveAttribute("href", run.prUrl ?? "");
-    await prLink.scrollIntoViewIfNeeded();
-    await shoot("06-generated-pr");
+    await shootElement("06-generated-pr", "generated-pr-link");
 
     // 7. DataHub write-back.
-    const writeback = page.getByTestId("datahub-writeback");
-    await expect(writeback).toContainText("SUCCEEDED");
-    await writeback.scrollIntoViewIfNeeded();
-    await shoot("07-datahub-writeback");
+    await expect(page.getByTestId("datahub-writeback")).toContainText("SUCCEEDED");
+    await shootElement("07-datahub-writeback", "datahub-writeback");
 
-    // 8. Final COMPLETED summary.
-    const banner = page.getByTestId("run-summary-banner");
-    await expect(banner).toContainText("Breaking change prevented");
-    await banner.scrollIntoViewIfNeeded();
-    await shoot("08-completed-summary");
+    // 8. Final COMPLETED summary, again in full-page context to close the narrative.
+    await expect(page.getByTestId("run-summary-banner")).toContainText("Breaking change prevented");
+    await shootPage("08-completed-summary");
 
     expect(captured).toEqual([...requiredStates]);
 

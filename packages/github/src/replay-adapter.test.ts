@@ -88,15 +88,12 @@ describe("staged replay receipt parser", () => {
     ]);
   });
 
-  it.each([["missing", undefined], ["unknown", "DELETED"]] as const)(
-    "rejects %s outcome",
-    (_label, outcome) => {
-      expect(() =>
-        parseUntrustedReplayReceipts(
-          [{ ...receipt, outcome: outcome as never }],
-          expected,
-        ),
-      ).toThrow();
-    },
-  );
+  it.each([
+    ["missing", undefined],
+    ["unknown", "DELETED"],
+  ] as const)("rejects %s outcome", (_label, outcome) => {
+    expect(() =>
+      parseUntrustedReplayReceipts([{ ...receipt, outcome: outcome as never }], expected),
+    ).toThrow();
+  });
 });
