@@ -12,6 +12,16 @@
 - Push all changes to main directly (unless told otherwise).
 - Fail-closed: demo must exit 0 only on full COMPLETED.
 
+## CRITICAL — Code size and reuse
+
+Full rules live in `AGENTS.md`. Summary:
+
+- **No class exceeds 300 lines.** Scoped to classes, not files. Markdown, plans, specs, fixtures, generated output, migrations, and schema-only modules are exempt.
+- **No function exceeds 50 lines.** Max 5 positional parameters; max 4 nesting levels.
+- **Grandfathered:** `LiveGitHubPort` (702) and `InternalValidationSecurityBoundary` (370) may be modified but must not grow. No new class joins that list.
+- **Never hand-roll** what a library provides: Zod for validation, `node:crypto` for hashing, `AbortController` for cancellation, `fetch`/`URL` for HTTP. Search the repo, then installed deps, before writing a utility.
+- New dependencies: exact pinned version, recorded in `docs/SOURCES.md`, justified in the task report.
+
 ## DataHub bootstrap chain
 Full sequence to populate the graph:
 1. `warehouse-seed --execute` — creates schemas, tables, roles, scenario_registry
