@@ -47,7 +47,7 @@ const canonicalTargets = Object.freeze({
   revenueUrn: canonicalAnalyticsRevenueUrn,
   schema: "commerce",
   sourceUrn: canonicalDatasetUrn,
-} satisfies CanonicalCollectionTargets);
+} satisfies Omit<CanonicalCollectionTargets, "gmsBaseUrl" | "readToken">);
 
 export type DataHubContextCollectionInput = Readonly<{
   changeId: string;
@@ -60,7 +60,11 @@ export interface DataHubContextPort {
 
 export type LiveDataHubContextPortDependencies = Readonly<{
   clock?: () => Date;
+  /** Injected fetch implementation for the GMS aspect read. Uses global `fetch` when omitted. */
+  fetchImpl?: typeof fetch;
+  gmsBaseUrl: string;
   invocationId?: () => string;
+  readToken: string;
   sessionFactory: () => Promise<ToolSession>;
 }>;
 
@@ -86,7 +90,9 @@ function domainFailureCode(
     code === "AUTHORITY_INVALID" ||
     code === "CONFIGURATION" ||
     code === "CONFLICT" ||
-    code === "REPLAY_INVALID"
+    code === "REPLAY_INVALID" ||
+    code === "TRAINING_DATA_READ_FAILED" ||
+    code === "TRAINING_DATA_RESPONSE_TOO_LARGE"
   )
     return undefined;
   return code;
@@ -124,12 +130,18 @@ function secretSafeError(error: unknown, operation: string): DataHubAdapterError
 
 class LiveDataHubContextPort implements DataHubContextPort {
   readonly #clock: () => Date;
+  readonly #fetchImpl: typeof fetch | undefined;
+  readonly #gmsBaseUrl: string;
   readonly #invocationId: (() => string) | undefined;
+  readonly #readToken: string;
   readonly #sessionFactory: () => Promise<ToolSession>;
 
   constructor(dependencies: LiveDataHubContextPortDependencies) {
     this.#clock = dependencies.clock ?? (() => new Date());
+    this.#fetchImpl = dependencies.fetchImpl;
+    this.#gmsBaseUrl = dependencies.gmsBaseUrl;
     this.#invocationId = dependencies.invocationId;
+    this.#readToken = dependencies.readToken;
     this.#sessionFactory = dependencies.sessionFactory;
   }
 
@@ -149,7 +161,12 @@ class LiveDataHubContextPort implements DataHubContextPort {
         clock: this.#clock,
         ...(this.#invocationId === undefined ? {} : { invocationId: this.#invocationId }),
       });
-      const observations = await collectCanonicalObservations(client, canonicalTargets);
+      const observations = await collectCanonicalObservations(client, {
+        ...canonicalTargets,
+        gmsBaseUrl: this.#gmsBaseUrl,
+        readToken: this.#readToken,
+        ...(this.#fetchImpl === undefined ? {} : { fetchImpl: this.#fetchImpl }),
+      });
       try {
         result = normalizeCanonicalLiveCollection({
           changeId: request.changeId,
@@ -199,6 +216,8 @@ export function createOfficialLiveDataHubContextPort(
   credentials: OfficialStdioCredentials,
 ): DataHubContextPort {
   return createLiveDataHubContextPort({
+    gmsBaseUrl: credentials.dataHubGmsUrl,
+    readToken: credentials.readToken,
     sessionFactory: () => createOfficialStdioSession(credentials),
   });
 }

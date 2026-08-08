@@ -6,7 +6,8 @@ source:
     username: "${WALKTHROUGH_INGEST_POSTGRES_USER}"
     password: "${WALKTHROUGH_INGEST_POSTGRES_PASSWORD}"
     options:
-      sslmode: "${WALKTHROUGH_POSTGRES_SSLMODE}"
+      connect_args:
+        sslmode: "${WALKTHROUGH_POSTGRES_SSLMODE}"
     platform_instance: lineageguard-canonical
     env: PROD
     include_usage_statistics: false
@@ -21,10 +22,10 @@ source:
         - fraud
     table_pattern:
       allow:
-        - "^commerce\\.orders$"
-        - "^analytics\\.stg_orders$"
-        - "^analytics\\.customer_revenue$"
-        - "^fraud\\.customer_features$"
+        - "^lineageguard\\.commerce\\.orders$"
+        - "^lineageguard\\.analytics\\.stg_orders$"
+        - "^lineageguard\\.analytics\\.customer_revenue$"
+        - "^lineageguard\\.fraud\\.customer_features$"
 sink:
   type: datahub-rest
   config:

@@ -7,41 +7,36 @@ import {
 } from "../attestation.js";
 import { ValidationError } from "../errors.js";
 import type { EffectAuthorizationIpcClient } from "../ipc.js";
-
-const forbiddenEffectCredentials = [
-  "OPENAI_API_KEY",
-  "GITHUB_TOKEN",
-  "DATAHUB_TOKEN",
-  "DATAHUB_GMS_TOKEN",
-  "VALIDATION_ATTESTATION_PRIVATE_KEY_PKCS8_PEM",
-  "LINEAGEGUARD_VALIDATION_SIGNER_DATABASE_URL",
-  "LINEAGEGUARD_APPROVAL_AUTHORITY_DATABASE_URL",
-] as const;
-
-function required(name: string): string {
-  const value = process.env[name]?.trim();
-  if (!value) throw new ValidationError("ATTESTATION_INVALID", `missing=${name}`);
-  return value;
-}
+import {
+  type AuthorityEnvironment,
+  assertNoForbiddenCredentials,
+  effectAuthorityEnvironment,
+  forbiddenEffectCredentials,
+  requiredAuthorityVariable,
+} from "./authority-environment.js";
 
 export interface EffectAuthorizationProcessDependencies {
   trustedPublicKeys: readonly TrustedValidationPublicKey[];
   createStore(databaseUrl: string): EffectReservationAuthorityStore;
+  /**
+   * The environment this authority runs with. Defaults to an allowlisted projection of
+   * `process.env`, so orchestration credentials held by the calling shell never reach the runtime.
+   */
+  environment?: AuthorityEnvironment;
 }
 
 /** Server-only production entrypoint. It never loads or retains the validation private key. */
 export function startEffectAuthorizationProcess(
   dependencies: EffectAuthorizationProcessDependencies,
 ): EffectAuthorizationIpcClient {
-  if (process.env.LINEAGEGUARD_PROCESS_ROLE !== "EFFECT_AUTHORITY") {
+  const environment = dependencies.environment ?? effectAuthorityEnvironment();
+  if (environment.LINEAGEGUARD_PROCESS_ROLE !== "EFFECT_AUTHORITY") {
     throw new ValidationError("ATTESTATION_INVALID", "effect authority process role is required");
   }
-  for (const name of forbiddenEffectCredentials) {
-    if (process.env[name]) {
-      throw new ValidationError("ATTESTATION_INVALID", `co-resident credential=${name}`);
-    }
-  }
-  const store = dependencies.createStore(required("LINEAGEGUARD_EFFECT_AUTHORITY_DATABASE_URL"));
+  assertNoForbiddenCredentials(environment, forbiddenEffectCredentials);
+  const store = dependencies.createStore(
+    requiredAuthorityVariable(environment, "LINEAGEGUARD_EFFECT_AUTHORITY_DATABASE_URL"),
+  );
   const authority = createEffectAuthorizationServer(dependencies.trustedPublicKeys, store);
   const capabilities = new Map<string, VerifiedCurrentEffect>();
   const take = (handle: string): VerifiedCurrentEffect => {

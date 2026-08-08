@@ -4,7 +4,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "LineageGuard — Mission Control",
-  description: "Organization-aware schema change safety powered by DataHub",
+  description: "Organization-aware warehouse schema change safety powered by DataHub",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: ReactNode }>) {

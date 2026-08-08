@@ -24,6 +24,7 @@ import {
   impactResolutionSchema,
   sha256,
 } from "@lineageguard/domain";
+import { assertExactlyFourConsumers, deriveImpactConsumers } from "@lineageguard/domain";
 import { test as base, expect } from "@playwright/test";
 import pg from "pg";
 
@@ -103,14 +104,14 @@ function fixtureImpactContext() {
     sourceUrn: canonicalDatasetUrn,
     fieldPath: canonicalFieldPath,
     title: "orders.customer_id schema",
-    summary: "The source field is a non-null bigint in PostgreSQL.",
+    summary: "The source field is a non-null uuid in PostgreSQL.",
     criticality: "HIGH",
     relatedEvidenceIds: [],
     provenance: [provenanceEntry("SCHEMA", "list_schema_fields", "schema")],
     payload: {
       schemaFieldUrn: canonicalSchemaFieldUrn,
       nativeFieldPath: canonicalNativeFieldPath,
-      nativeType: "bigint",
+      nativeType: "uuid",
       nullable: false,
     },
   });
@@ -245,6 +246,15 @@ function fixtureImpactContext() {
       ownerUrns: [canonicalRiskOwnerUrn],
       featureDatasetUrn: canonicalFraudFeaturesUrn,
       featureField: "fraud.customer_features.customer_id",
+      trainingDataReceipt: {
+        aspectName: "mlModelTrainingData",
+        credentialClass: "READ",
+        endpoint: `http://127.0.0.1:8080/openapi/v3/entity/mlModel/${encodeURIComponent(canonicalFraudModelUrn)}/mlModelTrainingData`,
+        modelUrn: canonicalFraudModelUrn,
+        provenDatasetUrn: canonicalFraudFeaturesUrn,
+        responseSha256: sha256("e2e-fixture-training-data-response"),
+        retrievedAt: "2026-08-06T10:00:00.000Z",
+      },
     },
   });
   const query = createEvidence({
@@ -294,8 +304,8 @@ function fixtureImpactContext() {
 
   const draft = {
     changeId: "chg_e2ea1b2c3d4e5f6789abcdef",
-    datasetUrn: canonicalDatasetUrn,
-    fieldPath: canonicalFieldPath,
+    datasetUrn: canonicalDatasetUrn as typeof canonicalDatasetUrn,
+    fieldPath: canonicalFieldPath as typeof canonicalFieldPath,
     resolution,
     collectedAt: "2026-08-06T10:00:00.000Z",
     // "COMPLETE" requires byte-identical canonical evidence (schema/lineage
@@ -350,11 +360,16 @@ async function seedCompletedRun(): Promise<void> {
     const message = err instanceof Error ? err.message : String(err);
     if (!message.includes("simple_runs_pkey")) throw err;
   }
+  const fixtureContext = fixtureImpactContext();
+  // Derive rather than hardcode, so the seeded scalar can never disagree with the context the UI
+  // renders from. assertExactlyFourConsumers turns a fixture drift into a test failure here.
+  const fixtureConsumers = deriveImpactConsumers(fixtureContext);
+  assertExactlyFourConsumers(fixtureConsumers);
   await store.update(FIXTURE_RUN_ID, "COMPLETED", {
     baselineDecision: "ALLOW",
     groundedDecision: "BLOCK",
-    consumersFound: 4,
-    evidenceItems: 7,
+    consumersFound: fixtureConsumers.length,
+    evidenceItems: fixtureContext.evidence.length,
     artifactsGenerated: 8,
     triggeredRules: ["LG001", "LG002", "LG003", "LG004"],
     prUrl: "https://github.com/greatkich/lineageguard-walkthrough/pull/99",
@@ -363,7 +378,7 @@ async function seedCompletedRun(): Promise<void> {
     validationReceiptFingerprint: "sha256:e2e-fixture-validation-receipt",
     githubReceiptFingerprint: "sha256:e2e-fixture-github-receipt",
     writebackReceiptFingerprint: "sha256:e2e-fixture-writeback-receipt",
-    contextJson: fixtureImpactContext(),
+    contextJson: fixtureContext,
     comparisonJson: {
       transition: "ALLOW→BLOCK",
       triggeredRuleIds: ["LG001", "LG002", "LG003", "LG004"],
@@ -393,11 +408,23 @@ test.beforeAll(async () => {
   await seedCompletedRun();
 });
 
-// No explicit pool.end() here: Playwright's fullyParallel mode may shard
-// this file's tests across multiple workers/processes, each importing this
-// module independently, and there is no reliable single point at which
-// "all tests in this file, across all workers" have finished. The pool is
-// small (max: 2) and closes naturally when its worker process exits.
+test.afterAll(async () => {
+  // Fail-closed cleanup. The fixture row lives in the same store the acceptance harness reads, so
+  // leaving it behind is a correctness problem, not cosmetic. Swallowing the failure would let a
+  // stale fixture survive into a later demo:verify, which is exactly the confusion this removes.
+  try {
+    await pool.query("DELETE FROM lineageguard.simple_runs WHERE id = $1", [FIXTURE_RUN_ID]);
+    const { rows } = await pool.query<{ count: string }>(
+      "SELECT count(*)::text AS count FROM lineageguard.simple_runs WHERE id = $1",
+      [FIXTURE_RUN_ID],
+    );
+    if (rows[0]?.count !== "0") {
+      throw new Error(`fixture run ${FIXTURE_RUN_ID} is still present after cleanup`);
+    }
+  } finally {
+    await pool.end();
+  }
+});
 
 test.describe("Mission Control — Dashboard", () => {
   test("shows the fixture COMPLETED run from Postgres", async ({ page }) => {
@@ -430,8 +457,19 @@ test.describe("Mission Control — Run Detail", () => {
     await expect(page.getByText("customer_id").first()).toBeVisible();
     await expect(page.getByText("BLOCK").first()).toBeVisible();
 
-    // Impact consumers derived via deriveImpactConsumers — exactly 4
-    await expect(page.getByText(/Impact Consumers \(4\)/)).toBeVisible();
+    // Impact consumers derived via deriveImpactConsumers — exactly 4, in the canonical
+    // downstream-consumer section a judge sees during the recording.
+    const consumerSection = page.getByTestId("downstream-consumers");
+    await expect(consumerSection).toBeVisible();
+    await expect(consumerSection.getByText(/Downstream Data Consumers/)).toBeVisible();
+    await expect(page.getByTestId("downstream-consumer-count")).toHaveText("4");
+    await expect(consumerSection.getByTestId("downstream-consumer")).toHaveCount(4);
+    await expect(page.getByTestId("stat-data-consumers")).toHaveText("4");
+    expect(
+      await consumerSection
+        .getByTestId("downstream-consumer")
+        .evaluateAll((rows) => rows.map((row) => row.getAttribute("data-consumer-kind"))),
+    ).toEqual(["DATA_MODEL", "DASHBOARD", "ML_CONSUMER", "UNMANAGED_QUERY"]);
 
     // Migration strategy and generated artifact count
     await expect(page.getByText("Expand → Migrate → Contract")).toBeVisible();
@@ -495,10 +533,13 @@ test.describe("API Routes", () => {
   });
 });
 
-test.describe("Demo readiness screenshots", () => {
+test.describe("Fixture UI screenshots (not golden evidence)", () => {
   test("captures dashboard and run-detail states at 1440x900", async ({ page }) => {
     const { mkdirSync } = await import("node:fs");
-    const dir = "artifacts/demo-readiness/screenshots";
+    // Deliberately NOT artifacts/demo-readiness/: these are fixture renders for deterministic UI
+    // regression review. Golden recording evidence comes from tests/e2e/golden-recording.spec.ts,
+    // which captures a real LIVE run.
+    const dir = "artifacts/test-fixtures/screenshots";
     mkdirSync(dir, { recursive: true });
 
     await page.goto("/");
@@ -509,7 +550,8 @@ test.describe("Demo readiness screenshots", () => {
     await expect(page.getByText("Proposed Change")).toBeVisible();
     await page.screenshot({ path: `${dir}/02-run-detail-overview.png`, fullPage: true });
 
-    await expect(page.getByText(/Impact Consumers \(4\)/)).toBeVisible();
+    await expect(page.getByTestId("downstream-consumer-count")).toHaveText("4");
+    await expect(page.getByTestId("downstream-consumer")).toHaveCount(4);
     await page.screenshot({ path: `${dir}/03-block-consumers.png`, fullPage: true });
   });
 });

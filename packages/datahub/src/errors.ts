@@ -14,6 +14,8 @@ export type DataHubAdapterErrorCode =
   | "TOOL_FAILURE"
   | "TOOL_MISSING"
   | "TOOL_POLICY_VIOLATION"
+  | "TRAINING_DATA_READ_FAILED"
+  | "TRAINING_DATA_RESPONSE_TOO_LARGE"
   | "UNAVAILABLE";
 
 export type DataHubAdapterDiagnostic = Readonly<{

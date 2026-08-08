@@ -15,7 +15,7 @@ WAREHOUSE_FILE_DIGESTS = {
         "345034506de27a26e5fad5e72f9a0241640a8028f8b9ade8317041310a8945d2"
     ),
     "walkthrough/warehouse/init/002-tables.sql": (
-        "f2f2a9e19b74bd70b730942ae43250dc65b338e8b41a9416c1bed3fab64fb73b"
+        "725db7a70ec50dde619d1c9bac00a92f21ae17de47ae401752b7efa3396a7623"
     ),
     "walkthrough/warehouse/init/003-seed.sql": (
         "05f7a51d792940beab0df5ef005c313aaf76368dac0f67f18795db074d2974f8"
@@ -228,7 +228,7 @@ def apply_warehouse_seed(
     )
     if dbt_safe is not True:
         raise ValueError("WAREHOUSE_ROLE_UNSAFE:lineageguard_dbt")
-    cursor.execute("GRANT USAGE ON SCHEMA analytics TO lineageguard_query_reader")
+    cursor.execute("GRANT USAGE ON SCHEMA analytics, commerce, fraud TO lineageguard_query_reader")
     cursor.execute("GRANT USAGE ON SCHEMA commerce, analytics, fraud TO lineageguard_ingest_reader")
     cursor.execute("GRANT SELECT ON commerce.orders TO lineageguard_ingest_reader")
     cursor.execute("GRANT USAGE ON SCHEMA commerce TO lineageguard_seed")

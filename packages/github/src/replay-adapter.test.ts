@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { parseUntrustedReplayReceipts } from "./replay-adapter.js";
 import type { GitHubReviewReceipt } from "./types.js";
+import { deterministicHead } from "./validation.js";
 
 const sha = (value: string) => value.repeat(40);
 const fp = (value: string) => value.repeat(64);
@@ -13,7 +14,7 @@ const receipt: GitHubReviewReceipt = {
   repository: "lineageguard/demo",
   baseBranch: "main",
   baseSha: sha("a"),
-  headBranch: "lineageguard/run_0123456789abcdef01234567",
+  headBranch: deterministicHead(fp("2"), 17),
   headSha: sha("e"),
   prNumber: 17,
   prUrl: "https://github.com/lineageguard/demo/pull/17",
@@ -28,6 +29,7 @@ const receipt: GitHubReviewReceipt = {
   idempotencyKey: "github:run_0123456789abcdef01234567:review",
   inputFingerprint: fp("7"),
   reconciled: false,
+  outcome: "CREATED",
 };
 const expected = {
   repository: receipt.repository,
@@ -58,5 +60,40 @@ describe("staged replay receipt parser", () => {
 
   it("rejects duplicate exact effect receipts", () => {
     expect(() => parseUntrustedReplayReceipts([receipt, receipt], expected)).toThrow();
+  });
+
+  // Regression: the parser enforced the pre-content-addressing `lineageguard/run_<id>` head, so it
+  // rejected every head the live adapter actually emits. Both shapes must be accepted.
+  it.each([
+    ["with a source PR segment", deterministicHead(fp("2"), 17)],
+    ["without a source PR segment", deterministicHead(fp("2"))],
+  ])("accepts the content-addressed generated head %s", (_label, headBranch) => {
+    expect(parseUntrustedReplayReceipts([{ ...receipt, headBranch }], expected)).toEqual([
+      { ...receipt, headBranch },
+    ]);
+  });
+
+  it.each([
+    ["a run-scoped head", "lineageguard/run_0123456789abcdef01234567"],
+    ["a foreign namespace", "attacker/generated/222222222222"],
+    ["a non-hex prefix", "lineageguard/generated/zzzzzzzzzzzz"],
+    ["a traversal segment", "lineageguard/generated/../222222222222"],
+  ])("rejects %s", (_label, headBranch) => {
+    expect(() => parseUntrustedReplayReceipts([{ ...receipt, headBranch }], expected)).toThrow();
+  });
+
+  it.each(["CREATED", "UPDATED", "SKIPPED_EXACT"] as const)("accepts outcome %s", (outcome) => {
+    expect(parseUntrustedReplayReceipts([{ ...receipt, outcome }], expected)).toEqual([
+      { ...receipt, outcome },
+    ]);
+  });
+
+  it.each([
+    ["missing", undefined],
+    ["unknown", "DELETED"],
+  ] as const)("rejects %s outcome", (_label, outcome) => {
+    expect(() =>
+      parseUntrustedReplayReceipts([{ ...receipt, outcome: outcome as never }], expected),
+    ).toThrow();
   });
 });

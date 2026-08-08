@@ -5,11 +5,17 @@ import {
   canonicalAnalyticsStagingUrn,
   canonicalDashboardUrn,
   canonicalFinanceOwnerUrn,
+  canonicalFraudFeaturesUrn,
   canonicalFraudModelUrn,
   canonicalQueryUrn,
   createCanonicalImpactContextFixture,
 } from "./evidence.js";
-import { deriveImpactConsumers } from "./impact-consumer.js";
+import {
+  assertExactlyFourConsumers,
+  canonicalConsumerKinds,
+  deriveImpactConsumers,
+  type ImpactConsumer,
+} from "./impact-consumer.js";
 
 function canonicalChangeId(): string {
   const result = parseProposedChange({
@@ -103,5 +109,131 @@ describe("deriveImpactConsumers", () => {
     const consumers = deriveImpactConsumers(canonicalContext);
     const dashboard = consumers.find((c) => c.kind === "DASHBOARD");
     expect(dashboard!.owners).toContain(canonicalFinanceOwnerUrn);
+  });
+});
+
+describe("assertExactlyFourConsumers", () => {
+  const canonicalContext = createCanonicalImpactContextFixture(canonicalChangeId());
+
+  function canonicalConsumers(): ImpactConsumer[] {
+    return deriveImpactConsumers(canonicalContext);
+  }
+
+  it("accepts the canonical derivation", () => {
+    expect(() => assertExactlyFourConsumers(canonicalConsumers())).not.toThrow();
+  });
+
+  it("exposes the canonical kinds the derivation is asserted against", () => {
+    expect([...canonicalConsumerKinds]).toEqual([
+      "DATA_MODEL",
+      "DASHBOARD",
+      "ML_CONSUMER",
+      "UNMANAGED_QUERY",
+    ]);
+    expect(canonicalConsumers().map((consumer) => consumer.kind)).toEqual([
+      ...canonicalConsumerKinds,
+    ]);
+  });
+
+  it("rejects a fifth consumer as a count regression", () => {
+    const five: ImpactConsumer[] = [
+      ...canonicalConsumers(),
+      {
+        kind: "DASHBOARD",
+        title: "Unexpected second dashboard",
+        entityUrn: "urn:li:dashboard:(looker,unexpected.extra-dashboard)",
+        evidenceIds: ["ev_000000000000000000000000"],
+        owners: [],
+      },
+    ];
+
+    expect(() => assertExactlyFourConsumers(five)).toThrowError(/IMPACT_CARD_COUNT_MISMATCH/);
+    expect(() => assertExactlyFourConsumers(five)).toThrowError(/expected 4, got 5/);
+  });
+
+  it("rejects a dropped consumer as a count regression", () => {
+    const three = canonicalConsumers().slice(0, 3);
+    expect(() => assertExactlyFourConsumers(three)).toThrowError(/expected 4, got 3/);
+  });
+
+  it("rejects the canonical set in the wrong order", () => {
+    const consumers = canonicalConsumers();
+    const swapped = [consumers[1], consumers[0], consumers[2], consumers[3]] as ImpactConsumer[];
+
+    expect(() => assertExactlyFourConsumers(swapped)).toThrowError(/IMPACT_CARD_ORDER_MISMATCH/);
+  });
+
+  it("rejects a duplicated entity URN", () => {
+    const consumers = canonicalConsumers();
+    const dashboard = consumers.find((consumer) => consumer.kind === "DASHBOARD");
+    if (!dashboard) throw new Error("dashboard consumer missing");
+    const duplicated = consumers.map((consumer) =>
+      consumer.kind === "UNMANAGED_QUERY"
+        ? { ...consumer, entityUrn: dashboard.entityUrn }
+        : consumer,
+    );
+
+    expect(() => assertExactlyFourConsumers(duplicated)).toThrowError(/IMPACT_CARD_DUPLICATE_URN/);
+  });
+
+  it("rejects a consumer carrying no evidence reference", () => {
+    const unevidenced = canonicalConsumers().map((consumer) =>
+      consumer.kind === "ML_CONSUMER" ? { ...consumer, evidenceIds: [] } : consumer,
+    );
+
+    expect(() => assertExactlyFourConsumers(unevidenced)).toThrowError(
+      /IMPACT_CARD_WITHOUT_EVIDENCE: ML_CONSUMER/,
+    );
+  });
+});
+
+describe("canonical grouping invariants", () => {
+  const canonicalContext = createCanonicalImpactContextFixture(canonicalChangeId());
+
+  it("groups the feature dataset into ML_CONSUMER instead of a separate card", () => {
+    const consumers = deriveImpactConsumers(canonicalContext);
+    const ml = consumers.find((consumer) => consumer.kind === "ML_CONSUMER");
+
+    expect(ml?.kind).toBe("ML_CONSUMER");
+    if (ml?.kind !== "ML_CONSUMER") throw new Error("ML consumer missing");
+    expect(ml.featureDatasetUrn).toBe(canonicalFraudFeaturesUrn);
+    expect(consumers.map((consumer) => consumer.entityUrn)).not.toContain(
+      canonicalFraudFeaturesUrn,
+    );
+  });
+
+  it("excludes the staging intermediate from every card", () => {
+    const consumers = deriveImpactConsumers(canonicalContext);
+
+    expect(consumers.map((consumer) => consumer.entityUrn)).not.toContain(
+      canonicalAnalyticsStagingUrn,
+    );
+    const dataModel = consumers.find((consumer) => consumer.kind === "DATA_MODEL");
+    expect(dataModel?.entityUrn).toBe(canonicalAnalyticsRevenueUrn);
+  });
+
+  it("keeps staging on the lineage path even though it is not a consumer", () => {
+    const consumers = deriveImpactConsumers(canonicalContext);
+    const dataModel = consumers.find((consumer) => consumer.kind === "DATA_MODEL");
+    if (dataModel?.kind !== "DATA_MODEL") throw new Error("data model consumer missing");
+
+    expect(dataModel.lineagePath).toContain(canonicalAnalyticsStagingUrn);
+    expect(dataModel.lineagePath[0]).toBe(canonicalContext.datasetUrn);
+  });
+
+  it("does not double-count a lineage terminal that is already a leaf consumer", () => {
+    const consumers = deriveImpactConsumers(canonicalContext);
+    const urns = consumers.map((consumer) => consumer.entityUrn);
+
+    expect(urns.filter((urn) => urn === canonicalDashboardUrn)).toHaveLength(1);
+    expect(urns.filter((urn) => urn === canonicalFraudModelUrn)).toHaveLength(1);
+  });
+
+  it("derives nothing from an evidence-free context", () => {
+    const empty = { ...canonicalContext, evidence: [] };
+    const consumers = deriveImpactConsumers(empty);
+
+    expect(consumers).toEqual([]);
+    expect(() => assertExactlyFourConsumers(consumers)).toThrowError(/expected 4, got 0/);
   });
 });

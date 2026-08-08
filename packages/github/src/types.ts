@@ -67,6 +67,8 @@ export interface GitHubReviewRequest {
   baseBranch: string;
   baseSha: string;
   candidateFingerprint: string;
+  /** Source PR number, used only to make the generated branch name human-readable. */
+  sourcePrNumber?: number;
   artifactSetFingerprint: string;
   validationReceiptFingerprint: string;
   approvalFingerprint: string;
@@ -130,6 +132,21 @@ export interface GitHubEffectAuthorityPort {
   }>;
 }
 
+/**
+ * How this call arrived at its receipt.
+ *
+ * - `SKIPPED_EXACT`: the deterministic branch and its PR already existed with exactly the
+ *   authorized content before this call did anything. No GitHub write was issued.
+ * - `CREATED`: this call authored the commit, branch, and/or PR (directly, or indirectly via a
+ *   post-ambiguity reconciliation of a write it just attempted).
+ * - `UPDATED`: reserved by the effect-identity contract, but unreachable under content-addressed
+ *   branch naming. A branch name is derived from the candidate fingerprint, so two different
+ *   candidates never contend for the same branch; if a same-named branch's content ever diverges
+ *   from the authorized bytes, `verifyReconciledArtifacts` fails closed with `REMOTE_CONFLICT`
+ *   instead of force-updating it.
+ */
+export type EffectOutcome = "CREATED" | "UPDATED" | "SKIPPED_EXACT";
+
 export interface GitHubReviewReceipt {
   schemaVersion: 1;
   mode: "LIVE" | "REPLAY";
@@ -153,6 +170,7 @@ export interface GitHubReviewReceipt {
   idempotencyKey: string;
   inputFingerprint: string;
   reconciled: boolean;
+  outcome: EffectOutcome;
 }
 
 export interface GitHubPort<TRequest = GitHubReviewRequest> {

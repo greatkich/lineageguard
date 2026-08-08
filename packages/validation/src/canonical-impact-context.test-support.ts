@@ -1,6 +1,7 @@
 import {
   computeImpactCollectionFingerprint,
   computeImpactContextFingerprint,
+  createEvidence,
   type ImpactContext,
   type ImpactContextData,
   impactContextSchema,
@@ -48,7 +49,7 @@ const canonicalImpactContextData: Omit<ImpactContextData, "changeId" | "collecti
         "urn:li:dataset:(urn:li:dataPlatform:postgres,lineageguard-canonical.lineageguard.commerce.orders,PROD)",
       fieldPath: "commerce.orders.customer_id",
       title: "orders.customer_id schema",
-      summary: "The source field is a non-null bigint in PostgreSQL.",
+      summary: "The source field is a non-null uuid in PostgreSQL.",
       criticality: "HIGH",
       provenance: [
         {
@@ -66,7 +67,7 @@ const canonicalImpactContextData: Omit<ImpactContextData, "changeId" | "collecti
         schemaFieldUrn:
           "urn:li:schemaField:(urn:li:dataset:(urn:li:dataPlatform:postgres,lineageguard-canonical.lineageguard.commerce.orders,PROD),customer_id)",
         nativeFieldPath: "customer_id",
-        nativeType: "bigint",
+        nativeType: "uuid",
         nullable: false,
       },
     },
@@ -293,6 +294,18 @@ const canonicalImpactContextData: Omit<ImpactContextData, "changeId" | "collecti
         featureDatasetUrn:
           "urn:li:dataset:(urn:li:dataPlatform:postgres,lineageguard-canonical.lineageguard.fraud.customer_features,PROD)",
         featureField: "fraud.customer_features.customer_id",
+        trainingDataReceipt: {
+          aspectName: "mlModelTrainingData",
+          credentialClass: "READ",
+          endpoint:
+            "http://127.0.0.1:8080/openapi/v3/entity/mlModel/urn%3Ali%3AmlModel%3A(urn%3Ali%3AdataPlatform%3Amlflow%2Clineageguard-canonical.fraud-model-v3%2CPROD)/mlModelTrainingData",
+          modelUrn:
+            "urn:li:mlModel:(urn:li:dataPlatform:mlflow,lineageguard-canonical.fraud-model-v3,PROD)",
+          provenDatasetUrn:
+            "urn:li:dataset:(urn:li:dataPlatform:postgres,lineageguard-canonical.lineageguard.fraud.customer_features,PROD)",
+          responseSha256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          retrievedAt: "2026-08-04T08:00:00.000Z",
+        },
       },
     },
     {
@@ -441,9 +454,53 @@ const canonicalImpactContextData: Omit<ImpactContextData, "changeId" | "collecti
   failures: [],
 };
 
+/**
+ * Recomputes every evidence id and fingerprint from the recorded semantic content instead of
+ * trusting the literals above.
+ *
+ * The literals drifted silently once already: this fixture is only exercised by the Docker-gated
+ * integration suite, so a UUID change and a new required ML receipt field left it invalid for weeks
+ * while every non-skipped gate stayed green. Deriving the identities removes that whole class of
+ * drift — the recorded evidence stays reviewable, but its identity can no longer be stale.
+ *
+ * Items are resolved in dependency order: an item is computed once every id it references has been
+ * computed, so relatedEvidenceIds are remapped onto the freshly derived ids.
+ */
+function withDerivedEvidenceIdentities(
+  evidence: ImpactContextData["evidence"],
+): ImpactContextData["evidence"] {
+  const remaining = evidence.map((item) => ({ ...item }));
+  const idByOldId = new Map<string, string>();
+  const resolved: ImpactContextData["evidence"] = [];
+
+  while (remaining.length > 0) {
+    const readyIndex = remaining.findIndex((item) =>
+      item.relatedEvidenceIds.every((id) => idByOldId.has(id)),
+    );
+    if (readyIndex === -1) {
+      throw new Error(
+        "canonical fixture evidence has a cyclic or dangling relatedEvidenceIds graph",
+      );
+    }
+    const [item] = remaining.splice(readyIndex, 1);
+    if (!item) throw new Error("canonical fixture evidence iteration lost an item");
+    const { id: oldId, fingerprint: _staleFingerprint, ...draft } = item;
+    const derived = createEvidence({
+      ...draft,
+      relatedEvidenceIds: item.relatedEvidenceIds.map((id) => idByOldId.get(id) ?? id).sort(),
+    } as Parameters<typeof createEvidence>[0]);
+    idByOldId.set(oldId, derived.id);
+    resolved.push(derived);
+  }
+
+  return resolved.sort((left, right) => left.id.localeCompare(right.id));
+}
+
 export function createCanonicalLiveImpactContextTestFixture(changeId: string): ImpactContext {
+  const recorded = structuredClone(canonicalImpactContextData);
   const data: ImpactContextData = {
-    ...structuredClone(canonicalImpactContextData),
+    ...recorded,
+    evidence: withDerivedEvidenceIdentities(recorded.evidence),
     changeId,
     collectionOrigin: { mode: "LIVE" },
   };

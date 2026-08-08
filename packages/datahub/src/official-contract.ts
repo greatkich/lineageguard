@@ -31,7 +31,8 @@ const searchPageSchema = z
   })
   .strict()
   .refine(
-    (page) => page.count === page.searchResults.length && page.total >= page.start + page.count,
+    (page) =>
+      page.searchResults.length === Math.min(page.count, Math.max(page.total - page.start, 0)),
   );
 
 const schemaFieldSchema = z
@@ -229,7 +230,9 @@ const queryPageSchema = z
     total: nonnegativeInteger,
   })
   .strict()
-  .refine((page) => page.count === page.queries.length && page.total >= page.start + page.count);
+  .refine(
+    (page) => page.queries.length === Math.min(page.count, Math.max(page.total - page.start, 0)),
+  );
 
 const entitySchema = z
   .object({
@@ -239,6 +242,7 @@ const entitySchema = z
   .refine((entity) => !("error" in entity));
 
 const entitiesResultSchema = z.union([
+  z.object({ result: z.array(entitySchema).max(50) }).transform((wrapper) => wrapper.result),
   entitySchema.transform((entity) => [entity]),
   z.array(entitySchema).max(50),
 ]);

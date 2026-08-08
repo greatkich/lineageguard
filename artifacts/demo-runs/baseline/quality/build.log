@@ -1,0 +1,40 @@
+$ pnpm --recursive --if-present build
+Scope: 9 of 10 workspace projects
+packages/github build$ tsc -p tsconfig.build.json
+packages/domain build$ tsc -p tsconfig.build.json
+packages/ui build$ tsc -p tsconfig.build.json
+packages/ui build: Done
+packages/github build: Done
+packages/domain build: Done
+packages/datahub build$ tsc -p tsconfig.build.json
+packages/db build$ tsc -p tsconfig.build.json
+packages/agent build$ tsc -p tsconfig.build.json
+packages/validation build$ tsc -p tsconfig.build.json
+packages/agent build: Done
+packages/validation build: Done
+packages/db build: Done
+packages/datahub build: Done
+apps/web build$ next build
+apps/worker build$ node ../../scripts/clean-worker-dist.mjs && tsc -p tsconfig.build.json && node ../../scripts/assert-worker-dist.mjs
+apps/web build: ▲ Next.js 16.3.0 (Turbopack)
+apps/web build: ✓ Running next.config took 9ms
+apps/web build:   Creating an optimized production build ...
+apps/worker build: worker artifact: verified (5 runtime modules, no test modules)
+apps/worker build: Done
+apps/web build: ✓ Compiled successfully in 842ms
+apps/web build:   Running TypeScript ...
+apps/web build:   Finished TypeScript in 794ms ...
+apps/web build:   Collecting page data using 7 workers ...
+apps/web build:   Generating static pages using 7 workers (0/3) ...
+apps/web build: ✓ Generating static pages using 7 workers (3/3) in 311ms
+apps/web build:   Finalizing page optimization ...
+apps/web build: Route (app)
+apps/web build: ┌ ƒ /
+apps/web build: ├ ○ /_not-found
+apps/web build: ├ ƒ /api/runs
+apps/web build: ├ ƒ /api/runs/[runId]
+apps/web build: └ ƒ /runs/[runId]
+apps/web build: ○  (Static)   prerendered as static content
+apps/web build: ƒ  (Dynamic)  server-rendered on demand
+apps/web build: Done
+EXIT: 0

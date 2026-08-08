@@ -1,9 +1,16 @@
 import type { PipelineResult } from "@lineageguard/agent";
 import { createSimpleRunStore } from "@lineageguard/db";
+import type { SourceChangeEnvelope } from "@lineageguard/domain";
 import pg from "pg";
 import { eventBus } from "./events.js";
 import { createOrchestrator } from "./orchestration.js";
-import { buildSourceChange, readSourcePR, type SourcePRInfo } from "./source-pr-reader.js";
+import {
+  buildSourceChange,
+  buildSourceEnvelope,
+  readSourcePR,
+  reattestSourceEnvelope,
+  type SourcePRInfo,
+} from "./source-pr-reader.js";
 
 export interface WorkerOptions {
   once?: boolean;
@@ -29,6 +36,9 @@ export async function runWorker(options: WorkerOptions = {}): Promise<PipelineRe
     await store.ensureSchema();
 
     const runId = `run_${Date.now().toString(16).padStart(24, "0")}`;
+    // Capture the application code SHA at the moment of run creation. This binds the run
+    // to the exact code version that produced it, enabling acceptance to prove repeatability.
+    const applicationCodeSha = await resolveApplicationCodeSha();
     const repository = process.env.LINEAGEGUARD_REPOSITORY ?? "greatkich/lineageguard";
     const owner = process.env.GITHUB_OWNER ?? "greatkich";
     const repo = process.env.GITHUB_REPO ?? "lineageguard";
@@ -64,41 +74,35 @@ export async function runWorker(options: WorkerOptions = {}): Promise<PipelineRe
     let patch = "ALTER TABLE commerce.orders RENAME COLUMN customer_id TO buyer_id;";
     let sourceType: "FIXTURE" | "GITHUB" = "FIXTURE";
     let sourcePath: string | undefined;
+    let sourceEnvelope: SourceChangeEnvelope | undefined;
 
     if (sourcePR) {
-      // Validate source PR contains the canonical rename
-      const renamePattern = /RENAME\s+COLUMN\s+customer_id\s+TO\s+buyer_id/i;
-      const sqlPatches = sourcePR.patches.filter(
-        (p) => p.filename.endsWith(".sql") && renamePattern.test(p.patch),
-      );
-      if (sqlPatches.length === 0) {
+      // One allowlist, in the domain. It throws a typed SourceChangeRejectedError naming why a PR
+      // is not the supported scenario, replacing the reader/worker duplicate checks that could
+      // drift apart.
+      try {
+        sourceEnvelope = buildSourceEnvelope(sourcePR, repository);
+      } catch (error) {
+        const rejection = error as { code?: string; detail?: string };
         throw new Error(
-          `Source PR #${sourcePR.prNumber} does not contain the canonical rename ` +
-            `(ALTER TABLE ... RENAME COLUMN customer_id TO buyer_id). ` +
-            `Changed files: ${sourcePR.changedFiles.join(", ")}`,
-        );
-      }
-      if (sqlPatches.length > 1) {
-        throw new Error(
-          `Source PR #${sourcePR.prNumber} contains multiple schema rename statements. ` +
-            `Only one canonical change is supported.`,
+          `Source PR #${String(sourcePR.prNumber)} rejected: ${rejection.code ?? "UNKNOWN"}` +
+            `${rejection.detail ? ` — ${rejection.detail}` : ""}`,
         );
       }
 
-      // Build typed SourceChange with full unified diff for domain parser
       const sourceChange = buildSourceChange(sourcePR, repository);
       if (!sourceChange) {
         throw new Error(
-          `Source PR #${sourcePR.prNumber} could not be converted to SourceChange — ` +
-            `expected exactly one SQL file with canonical rename.`,
+          `Source PR #${String(sourcePR.prNumber)} passed the allowlist but produced no diff.`,
         );
       }
 
-      // Use the reconstructed unified diff — domain parser handles source=GITHUB
       patch = sourceChange.unifiedDiff;
       sourceType = "GITHUB";
-      sourcePath = sourceChange.filePath;
-      console.log(`[worker] Source PR validated: source=GITHUB, path=${sourcePath}`);
+      sourcePath = sourceEnvelope.selectedPath;
+      console.log(
+        `[worker] Source PR accepted: path=${sourcePath} fingerprint=${sourceEnvelope.sourceFingerprint.slice(0, 12)}`,
+      );
     }
 
     await store.create({
@@ -106,13 +110,14 @@ export async function runWorker(options: WorkerOptions = {}): Promise<PipelineRe
       repository,
       field: "customer_id",
       patch,
+      applicationCodeSha,
       ...(sourcePR
         ? {
             sourcePrUrl: sourcePR.prUrl,
             sourcePrNumber: sourcePR.prNumber,
             sourceBaseSha: sourcePR.baseSha,
             sourceHeadSha: sourcePR.headSha,
-            sourceDiffFingerprint: sourcePR.diffFingerprint,
+            sourceDiffFingerprint: sourceEnvelope?.sourceFingerprint ?? sourcePR.diffFingerprint,
             ...(sourcePath ? { sourceFilePath: sourcePath } : {}),
           }
         : {}),
@@ -130,11 +135,17 @@ export async function runWorker(options: WorkerOptions = {}): Promise<PipelineRe
       field: "customer_id",
       newName: "buyer_id",
       source: sourceType,
-      sourcePath:
-        sourcePath ??
-        (sourcePR
-          ? sourcePR.patches.find((p) => /RENAME\s+COLUMN\s+customer_id/i.test(p.patch))?.filename
-          : undefined),
+      ...(sourcePath === undefined ? {} : { sourcePath }),
+      ...(sourceEnvelope === undefined ? {} : { sourceEnvelope }),
+      ...(sourcePrNumber && token
+        ? {
+            reattestSource: () =>
+              reattestSourceEnvelope(
+                { owner, repo, token, prNumber: Number.parseInt(sourcePrNumber, 10) },
+                repository,
+              ),
+          }
+        : {}),
     });
 
     console.log(`[worker] Run ${runId} finished: ${result.finalStatus}`);
@@ -171,4 +182,14 @@ export async function runWorker(options: WorkerOptions = {}): Promise<PipelineRe
   });
 
   return null;
+}
+
+/** Resolves the application code SHA from the git working tree at runtime. */
+async function resolveApplicationCodeSha(): Promise<string> {
+  const { execFileSync } = await import("node:child_process");
+  try {
+    return execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+  } catch {
+    return "UNAVAILABLE";
+  }
 }

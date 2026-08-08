@@ -45,6 +45,14 @@ class Tag:
 
 
 @dataclass(frozen=True, slots=True)
+class Domain:
+    logical_key: str
+    urn: str
+    display_name: str
+    description: str
+
+
+@dataclass(frozen=True, slots=True)
 class GraphNode:
     logical_key: str
     urn: str
@@ -53,6 +61,7 @@ class GraphNode:
     owner_urns: tuple[str, ...]
     ownership_type: OwnershipType | None
     tag_urns: tuple[str, ...]
+    domain_urn: str | None
     schema_fields: tuple[str, ...]
 
 
@@ -77,8 +86,6 @@ class QueryEvidence:
     dataset_urn: str
     field_path: str
     sha256: str
-    owner_urns: tuple[str, ...]
-    ownership_type: OwnershipType
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,6 +97,7 @@ class ExpectedGraph:
     source_field: SourceField
     owners: tuple[Owner, ...]
     tags: tuple[Tag, ...]
+    domains: tuple[Domain, ...]
     nodes: tuple[GraphNode, ...]
     edges: tuple[LineageEdge, ...]
     query_evidence: tuple[QueryEvidence, ...]
@@ -103,6 +111,7 @@ class ExpectedGraph:
             self.source_field.glossary_term_urn,
             *(owner.urn for owner in self.owners),
             *(tag.urn for tag in self.tags),
+            *(domain.urn for domain in self.domains),
             *(node.urn for node in self.nodes),
             *(query.query_urn for query in self.query_evidence),
         }

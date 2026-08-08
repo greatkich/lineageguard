@@ -1,11 +1,16 @@
 import type { LanguageModelV2 } from "@ai-sdk/provider";
 import {
+  assertExactlyFourConsumers,
+  assertNoSourceDrift,
   bindMigrationCandidate,
+  canonicalCandidateFingerprint,
   type ImpactContext,
   type MigrationCandidate,
   type ProposedChange,
   type RiskComparison,
   type RunStatus,
+  sha256Bytes,
+  type SourceChangeEnvelope,
 } from "@lineageguard/domain";
 import { type AgentLLMConfig, agentLLMConfigFromEnv, directLLMCall } from "./llm/client.js";
 import { migrationPlanPrompt } from "./llm/prompts.js";
@@ -30,12 +35,17 @@ export interface GitHubReviewInput {
   context: ImpactContext;
 }
 
+export type GitHubEffectOutcome = "CREATED" | "UPDATED" | "SKIPPED_EXACT";
+
 export interface GitHubReviewOutput {
   prUrl: string;
   prNumber: number;
   headSha: string;
   headBranch: string;
   receiptFingerprint: string;
+  outcome: GitHubEffectOutcome;
+  /** The base commit the generated commit was parented on. */
+  baseSha?: string | undefined;
 }
 
 export interface AgentValidationPort {
@@ -95,6 +105,10 @@ export interface RunInput {
   newName: string;
   source?: "GITHUB" | "FIXTURE" | undefined;
   sourcePath?: string | undefined;
+  /** The exact source identity this run analysed. Required to enforce drift checkpoints. */
+  sourceEnvelope?: SourceChangeEnvelope | undefined;
+  /** Re-reads the live source so a checkpoint can compare identities. */
+  reattestSource?: (() => Promise<SourceChangeEnvelope>) | undefined;
 }
 
 export interface PipelineResult {
@@ -125,6 +139,38 @@ function extractJson(text: string): unknown {
   const match = stripped.match(/\{[\s\S]*\}/);
   if (match) return JSON.parse(match[0]);
   throw new Error("No JSON in LLM response");
+}
+
+/**
+ * Re-attests the source identity at an authoritative boundary. A no-op when the run was not bound
+ * to a live PR; fatal when the live source moved, because later effects must never be produced from
+ * stale analysis.
+ */
+async function assertSourceUnchanged(input: RunInput, checkpoint: string): Promise<void> {
+  if (!input.sourceEnvelope || !input.reattestSource) return;
+  const observed = await input.reattestSource();
+  assertNoSourceDrift(checkpoint, input.sourceEnvelope, observed);
+  console.log(`  [pipeline] source re-attested at ${checkpoint}`);
+}
+
+/**
+ * Collects DataHub context and asserts the canonical four consumer groups before the count is
+ * persisted. The walkthrough's central claim is that DataHub reveals exactly four hidden
+ * consumers, so a derivation regression must fail the run rather than store a wrong number.
+ */
+async function collectAssertedContext(
+  ctx: StepContext,
+  changeId: string,
+  result: PipelineResult,
+): Promise<ImpactContext> {
+  const { context } = await collectContext(ctx, changeId);
+  const impactCards = deriveImpactCards(context);
+  assertExactlyFourConsumers(impactCards);
+  result.consumersFound = impactCards.length;
+  console.log(
+    `  [pipeline] Step 3: Collected ${context.evidence.length} evidence items (${impactCards.length} impact cards)`,
+  );
+  return context;
 }
 
 // ---------------------------------------------------------------------------
@@ -181,16 +227,9 @@ export function createAgentPipeline(config: AgentPipelineConfig) {
       await notify(input.runId, "CONTEXT_COLLECTING");
       let context: ImpactContext;
       try {
-        const collectResult = await collectContext(ctx, change.id);
-        context = collectResult.context;
-        // Derive exactly 4 canonical impact cards (not raw evidence count)
-        const impactCards = deriveImpactCards(context);
-        result.consumersFound = impactCards.length;
-        console.log(
-          `  [pipeline] Step 3: Collected ${context.evidence.length} evidence items (${impactCards.length} impact cards)`,
-        );
+        context = await collectAssertedContext(ctx, change.id, result);
         await notify(input.runId, "CONTEXT_COLLECTED", {
-          consumersFound: impactCards.length,
+          consumersFound: result.consumersFound,
           evidenceItems: context.evidence.length,
           contextJson: context,
         });
@@ -299,6 +338,7 @@ export function createAgentPipeline(config: AgentPipelineConfig) {
       if (config.validation) {
         console.log(`  [pipeline] Step 7: Running validation (8 checks)...`);
         try {
+          await assertSourceUnchanged(input, "BEFORE_VALIDATION");
           const validationOutput = await config.validation.validate(candidate, {
             runId: input.runId,
           });
@@ -319,6 +359,22 @@ export function createAgentPipeline(config: AgentPipelineConfig) {
           await notify(input.runId, "VALIDATED", {
             artifactsGenerated: result.artifactsGenerated,
             validationReceiptFingerprint,
+            // Persist the receipt body, not just its digest, so acceptance can independently
+            // re-inspect that exactly the eight canonical checks ran and every one passed.
+            validationReceiptJson: {
+              receiptFingerprint: validationReceiptFingerprint,
+              allPass: validationOutput.allPass,
+              checks: validationOutput.checks.map((check) => ({
+                check: check.check,
+                status: check.status,
+                summary: check.summary,
+              })),
+              artifacts: candidate.artifacts.map((artifact) => ({
+                path: artifact.path,
+                sha256: sha256Bytes(artifact.content),
+              })),
+              candidateFingerprint: canonicalCandidateFingerprint(candidate),
+            },
           });
         } catch (err: any) {
           console.error(`  [pipeline] Step 7 FAILED: ${err.message?.slice(0, 150)}`);
@@ -338,6 +394,7 @@ export function createAgentPipeline(config: AgentPipelineConfig) {
       if (config.github) {
         console.log(`  [pipeline] Step 8: Creating GitHub PR...`);
         try {
+          await assertSourceUnchanged(input, "BEFORE_PUBLICATION");
           githubReceipt = await config.github.createReview({
             runId: input.runId,
             candidate,
@@ -350,6 +407,14 @@ export function createAgentPipeline(config: AgentPipelineConfig) {
             prUrl: githubReceipt.prUrl,
             prNumber: githubReceipt.prNumber,
             githubReceiptFingerprint: githubReceipt.receiptFingerprint,
+            githubEffectOutcome: githubReceipt.outcome,
+            // Bind the published commit identity so acceptance can prove the remote branch still
+            // points at exactly the commit this run created.
+            githubHeadSha: githubReceipt.headSha,
+            githubHeadBranch: githubReceipt.headBranch,
+            ...(githubReceipt.baseSha === undefined
+              ? {}
+              : { githubBaseSha: githubReceipt.baseSha }),
           });
         } catch (err: any) {
           console.error(`  [pipeline] Step 8 FAILED: ${err.message?.slice(0, 150)}`);

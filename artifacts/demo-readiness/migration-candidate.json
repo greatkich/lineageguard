@@ -1,0 +1,135 @@
+{
+  "steps": [
+    {
+      "id": "step_expand",
+      "phase": "EXPAND",
+      "title": "Expand: add buyer_id with sync trigger",
+      "rationale": "Keep old consumers working while new column is added.",
+      "artifactTargets": [
+        "walkthrough/migrations/001_expand.sql",
+        "walkthrough/migrations/001_rollback.sql"
+      ],
+      "affectedEvidenceIds": [
+        "ev_171e9e739d3d518e46aad9ee",
+        "ev_59eb5c12bc8d30556ca933fe",
+        "ev_9e907158dba3dd3b5ea635af"
+      ]
+    },
+    {
+      "id": "step_migrate",
+      "phase": "MIGRATE",
+      "title": "Migrate: update controlled readers",
+      "rationale": "Update all dbt consumers to use buyer_id and add compatibility assertions.",
+      "artifactTargets": [
+        "walkthrough/dbt/models/analytics/customer_revenue.sql",
+        "walkthrough/dbt/models/fraud/customer_features.sql",
+        "walkthrough/dbt/models/staging/stg_orders.sql",
+        "walkthrough/dbt/tests/orders_buyer_id_not_null.sql",
+        "walkthrough/dbt/tests/orders_compat.sql"
+      ],
+      "affectedEvidenceIds": [
+        "ev_a193c7a6f647028a5d17fbac",
+        "ev_f0a45b70be19a93cda9c5129"
+      ]
+    },
+    {
+      "id": "step_contract",
+      "phase": "CONTRACT",
+      "title": "Contract: deprecate customer_id",
+      "rationale": "Retire the compatibility field after approval and observation.",
+      "artifactTargets": [
+        "docs/migrations/customer-id.md"
+      ],
+      "affectedEvidenceIds": [
+        "ev_171e9e739d3d518e46aad9ee"
+      ]
+    }
+  ],
+  "summary": "Renaming a column in-place would instantly break five downstream consumers including two CRITICAL dashboards and an ML model. The expand-migrate-contract strategy introduces the new 'buyer_id' column alongside the existing 'customer_id', keeps both in sync with integrity assertions, migrates each consumer individually with validation, and only removes the old column after a 90-day deprecation window with confirmed zero usage. This ensures zero downtime, full backward compatibility, and safe rollback at every stage.",
+  "strategy": "EXPAND_MIGRATE_CONTRACT",
+  "artifacts": [
+    {
+      "kind": "MIGRATION_DOCUMENT",
+      "path": "docs/migrations/customer-id.md",
+      "content": "# Migration: customer_id → buyer_id\n\n## Strategy: Expand-Migrate-Contract\n\n### Phase 1: Expand\n- Add `buyer_id` column with sync trigger\n- Both columns remain accessible\n\n### Phase 2: Migrate\n- Update dbt models to expose both columns\n- Add compatibility and not-null tests\n\n### Phase 3: Contract\n- After compatibility window (30 days), deprecate `customer_id`\n\n## Rollback Plan\nRun `walkthrough/migrations/001_rollback.sql` while `customer_id` remains the source of truth.\n\n## Compatibility Window: 30 days\n\n## Required Reviewers\n- urn:li:corpGroup:lineageguard-canonical.finance-analytics (owner of urn:li:dashboard:(looker,lineageguard-canonical.finance-revenue-dashboard), urn:li:dataset:(urn:li:dataPlatform:postgres,lineageguard-canonical.lineageguard.analytics.customer_revenue,PROD))\n- urn:li:corpGroup:lineageguard-canonical.risk-ml (owner of urn:li:mlModel:(urn:li:dataPlatform:mlflow,lineageguard-canonical.fraud-model-v3,PROD))",
+      "operation": "CREATE"
+    },
+    {
+      "kind": "DBT_MODEL",
+      "path": "walkthrough/dbt/models/analytics/customer_revenue.sql",
+      "content": "SELECT\n    customer_id,\n    buyer_id,\n    SUM(order_total) AS lifetime_revenue\nFROM {{ ref('stg_orders') }}\nGROUP BY customer_id, buyer_id",
+      "operation": "MODIFY",
+      "expectedBaseSha": "d130fd2a0307eaec187b6a764cd164e76b0062ac"
+    },
+    {
+      "kind": "DBT_MODEL",
+      "path": "walkthrough/dbt/models/fraud/customer_features.sql",
+      "content": "SELECT\n    customer_id,\n    buyer_id,\n    COUNT(*) AS order_count,\n    MAX(order_total) AS max_order_total\nFROM {{ ref('stg_orders') }}\nGROUP BY customer_id, buyer_id",
+      "operation": "MODIFY",
+      "expectedBaseSha": "d130fd2a0307eaec187b6a764cd164e76b0062ac"
+    },
+    {
+      "kind": "DBT_MODEL",
+      "path": "walkthrough/dbt/models/staging/stg_orders.sql",
+      "content": "SELECT\n    order_id,\n    customer_id,\n    buyer_id,\n    order_total,\n    ordered_at\nFROM {{ source('commerce', 'orders') }}",
+      "operation": "MODIFY",
+      "expectedBaseSha": "d130fd2a0307eaec187b6a764cd164e76b0062ac"
+    },
+    {
+      "kind": "DBT_TEST",
+      "path": "walkthrough/dbt/tests/orders_buyer_id_not_null.sql",
+      "content": "-- Not-null assertion: buyer_id must be populated for all rows\nselect *\nfrom {{ ref('stg_orders') }}\nwhere buyer_id is null",
+      "operation": "CREATE"
+    },
+    {
+      "kind": "DBT_TEST",
+      "path": "walkthrough/dbt/tests/orders_compat.sql",
+      "content": "-- Compatibility test: customer_id and buyer_id must always match\nselect *\nfrom {{ ref('stg_orders') }}\nwhere customer_id is distinct from buyer_id",
+      "operation": "CREATE"
+    },
+    {
+      "kind": "SQL_MIGRATION",
+      "path": "walkthrough/migrations/001_expand.sql",
+      "content": "alter table commerce.orders add column buyer_id uuid;\nupdate commerce.orders set buyer_id = customer_id;\ncreate function commerce.sync_order_customer_buyer() returns trigger language plpgsql as $$\nbegin\n  if tg_op = 'INSERT' then\n    if new.buyer_id is null and new.customer_id is not null then\n      new.buyer_id := new.customer_id;\n    elsif new.customer_id is null and new.buyer_id is not null then\n      new.customer_id := new.buyer_id;\n    elsif new.customer_id is null and new.buyer_id is null then\n      raise exception 'at least one identifier must be provided';\n    elsif new.customer_id is distinct from new.buyer_id then\n      raise exception 'customer_id and buyer_id must match during compatibility window';\n    end if;\n  elsif tg_op = 'UPDATE' then\n    if new.customer_id is distinct from old.customer_id and new.buyer_id is not distinct from old.buyer_id then\n      new.buyer_id := new.customer_id;\n    elsif new.buyer_id is distinct from old.buyer_id and new.customer_id is not distinct from old.customer_id then\n      new.customer_id := new.buyer_id;\n    elsif new.customer_id is distinct from old.customer_id and new.buyer_id is distinct from old.buyer_id then\n      if new.customer_id is distinct from new.buyer_id then\n        raise exception 'customer_id and buyer_id must match during compatibility window';\n      end if;\n    end if;\n  end if;\n  return new;\nend $$;\ncreate trigger orders_customer_buyer_compat\n  before insert or update on commerce.orders\n  for each row execute function commerce.sync_order_customer_buyer();\nalter table commerce.orders alter column buyer_id set not null;",
+      "operation": "CREATE"
+    },
+    {
+      "kind": "ROLLBACK_SQL",
+      "path": "walkthrough/migrations/001_rollback.sql",
+      "content": "drop trigger orders_customer_buyer_compat on commerce.orders;\ndrop function commerce.sync_order_customer_buyer();\nalter table commerce.orders drop column buyer_id cascade;\ndo $$ begin\n  if not exists (select 1 from information_schema.columns\n                 where table_schema = 'commerce' and table_name = 'orders'\n                   and column_name = 'customer_id') then\n    raise exception 'rollback removed customer_id';\n  end if;\n  if exists (select 1 from information_schema.columns\n             where table_schema = 'commerce' and table_name = 'orders'\n               and column_name = 'buyer_id') then\n    raise exception 'rollback left buyer_id in place';\n  end if;\nend $$;",
+      "operation": "CREATE"
+    }
+  ],
+  "rollbackPlan": "Run walkthrough/migrations/001_rollback.sql while customer_id remains the source of truth.",
+  "sourceDecision": "BLOCK",
+  "requiredReviewers": [
+    {
+      "kind": "OWNER",
+      "reason": "Recorded critical asset owner",
+      "ownerUrn": "urn:li:corpGroup:lineageguard-canonical.finance-analytics",
+      "affectedAssetUrns": [
+        "urn:li:dashboard:(looker,lineageguard-canonical.finance-revenue-dashboard)",
+        "urn:li:dataset:(urn:li:dataPlatform:postgres,lineageguard-canonical.lineageguard.analytics.customer_revenue,PROD)"
+      ]
+    },
+    {
+      "kind": "OWNER",
+      "reason": "Recorded critical asset owner",
+      "ownerUrn": "urn:li:corpGroup:lineageguard-canonical.risk-ml",
+      "affectedAssetUrns": [
+        "urn:li:mlModel:(urn:li:dataPlatform:mlflow,lineageguard-canonical.fraud-model-v3,PROD)"
+      ]
+    }
+  ],
+  "sourceEvidenceIds": [
+    "ev_171e9e739d3d518e46aad9ee",
+    "ev_59eb5c12bc8d30556ca933fe",
+    "ev_9e907158dba3dd3b5ea635af",
+    "ev_a193c7a6f647028a5d17fbac",
+    "ev_f0a45b70be19a93cda9c5129"
+  ],
+  "sourcePatchFingerprint": "f755da9a0f2da7ccee571476c5a650eddb3f477be482e6f0a6b3b9a06d7f670c",
+  "compatibilityWindowDays": 30,
+  "sourceChangeFingerprint": "81cda26ad872f06f0a456bcf80b896eb6a9eaa287bbba9a7767f102ab710726c",
+  "sourceImpactContextFingerprint": "a44ffdb760b53fee35ae94f3f17c39c1630470224c0f6b895bf990bd849bcdc1"
+}

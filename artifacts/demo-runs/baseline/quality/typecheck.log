@@ -1,0 +1,21 @@
+$ pnpm --recursive --if-present typecheck
+Scope: 9 of 10 workspace projects
+packages/domain typecheck$ tsc --noEmit
+packages/github typecheck$ tsc --noEmit
+packages/ui typecheck$ tsc --noEmit
+packages/ui typecheck: Done
+packages/github typecheck: Done
+packages/domain typecheck: Done
+packages/agent typecheck$ tsc --noEmit
+packages/validation typecheck$ tsc --noEmit
+packages/db typecheck$ tsc --noEmit
+packages/datahub typecheck$ tsc --noEmit
+packages/agent typecheck: Done
+packages/db typecheck: Done
+packages/validation typecheck: Done
+packages/datahub typecheck: Done
+apps/worker typecheck$ tsc --noEmit
+apps/web typecheck$ tsc --noEmit
+apps/worker typecheck: Done
+apps/web typecheck: Done
+EXIT: 0

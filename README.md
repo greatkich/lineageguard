@@ -4,17 +4,29 @@
 
 LineageGuard brings organizational metadata into schema-change review so repository-local automation can reason about downstream impact before code is merged.
 
+**Scope boundary.** LineageGuard operates inside the analytical data platform, downstream of the
+ingestion boundary from operational systems. It protects warehouse tables, dbt models, BI
+dashboards, ML features/models, and ad-hoc SQL — the consumers of a data product once it has
+landed in the warehouse via events, CDC, or ETL/ELT. It does **not** protect microservice-to-
+microservice database sharing, and it is **not** a substitute for API contract testing,
+Protobuf/gRPC schema evolution, or Kafka Schema Registry compatibility checks between services.
+An operational service's own OLTP schema is out of scope; only the analytical data product derived
+from it is in scope. See [`docs/DECISIONS/ADR-003-data-platform-boundary.md`](docs/DECISIONS/ADR-003-data-platform-boundary.md).
+
 The canonical local DataHub graph uses a separate one-time target bootstrap before any ingestion or
 metadata mutation. See [`walkthrough/README.md`](walkthrough/README.md) for the exact attested CLI
 sequence and least-privilege credential split.
 
-A repository-level coding agent can see the code in front of it. It usually cannot see the hidden consumers that live elsewhere in the organization: downstream dbt models, dashboards, ML features, production models, ad-hoc queries, owners, glossary rules, and data-quality expectations. LineageGuard closes that gap.
+A repository-level coding agent can see the code in front of it. It usually cannot see the hidden data consumers that live elsewhere in the organization: downstream dbt models, dashboards, ML features, production models, ad-hoc queries, owners, glossary rules, and data-quality expectations. LineageGuard closes that gap.
 
-It reads a proposed schema change, gathers organizational context from DataHub, makes a deterministic safety decision, generates a backward-compatible migration, validates the generated artifacts, creates a reviewable pull request, and writes the verified decision back to DataHub for the next person or agent.
+It reads a proposed warehouse schema change, gathers organizational context from DataHub, makes a deterministic safety decision, generates a backward-compatible migration, validates the generated artifacts, creates a reviewable pull request, and writes the verified decision back to DataHub for the next person or agent.
 
 ## The product walkthrough
 
-A developer proposes:
+`commerce.orders` is an analytical warehouse data product — the Orders Data Product in the
+Commerce Warehouse — populated from the Orders Service's operational database via events/CDC. It
+is not the Orders Service's live OLTP table, and this walkthrough never touches that operational
+database. A data or analytics engineer proposes a warehouse migration:
 
 ```sql
 ALTER TABLE commerce.orders
@@ -23,7 +35,7 @@ RENAME COLUMN customer_id TO buyer_id;
 
 Repository checks pass and the baseline code-only assessment says `ALLOW`.
 
-LineageGuard queries DataHub and discovers four consumers that are not visible in the changed repository:
+LineageGuard queries DataHub and discovers four downstream data consumers that are not visible in the changed repository:
 
 - a Finance dbt model;
 - a revenue dashboard;
@@ -77,6 +89,7 @@ The product is not a free-form multi-agent swarm. It is a typed, observable work
 | [`CODEX_START_PROMPT.md`](CODEX_START_PROMPT.md) | Ready-to-paste first prompt for Codex |
 | [`docs/DECISIONS/ADR-001-typescript-first-hybrid.md`](docs/DECISIONS/ADR-001-typescript-first-hybrid.md) | TypeScript vs Python decision |
 | [`docs/DECISIONS/ADR-002-deterministic-control-plane.md`](docs/DECISIONS/ADR-002-deterministic-control-plane.md) | Why the LLM does not own safety decisions |
+| [`docs/DECISIONS/ADR-003-data-platform-boundary.md`](docs/DECISIONS/ADR-003-data-platform-boundary.md) | Why LineageGuard is a data-platform guardian, not a microservice/API-contract tool |
 | [`docs/SOURCES.md`](docs/SOURCES.md) | Official research sources |
 
 ## Intended repository shape
@@ -138,11 +151,21 @@ pnpm check:environment
 
 # Copy and configure environment
 cp .env.example .env
-# Edit .env: set DATAHUB_READ_TOKEN, GITHUB_TOKEN, DATAHUB_MUTATION_TOKEN,
-# LINEAGEGUARD_BASE_SHA, LINEAGEGUARD_HEAD_SHA (or SOURCE_PR_NUMBER)
+# Edit .env: set DATAHUB_READ_TOKEN, DATAHUB_INGEST_TOKEN, DATAHUB_MUTATION_TOKEN,
+# DATAHUB_BOOTSTRAP_TOKEN (all 4 must be distinct), GITHUB_TOKEN, SOURCE_PR_NUMBER=3
 
 # Verify everything compiles and passes
 pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build
+
+# Run the canonical demo (full pipeline)
+pnpm demo:preflight          # 19/19 environment checks
+pnpm demo:bootstrap          # seed DataHub graph (first time only)
+pnpm demo:run                # execute: ALLOW → BLOCK → validate → PR → writeback
+pnpm demo:verify             # independently verify the last run (23 checks)
+pnpm demo:repeat -- --count 3  # prove determinism
+```
+
+See [`docs/demo-walkthrough.md`](docs/demo-walkthrough.md) for the full sequence and [`docs/troubleshooting.md`](docs/troubleshooting.md) for common issues.
 
 # Run the canonical scenario
 pnpm demo

@@ -21,18 +21,36 @@ const queryUrn =
   "urn:li:query:lineageguard-canonical.system.e4bbe7075754d05de68f76ff0a9b127532e044da8ab0a357bce7e0d41f7ad22c";
 const glossaryTermUrn = "urn:li:glossaryTerm:lineageguard-canonical.CustomerIdentifier";
 
+const canonicalTrainingDataBody = JSON.stringify({
+  value: {
+    trainingData: [{ dataset: fraudFeaturesUrn, motivation: "FEATURE_TABLE" }],
+  },
+});
+
+const testFetchImpl = (async () => ({
+  ok: true,
+  status: 200,
+  headers: new Headers({
+    "content-length": String(new TextEncoder().encode(canonicalTrainingDataBody).length),
+  }),
+  text: async () => canonicalTrainingDataBody,
+})) as unknown as typeof fetch;
+
 const targets: CanonicalCollectionTargets = {
   dashboardUrn,
   database: "lineageguard",
   dataset: "orders",
   environment: "PROD",
+  fetchImpl: testFetchImpl,
   field: "customer_id",
   fraudFeaturesUrn,
   glossaryTermUrn,
+  gmsBaseUrl: "http://127.0.0.1:8080",
   modelUrn,
   platform: "postgres",
   platformInstance: "lineageguard-canonical",
   queryUrn,
+  readToken: "test-read-token-12345678",
   revenueUrn,
   schema: "commerce",
   sourceUrn,
@@ -64,7 +82,7 @@ function payloadFor(tool: ReadToolName, call: number): RawToolInvocation["payloa
   }
   if (tool === "list_schema_fields") {
     return {
-      fields: [{ fieldPath: "customer_id", nativeDataType: "bigint", nullable: false }],
+      fields: [{ fieldPath: "customer_id", nativeDataType: "uuid", nullable: false }],
       matchingCount: 1,
       offset: 0,
       remainingCount: 0,
@@ -119,7 +137,7 @@ function payloadFor(tool: ReadToolName, call: number): RawToolInvocation["payloa
       total: 1,
     };
   }
-  const entityUrns = [dashboardUrn, modelUrn, queryUrn, glossaryTermUrn];
+  const entityUrns = [dashboardUrn, modelUrn, queryUrn, revenueUrn, glossaryTermUrn];
   return [{ urn: entityUrns[call - 9] ?? dashboardUrn }];
 }
 
@@ -142,6 +160,7 @@ describe("canonical official MCP reader", () => {
     expect(result.dashboardDetails.data).toEqual([{ urn: dashboardUrn }]);
     expect(result.modelDetails.data).toEqual([{ urn: modelUrn }]);
     expect(result.queryDetails.data).toEqual([{ urn: queryUrn }]);
+    expect(result.revenueDetails.data).toEqual([{ urn: revenueUrn }]);
     expect(result.glossaryDetails.data).toEqual([{ urn: glossaryTermUrn }]);
     expect(invoke.mock.calls).toEqual([
       [
@@ -200,6 +219,7 @@ describe("canonical official MCP reader", () => {
       ["get_entities", { urns: [dashboardUrn] }],
       ["get_entities", { urns: [modelUrn] }],
       ["get_entities", { urns: [queryUrn] }],
+      ["get_entities", { urns: [revenueUrn] }],
       ["get_entities", { urns: [glossaryTermUrn] }],
     ]);
   });
@@ -248,7 +268,7 @@ describe("canonical official MCP reader", () => {
     [[], "NOT_FOUND"],
     [
       [
-        { fieldPath: "customer_id", nativeDataType: "bigint", nullable: false },
+        { fieldPath: "customer_id", nativeDataType: "uuid", nullable: false },
         { fieldPath: "customer_id", nativeDataType: "text", nullable: true },
       ],
       "AMBIGUOUS",
@@ -319,7 +339,7 @@ describe("canonical official MCP reader", () => {
         tool === "search"
           ? payloadFor(tool, call)
           : {
-              fields: [{ fieldPath: "customer_id", nativeDataType: "bigint", nullable: false }],
+              fields: [{ fieldPath: "customer_id", nativeDataType: "uuid", nullable: false }],
               matchingCount: 2,
               offset: 0,
               remainingCount: 99,
@@ -491,7 +511,7 @@ describe("canonical official MCP reader", () => {
             {
               fieldPath: "customer_id",
               glossaryTerms: ["Customer Identifier"],
-              nativeDataType: "bigint",
+              nativeDataType: "uuid",
               nullable: false,
             },
           ],
@@ -552,7 +572,7 @@ describe("canonical official MCP reader", () => {
       {
         tool: "list_schema_fields",
         payload: {
-          fields: [{ fieldPath: "customer_id", nativeDataType: "bigint", nullable: false }],
+          fields: [{ fieldPath: "customer_id", nativeDataType: "uuid", nullable: false }],
           matchingCount: 1,
           offset: 1,
           remainingCount: 1,
@@ -577,7 +597,7 @@ describe("canonical official MCP reader", () => {
       {
         tool: "list_schema_fields",
         payload: {
-          fields: [{ fieldPath: "customer_id", nativeDataType: "bigint", nullable: false }],
+          fields: [{ fieldPath: "customer_id", nativeDataType: "uuid", nullable: false }],
           matchingCount: 1,
           offset: 0,
           remainingCount: 0,
@@ -602,7 +622,7 @@ describe("canonical official MCP reader", () => {
       {
         tool: "list_schema_fields",
         payload: {
-          fields: [{ fieldPath: "customer_id", nativeDataType: "bigint", nullable: false }],
+          fields: [{ fieldPath: "customer_id", nativeDataType: "uuid", nullable: false }],
           matchingCount: 1,
           offset: 1,
           remainingCount: 0,

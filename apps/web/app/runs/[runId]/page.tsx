@@ -55,7 +55,6 @@ const ruleDescriptions: Record<string, { title: string; severity: string }> = {
   LG004: { title: "Critical dashboard depends on field change", severity: "CRITICAL" },
   LG005: { title: "Affected critical asset has no recorded owner", severity: "HIGH" },
 };
-
 export const dynamic = "force-dynamic";
 
 export default async function RunDetailPage({ params }: { params: Promise<{ runId: string }> }) {
@@ -77,6 +76,12 @@ export default async function RunDetailPage({ params }: { params: Promise<{ runI
     if (!parsed.success) return [];
     return deriveImpactConsumers(parsed.data);
   })();
+
+  // One count per page. Prefer derivation from the persisted context so the headline number, the
+  // stat tile, and the consumer list can never disagree; fall back to the stored scalar only when
+  // no context was persisted (an early-failure run).
+  const consumerCount: number | null =
+    impactConsumers.length > 0 ? impactConsumers.length : (run.consumersFound ?? null);
 
   const kindLabels: Record<ImpactConsumer["kind"], string> = {
     DATA_MODEL: "Data Model",
@@ -182,7 +187,10 @@ export default async function RunDetailPage({ params }: { params: Promise<{ runI
                 ))}
               </pre>
             </div>
-            <div className="mt-4 flex items-center gap-2 text-xs text-muted-foreground">
+            <div
+              className="mt-4 flex items-center gap-2 text-xs text-muted-foreground"
+              data-testid="baseline-assessment"
+            >
               <IconSearch className="w-3.5 h-3.5" />
               <span>
                 {run.baselineDecision === "ALLOW"
@@ -213,7 +221,10 @@ export default async function RunDetailPage({ params }: { params: Promise<{ runI
           <CardBody className="space-y-4">
             {/* Decision transition */}
             {run.baselineDecision && run.groundedDecision && (
-              <div className="flex items-center justify-between p-3 rounded-md bg-muted/50">
+              <div
+                className="flex items-center justify-between p-3 rounded-md bg-muted/50"
+                data-testid="decision-transition"
+              >
                 <span className="text-xs text-muted-foreground">Decision</span>
                 <div className="flex items-center gap-2">
                   <Badge status="allow">{run.baselineDecision}</Badge>
@@ -227,14 +238,17 @@ export default async function RunDetailPage({ params }: { params: Promise<{ runI
 
             {/* Impact consumers from persisted context */}
             {impactConsumers.length > 0 && (
-              <div>
+              <div data-testid="downstream-consumers">
                 <p className="text-xs font-medium text-muted-foreground mb-2">
-                  Impact Consumers ({impactConsumers.length})
+                  Downstream Data Consumers (
+                  <span data-testid="downstream-consumer-count">{impactConsumers.length}</span>)
                 </p>
                 <div className="space-y-1.5">
                   {impactConsumers.slice(0, 6).map((item) => (
                     <div
                       key={item.entityUrn}
+                      data-testid="downstream-consumer"
+                      data-consumer-kind={item.kind}
                       className="flex items-center gap-2 p-1.5 rounded bg-muted/30 text-xs"
                     >
                       <span className="font-mono text-[10px] text-muted-foreground">
@@ -289,9 +303,11 @@ export default async function RunDetailPage({ params }: { params: Promise<{ runI
             <div className="grid grid-cols-2 gap-3">
               <div className="p-2.5 rounded-md bg-muted/50">
                 <p className="text-[10px] text-muted-foreground uppercase tracking-wider">
-                  Consumers
+                  Data Consumers
                 </p>
-                <p className="text-lg font-semibold mt-0.5">{run.consumersFound || "—"}</p>
+                <p className="text-lg font-semibold mt-0.5" data-testid="stat-data-consumers">
+                  {consumerCount ?? "—"}
+                </p>
               </div>
               <div className="p-2.5 rounded-md bg-muted/50">
                 <p className="text-[10px] text-muted-foreground uppercase tracking-wider">
@@ -315,7 +331,7 @@ export default async function RunDetailPage({ params }: { params: Promise<{ runI
           <CardBody className="space-y-4">
             <div>
               <p className="text-xs text-muted-foreground mb-1">Strategy</p>
-              <p className="text-sm font-medium">
+              <p className="text-sm font-medium" data-testid="migration-strategy">
                 {candidate?.strategy
                   ? candidate.strategy
                       .replace(/_/g, " → ")
@@ -335,7 +351,10 @@ export default async function RunDetailPage({ params }: { params: Promise<{ runI
                 <p className="text-[10px] text-muted-foreground uppercase tracking-wider">
                   Validation
                 </p>
-                <p className="text-lg font-semibold mt-0.5 flex items-center gap-1">
+                <p
+                  className="text-lg font-semibold mt-0.5 flex items-center gap-1"
+                  data-testid="validation-status"
+                >
                   {run.validationReceiptFingerprint ? (
                     <>
                       <IconCheck className="w-4 h-4 text-status-pass" />{" "}
@@ -372,7 +391,10 @@ export default async function RunDetailPage({ params }: { params: Promise<{ runI
 
             {/* Writeback */}
             {run.writebackStatus && (
-              <div className="flex items-center gap-2 p-2.5 rounded-md bg-status-pass/5">
+              <div
+                className="flex items-center gap-2 p-2.5 rounded-md bg-status-pass/5"
+                data-testid="datahub-writeback"
+              >
                 <IconUpload className="w-4 h-4 text-status-pass" />
                 <div>
                   <p className="text-xs font-medium">DataHub Writeback</p>
@@ -395,6 +417,7 @@ export default async function RunDetailPage({ params }: { params: Promise<{ runI
                 target="_blank"
                 rel="noopener noreferrer"
                 className="flex items-center gap-2 p-2.5 rounded-md bg-status-info/5 hover:bg-status-info/10 transition-colors"
+                data-testid="generated-pr-link"
               >
                 <IconGitPullRequest className="w-4 h-4 text-status-info" />
                 <span className="text-xs font-medium text-status-info">View Pull Request</span>
@@ -406,7 +429,10 @@ export default async function RunDetailPage({ params }: { params: Promise<{ runI
 
       {/* Bottom insight banner */}
       {isComplete && (
-        <Card className="border-status-pass/30 bg-status-pass/[0.03]">
+        <Card
+          className="border-status-pass/30 bg-status-pass/[0.03]"
+          data-testid="run-summary-banner"
+        >
           <CardBody className="flex items-center gap-4">
             <div className="w-10 h-10 rounded-full bg-status-pass/10 flex items-center justify-center flex-shrink-0">
               <IconShieldCheck className="w-5 h-5 text-status-pass" />
@@ -414,9 +440,8 @@ export default async function RunDetailPage({ params }: { params: Promise<{ runI
             <div>
               <p className="text-sm font-medium">Breaking change prevented</p>
               <p className="text-xs text-muted-foreground mt-0.5">
-                DataHub lineage revealed {run.consumersFound} downstream{" "}
-                {run.consumersFound === 1 ? "dependency" : "dependencies"} invisible from the
-                repository.
+                DataHub lineage revealed {consumerCount} downstream data{" "}
+                {consumerCount === 1 ? "consumer" : "consumers"} invisible from the repository.
                 {run.validationReceiptFingerprint && " A safe migration was validated"}
                 {run.writebackReceiptFingerprint && " and written back to DataHub"}.
               </p>

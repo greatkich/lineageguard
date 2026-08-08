@@ -60,7 +60,7 @@ export default async function DashboardPage() {
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Dashboard</h1>
         <p className="text-sm text-muted-foreground mt-1">
-          Schema change safety analysis powered by DataHub lineage
+          Warehouse schema change safety analysis powered by DataHub lineage
         </p>
       </div>
 
@@ -96,7 +96,7 @@ export default async function DashboardPage() {
         <CardHeader>
           <h2 className="text-sm font-medium">Pipeline</h2>
           <p className="text-xs text-muted-foreground mt-0.5">
-            Each schema change passes through these stages
+            Each warehouse schema change passes through these stages
           </p>
         </CardHeader>
         <CardBody>
@@ -174,7 +174,7 @@ export default async function DashboardPage() {
                   {/* Meta */}
                   <div className="hidden md:flex items-center gap-4 text-xs text-muted-foreground flex-shrink-0">
                     {rules.length > 0 && <span>{rules.length} rules</span>}
-                    {run.consumersFound > 0 && <span>{run.consumersFound} consumers</span>}
+                    {run.consumersFound > 0 && <span>{run.consumersFound} data consumers</span>}
                     {run.artifactsGenerated > 0 && <span>{run.artifactsGenerated} artifacts</span>}
                   </div>
 

@@ -1,0 +1,300 @@
+import { createHash } from "node:crypto";
+import type { GitHubReviewOutput } from "@lineageguard/agent";
+
+interface GitHubArtifact {
+  path: string;
+  content: string;
+}
+
+export interface ReconcileGitHubEffectOptions {
+  token: string;
+  apiBase: string;
+  owner: string;
+  repo: string;
+  branchName: string;
+  baseBranch: string;
+  baseSha: string;
+  artifacts: readonly GitHubArtifact[];
+}
+
+interface CommitResponse {
+  parents?: Array<{ sha?: string }>;
+  tree?: { sha?: string };
+}
+
+interface PullRequestResponse {
+  html_url?: string;
+  number?: number;
+  draft?: boolean;
+  base?: { ref?: string; sha?: string; repo?: { full_name?: string } | null };
+  head?: { ref?: string; sha?: string; repo?: { full_name?: string } | null };
+}
+
+interface TreeEntry {
+  path: string;
+  mode: string;
+  type: string;
+  sha: string;
+}
+
+interface CompareResponse {
+  status?: unknown;
+  ahead_by?: unknown;
+  behind_by?: unknown;
+  base_commit?: { sha?: unknown };
+  merge_base_commit?: { sha?: unknown };
+}
+
+class GitHubReadError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
+async function requestJson<T>(options: ReconcileGitHubEffectOptions, path: string): Promise<T> {
+  const response = await fetch(`${options.apiBase}/repos/${options.owner}/${options.repo}${path}`, {
+    headers: {
+      Accept: "application/vnd.github+json",
+      Authorization: `Bearer ${options.token}`,
+      "X-GitHub-Api-Version": "2022-11-28",
+    },
+  });
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    throw new GitHubReadError(
+      response.status,
+      `GitHub API ${String(response.status)}: ${detail.slice(0, 200)}`,
+    );
+  }
+  return (await response.json()) as T;
+}
+
+async function readHeadSha(options: ReconcileGitHubEffectOptions): Promise<string | undefined> {
+  try {
+    const ref = await requestJson<{ object?: { sha?: string } }>(
+      options,
+      `/git/ref/heads/${options.branchName}`,
+    );
+    if (!ref.object?.sha) throw new Error("GitHub ref response has no head SHA");
+    return ref.object.sha;
+  } catch (error) {
+    if (error instanceof GitHubReadError && error.status === 404) return undefined;
+    throw error;
+  }
+}
+
+async function readCommit(
+  options: ReconcileGitHubEffectOptions,
+  sha: string,
+): Promise<CommitResponse> {
+  return requestJson<CommitResponse>(options, `/git/commits/${sha}`);
+}
+
+function isGitSha(value: unknown): value is string {
+  return typeof value === "string" && /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(value);
+}
+
+function publicationBaseSha(commit: CommitResponse): string {
+  const parents = commit.parents;
+  if (parents?.length !== 1 || !isGitSha(parents[0]?.sha)) {
+    throw new Error("Existing GitHub commit must have exactly one valid publication base parent");
+  }
+  return parents[0].sha;
+}
+
+async function assertPublicationBaseReachable(
+  options: ReconcileGitHubEffectOptions,
+  publicationBase: string,
+): Promise<void> {
+  if (!isGitSha(options.baseSha)) throw new Error("Current target head is not a valid Git SHA");
+  const response = await requestJson<CompareResponse>(
+    options,
+    `/compare/${publicationBase}...${options.baseSha}?per_page=1&page=1`,
+  );
+  const shapeIsValid =
+    typeof response.ahead_by === "number" &&
+    Number.isSafeInteger(response.ahead_by) &&
+    typeof response.behind_by === "number" &&
+    Number.isSafeInteger(response.behind_by) &&
+    response.ahead_by >= 0 &&
+    response.behind_by >= 0 &&
+    isGitSha(response.base_commit?.sha) &&
+    response.base_commit.sha === publicationBase &&
+    isGitSha(response.merge_base_commit?.sha) &&
+    response.merge_base_commit.sha === publicationBase;
+  const identical =
+    response.status === "identical" &&
+    publicationBase === options.baseSha &&
+    response.ahead_by === 0 &&
+    response.behind_by === 0;
+  const advanced =
+    response.status === "ahead" &&
+    publicationBase !== options.baseSha &&
+    typeof response.ahead_by === "number" &&
+    response.ahead_by > 0 &&
+    response.behind_by === 0;
+  if (!shapeIsValid || (!identical && !advanced)) {
+    throw new Error("GitHub publication base is not an ancestor of the current target head");
+  }
+}
+
+async function readTree(
+  options: ReconcileGitHubEffectOptions,
+  treeSha: string,
+): Promise<Map<string, TreeEntry>> {
+  const response = await requestJson<{
+    tree?: unknown;
+    truncated?: unknown;
+  }>(options, `/git/trees/${treeSha}?recursive=1`);
+  if (response.truncated !== false) throw new Error("GitHub recursive tree response is truncated");
+  if (!Array.isArray(response.tree)) throw new Error("GitHub recursive tree payload is malformed");
+  const entries = new Map<string, TreeEntry>();
+  for (const value of response.tree) {
+    const entry = value as Partial<TreeEntry>;
+    if (!entry.path || !entry.mode || !entry.type || !entry.sha || entries.has(entry.path)) {
+      throw new Error("GitHub tree payload contains a malformed or duplicate entry");
+    }
+    entries.set(entry.path, entry as TreeEntry);
+  }
+  return entries;
+}
+
+function treeIdentity(entry: TreeEntry | undefined): string | undefined {
+  return entry && `${entry.mode}:${entry.type}:${entry.sha}`;
+}
+
+function isAuthorizedTreeAncestor(
+  path: string,
+  baseEntry: TreeEntry | undefined,
+  headEntry: TreeEntry | undefined,
+  artifactPaths: ReadonlySet<string>,
+): boolean {
+  const present = [baseEntry, headEntry].filter((entry) => entry !== undefined);
+  return (
+    present.length > 0 &&
+    present.every((entry) => entry.type === "tree" && entry.mode === "040000") &&
+    [...artifactPaths].some((artifactPath) => artifactPath.startsWith(`${path}/`))
+  );
+}
+
+function assertExactTreeDelta(
+  baseEntries: ReadonlyMap<string, TreeEntry>,
+  headEntries: ReadonlyMap<string, TreeEntry>,
+  artifacts: readonly GitHubArtifact[],
+): void {
+  const expected = new Set(artifacts.map((artifact) => artifact.path));
+  if (expected.size !== artifacts.length)
+    throw new Error("Generated artifact paths are duplicated");
+  const changed = new Set<string>();
+  for (const [path, entry] of headEntries) {
+    if (treeIdentity(baseEntries.get(path)) !== treeIdentity(entry)) changed.add(path);
+  }
+  for (const path of baseEntries.keys()) {
+    if (!headEntries.has(path)) changed.add(path);
+  }
+  const unexpected = [...changed].filter(
+    (path) =>
+      !expected.has(path) &&
+      !isAuthorizedTreeAncestor(path, baseEntries.get(path), headEntries.get(path), expected),
+  );
+  const absent = [...expected].filter((path) => !changed.has(path));
+  if (unexpected.length > 0 || absent.length > 0) {
+    throw new Error(
+      `Existing GitHub tree delta is not exact (unexpected: ${unexpected.join(", ") || "none"}; absent: ${absent.join(", ") || "none"})`,
+    );
+  }
+}
+
+async function assertExactArtifactBytes(
+  options: ReconcileGitHubEffectOptions,
+  headEntries: ReadonlyMap<string, TreeEntry>,
+): Promise<void> {
+  for (const artifact of options.artifacts) {
+    const entry = headEntries.get(artifact.path);
+    if (!entry || entry.type !== "blob" || entry.mode !== "100644") {
+      throw new Error(
+        `Existing GitHub artifact is missing or not a regular blob: ${artifact.path}`,
+      );
+    }
+    const blob = await requestJson<{ content?: string; encoding?: string }>(
+      options,
+      `/git/blobs/${entry.sha}`,
+    );
+    if (blob.encoding !== "base64" || !blob.content) {
+      throw new Error(`Existing GitHub blob is unreadable: ${artifact.path}`);
+    }
+    const actual = Buffer.from(blob.content.replace(/\r?\n/g, ""), "base64").toString("utf8");
+    if (actual !== artifact.content) {
+      throw new Error(`Existing GitHub blob bytes differ: ${artifact.path}`);
+    }
+  }
+}
+
+async function readExactDraftPullRequest(
+  options: ReconcileGitHubEffectOptions,
+  headSha: string,
+  publicationBase: string,
+): Promise<{ prUrl: string; prNumber: number }> {
+  const query = new URLSearchParams([
+    ["state", "open"],
+    ["head", `${options.owner}:${options.branchName}`],
+    ["base", options.baseBranch],
+    ["per_page", "2"],
+  ]);
+  const pulls = await requestJson<PullRequestResponse[]>(options, `/pulls?${query.toString()}`);
+  if (pulls.length !== 1) {
+    throw new Error("Existing GitHub effect requires exactly one open draft pull request");
+  }
+  const pull = pulls[0]!;
+  if (pull.draft !== true || !pull.html_url || !pull.number) {
+    throw new Error("Existing GitHub effect does not have a valid draft pull request");
+  }
+  const repository = `${options.owner}/${options.repo}`;
+  const bindingIsExact =
+    pull.base?.ref === options.baseBranch &&
+    pull.base.sha === publicationBase &&
+    pull.base.repo?.full_name === repository &&
+    pull.head?.ref === options.branchName &&
+    pull.head.sha === headSha &&
+    pull.head.repo?.full_name === repository;
+  if (!bindingIsExact) throw new Error("Existing GitHub pull request binding is not exact");
+  return { prUrl: pull.html_url, prNumber: pull.number };
+}
+
+function requireTreeSha(commit: CommitResponse, label: string): string {
+  if (!commit.tree?.sha) throw new Error(`${label} GitHub commit has no tree SHA`);
+  return commit.tree.sha;
+}
+
+export async function reconcileGitHubEffect(
+  options: ReconcileGitHubEffectOptions,
+): Promise<{ kind: "MISSING" } | { kind: "EXACT"; receipt: GitHubReviewOutput }> {
+  const headSha = await readHeadSha(options);
+  if (headSha === undefined) return { kind: "MISSING" };
+  const headCommit = await readCommit(options, headSha);
+  const publicationBase = publicationBaseSha(headCommit);
+  await assertPublicationBaseReachable(options, publicationBase);
+  const baseCommit = await readCommit(options, publicationBase);
+  const headEntries = await readTree(options, requireTreeSha(headCommit, "Head"));
+  const baseEntries = await readTree(options, requireTreeSha(baseCommit, "Base"));
+  assertExactTreeDelta(baseEntries, headEntries, options.artifacts);
+  await assertExactArtifactBytes(options, headEntries);
+  const pull = await readExactDraftPullRequest(options, headSha, publicationBase);
+  const receiptFingerprint = createHash("sha256")
+    .update(JSON.stringify({ prUrl: pull.prUrl, headSha }))
+    .digest("hex");
+  return {
+    kind: "EXACT",
+    receipt: {
+      ...pull,
+      headSha,
+      headBranch: options.branchName,
+      baseSha: publicationBase,
+      receiptFingerprint,
+      outcome: "SKIPPED_EXACT",
+    },
+  };
+}

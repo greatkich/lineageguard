@@ -24,6 +24,32 @@ function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
+const canonicalTrainingDataBody = JSON.stringify({
+  value: {
+    trainingData: [
+      {
+        dataset:
+          "urn:li:dataset:(urn:li:dataPlatform:postgres,lineageguard-canonical.lineageguard.fraud.customer_features,PROD)",
+        motivation: "FEATURE_TABLE",
+      },
+    ],
+  },
+});
+
+/** Read-only GMS credentials plus a stubbed TrainingData aspect response. */
+const gmsStub = {
+  fetchImpl: (async () => ({
+    ok: true,
+    status: 200,
+    headers: new Headers({
+      "content-length": String(new TextEncoder().encode(canonicalTrainingDataBody).length),
+    }),
+    text: async () => canonicalTrainingDataBody,
+  })) as unknown as typeof fetch,
+  gmsBaseUrl: "http://127.0.0.1:8080",
+  readToken: "test-read-token-12345678",
+} as const;
+
 describe("live DataHub context port", () => {
   it("collects the complete canonical live result through the read-only session", async () => {
     const base = canonicalRawResponses();
@@ -83,6 +109,7 @@ describe("live DataHub context port", () => {
     let invocation = 0;
     let tick = 0;
     const port = createLiveDataHubContextPort({
+      ...gmsStub,
       clock: () => {
         tick += 1;
         return new Date(`2026-08-04T08:00:${String(tick).padStart(2, "0")}.000Z`);
@@ -101,7 +128,7 @@ describe("live DataHub context port", () => {
 
     expect(result.outcome).toBe("COLLECTED_LIVE");
     if (result.outcome !== "COLLECTED_LIVE") throw new Error("expected live result");
-    expect(result.context.evidence).toHaveLength(9);
+    expect(result.context.evidence).toHaveLength(10);
     const lineagePaths = result.context.evidence.filter((item) => item.kind === "LINEAGE_PATH");
     expect(
       lineagePaths
@@ -113,13 +140,14 @@ describe("live DataHub context port", () => {
         .find((item) => item.targetUrn?.includes("mlModel"))
         ?.provenance.map((entry) => entry.invocationId),
     ).toEqual(["inv_live_03", "inv_live_04", "inv_live_07", "inv_live_08"]);
-    expect(transport.callTool).toHaveBeenCalledTimes(13);
+    expect(transport.callTool).toHaveBeenCalledTimes(14);
     expect(transport.close).toHaveBeenCalledTimes(1);
   });
 
   it("returns a typed resolution failure and always closes the MCP session", async () => {
     const transport = session();
     const port = createLiveDataHubContextPort({
+      ...gmsStub,
       clock: () => new Date("2026-08-04T08:00:01.000Z"),
       invocationId: () => "inv_resolution_missing",
       sessionFactory: vi.fn(async () => transport),
@@ -150,7 +178,7 @@ describe("live DataHub context port", () => {
 
   it("rejects a non-canonical request before creating transport", async () => {
     const sessionFactory = vi.fn(async () => session());
-    const port = createLiveDataHubContextPort({ sessionFactory });
+    const port = createLiveDataHubContextPort({ ...gmsStub, sessionFactory });
 
     await expect(
       port.collect({
@@ -175,6 +203,7 @@ describe("live DataHub context port", () => {
       })),
     });
     const port = createLiveDataHubContextPort({
+      ...gmsStub,
       sessionFactory: vi.fn(async () => transport),
     });
 

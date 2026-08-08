@@ -1,5 +1,6 @@
 import { canonicalAnalyticsStagingUrn } from "@lineageguard/domain";
 import { z } from "zod";
+import { type TrainingDataResult, readTrainingDataAspect } from "./aspect-reader.js";
 import { DataHubAdapterError } from "./errors.js";
 import {
   type OfficialEntity,
@@ -44,17 +45,22 @@ const targetsSchema = z
     field: identifier,
     fraudFeaturesUrn: urn,
     glossaryTermUrn: urn,
+    gmsBaseUrl: z.string().min(1).max(2_048),
     modelUrn: urn,
     platform: platformIdentifier,
     platformInstance: identifier,
     queryUrn: urn,
+    readToken: z.string().min(8).max(4_096),
     revenueUrn: urn,
     schema: identifier,
     sourceUrn: urn,
   })
   .strict();
 
-export type CanonicalCollectionTargets = z.infer<typeof targetsSchema>;
+export type CanonicalCollectionTargets = z.infer<typeof targetsSchema> & {
+  /** Injected fetch implementation for testing. Uses global `fetch` when omitted. */
+  fetchImpl?: typeof fetch;
+};
 
 export interface CanonicalToolInvoker {
   invoke(
@@ -84,8 +90,10 @@ export type CanonicalObservations = Readonly<{
   queryDiscoveryPages: readonly OfficialObservation<OfficialQueryPage>[];
   resolutionSearch: OfficialObservation<OfficialSearchPage>;
   resolutionSearchPages: readonly OfficialObservation<OfficialSearchPage>[];
+  revenueDetails: OfficialObservation<readonly OfficialEntity[]>;
   schemaFieldPages: readonly OfficialObservation<OfficialSchemaFieldsPage>[];
   schemaFields: OfficialObservation<OfficialSchemaFieldsPage>;
+  trainingDataProof: TrainingDataResult;
 }>;
 
 async function observe<T>(
@@ -117,14 +125,60 @@ async function observe<T>(
 }
 
 function safeTargets(input: CanonicalCollectionTargets): CanonicalCollectionTargets {
-  const parsed = targetsSchema.safeParse(input);
+  const { fetchImpl, ...zodFields } = input;
+  const parsed = targetsSchema.safeParse(zodFields);
   if (!parsed.success) {
     throw new DataHubAdapterError(
       "CONFIGURATION",
       "Canonical DataHub collection targets are invalid.",
     );
   }
-  return parsed.data;
+  return { ...parsed.data, ...(fetchImpl === undefined ? {} : { fetchImpl }) };
+}
+
+/**
+ * Calls `get_lineage_paths_between` but tolerates the MCP server returning isError:true when no
+ * lineage edges exist between two entities. This happens for mlModel entities whose relationship
+ * is established through the TrainingData aspect rather than UpstreamLineage. The normalizer
+ * accepts pathCount=0 for this case.
+ */
+async function observePathOrEmpty(
+  invoker: CanonicalToolInvoker,
+  tool: ReadToolName,
+  arguments_: Readonly<Record<string, unknown>>,
+  sourceUrn: string,
+  targetUrn: string,
+): Promise<OfficialObservation<OfficialPathResult>> {
+  try {
+    return await observe(invoker, tool, arguments_, parsePathResult);
+  } catch (error) {
+    if (error instanceof DataHubAdapterError && error.code === "TOOL_FAILURE") {
+      // The MCP server returns isError:true with "No lineage found" when no lineage edges
+      // connect the entities. Synthesize an empty path result — the normalizer already accepts
+      // pathCount=0 for non-lineage relationships (TrainingData, etc.).
+      const { createHash } = await import("node:crypto");
+      const emptyPathResult: OfficialPathResult = {
+        source: { urn: sourceUrn },
+        target: { urn: targetUrn },
+        paths: [],
+        pathCount: 0,
+      };
+      const responseFingerprint = createHash("sha256")
+        .update(JSON.stringify(emptyPathResult))
+        .digest("hex");
+      return Object.freeze({
+        data: emptyPathResult,
+        invocation: {
+          invocationId: error.invocationId ?? `synth_${Date.now().toString(16)}`,
+          tool,
+          payload: emptyPathResult as unknown as Readonly<Record<string, unknown>>,
+          responseFingerprint,
+          retrievedAt: new Date().toISOString(),
+        },
+      });
+    }
+    throw error;
+  }
 }
 
 function requireUniqueResolution(
@@ -597,7 +651,7 @@ export async function collectCanonicalObservations(
     },
     parsePathResult,
   );
-  const fraudEntityPath = await observe(
+  const fraudEntityPath = await observePathOrEmpty(
     invoker,
     "get_lineage_paths_between",
     {
@@ -605,8 +659,16 @@ export async function collectCanonicalObservations(
       source_urn: targets.fraudFeaturesUrn,
       target_urn: targets.modelUrn,
     },
-    parsePathResult,
+    targets.fraudFeaturesUrn,
+    targets.modelUrn,
   );
+  const trainingDataProof = await readTrainingDataAspect({
+    gmsBaseUrl: targets.gmsBaseUrl,
+    readToken: targets.readToken,
+    modelUrn: targets.modelUrn,
+    expectedDatasetUrn: targets.fraudFeaturesUrn,
+    ...(targets.fetchImpl === undefined ? {} : { fetchImpl: targets.fetchImpl }),
+  });
   const query = await collectQueryDiscovery(invoker, targets);
   const queryDiscovery = query.proof;
   const queryDiscoveryPages = query.pages;
@@ -626,6 +688,12 @@ export async function collectCanonicalObservations(
     invoker,
     "get_entities",
     { urns: [targets.queryUrn] },
+    parseEntitiesResult,
+  );
+  const revenueDetails = await observe(
+    invoker,
+    "get_entities",
+    { urns: [targets.revenueUrn] },
     parseEntitiesResult,
   );
   const glossaryDetails = await observe(
@@ -651,7 +719,9 @@ export async function collectCanonicalObservations(
     queryDiscoveryPages,
     resolutionSearch,
     resolutionSearchPages,
+    revenueDetails,
     schemaFieldPages,
     schemaFields,
+    trainingDataProof,
   });
 }

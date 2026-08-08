@@ -1,0 +1,14 @@
+{
+  "sourceRunId": "run_000000000000019fe1aafd0a",
+  "applicationCodeSha": "c589f69580c6c56744703ec089554df117e6b0dd",
+  "sourceCommitSha": "1be5ee50f14ba2d31122dc8d21e71eb516a2bf78",
+  "sourceChangeFingerprint": "6c981734adda29d0d6d86dc1f71411505b40a3993316690f49217e629bb0f08e",
+  "impactContextFingerprint": "sha256:2a31a39fb8b9aac2d2af195c33d9f7fb6da36b6c8a7f00e7408590e235d48c2b",
+  "riskComparisonFingerprint": "sha256:aeac6b0060dafc0502ccd02d91ffcebd4c8836cfdc9478e07503fd0553a85911",
+  "candidateFingerprint": "sha256:7cff76197c4517d5642173083e7c3c553bbf8dc3ec63a956147d0d0fb5bb4ca0",
+  "validationReceiptFingerprint": "31c953bf4f9556d0c1376e961021dc017511322429e05541b59dc3020326fe7d",
+  "githubReceiptFingerprint": "418bbe6cab085efeab82738bfa8a7709a5c28a20e57b42a18eee47075ca73976",
+  "githubEffectOutcome": "SKIPPED_EXACT",
+  "writebackReceiptFingerprint": "341a2fb16bb2783dd25917f5a3cd8e5c5ed7dd8c5c470cfb3163f8a900f5432d",
+  "exportedAt": "2026-08-08T14:00:31.938Z"
+}

@@ -1,4 +1,10 @@
 export * from "./change.js";
+export {
+  canonicalCandidateFingerprint,
+  decisionMarker,
+  generatedBranchName,
+  sha256Bytes,
+} from "./candidate-identity.js";
 export type {
   CanonicalImpactRequest,
   Criticality,
@@ -56,7 +62,11 @@ export type {
   MlConsumer,
   UnmanagedQueryConsumer,
 } from "./impact-consumer.js";
-export { deriveImpactConsumers } from "./impact-consumer.js";
+export {
+  assertExactlyFourConsumers,
+  canonicalConsumerKinds,
+  deriveImpactConsumers,
+} from "./impact-consumer.js";
 export type { MigrationArtifact, MigrationCandidate } from "./migration.js";
 export {
   bindMigrationCandidate,
@@ -73,4 +83,22 @@ export * from "./risk.js";
 export * from "./run.js";
 export type { SourceChange } from "./source-change.js";
 export { sourceChangeSchema, validateSourceChange } from "./source-change.js";
+export type { SourceAllowlistInput, SourceFileInput } from "./source-allowlist.js";
+export { buildCanonicalSourceEnvelope } from "./source-allowlist.js";
+export type {
+  SourceChangeEnvelope,
+  SourceChangeEnvelopeIdentity,
+  SourceRejectionCode,
+} from "./source-envelope.js";
+export {
+  assertNoSourceDrift,
+  canonicalNormalizedChange,
+  computeSourceFingerprint,
+  createSourceChangeEnvelope,
+  normalizedChangeSchema,
+  SourceChangeRejectedError,
+  sourceChangeEnvelopeSchema,
+  SourceDriftError,
+  sourceRejectionCodes,
+} from "./source-envelope.js";
 export * from "./validation.js";

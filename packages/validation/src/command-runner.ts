@@ -29,11 +29,16 @@ const trustedSystemPath = "/usr/bin:/bin";
 
 async function assertImmutableExecutable(path: string, expectedDigest: string): Promise<void> {
   const metadata = await lstat(path).catch(() => undefined);
+  // Same trust rule as validateTool: owned by root or us, never group/world writable, executable,
+  // and byte-identical to the digest recorded when the runtime policy was resolved. Owner-writability
+  // is not rejected — for a file we own it grants nothing the running uid lacks, and rejecting it
+  // makes a standard macOS Docker Desktop install (mode 0755, user-owned) unusable. The digest
+  // comparison below is what actually detects a swapped binary.
   if (
     !metadata?.isFile() ||
     metadata.isSymbolicLink() ||
     (metadata.uid !== 0 && metadata.uid !== process.getuid?.()) ||
-    (metadata.uid === 0 ? (metadata.mode & 0o022) !== 0 : (metadata.mode & 0o222) !== 0) ||
+    (metadata.mode & 0o022) !== 0 ||
     (metadata.mode & 0o111) === 0 ||
     sha256((await readFile(path)).toString("base64")) !== expectedDigest
   ) {

@@ -268,6 +268,18 @@ const dashboardEvidenceSchema = z
   })
   .strict();
 
+const trainingDataReceiptSchema = z
+  .object({
+    aspectName: z.literal("mlModelTrainingData"),
+    credentialClass: z.literal("READ"),
+    endpoint: z.string().min(1).max(2_048),
+    modelUrn: urnSchema,
+    provenDatasetUrn: urnSchema,
+    responseSha256: fingerprintSchema,
+    retrievedAt: isoDateTimeSchema,
+  })
+  .strict();
+
 const modelEvidenceSchema = z
   .object({
     ...baseEvidenceShape,
@@ -281,6 +293,7 @@ const modelEvidenceSchema = z
         ownerUrns: z.array(urnSchema).max(20),
         featureDatasetUrn: urnSchema,
         featureField: z.string().min(1).max(500),
+        trainingDataReceipt: trainingDataReceiptSchema,
       })
       .strict(),
   })
@@ -347,7 +360,27 @@ const evidenceUnionSchema = z.discriminatedUnion("kind", [
 export type EvidenceItem = z.infer<typeof evidenceUnionSchema>;
 export type EvidenceKind = EvidenceItem["kind"];
 
-function normalizedEvidenceIdentity(item: Omit<EvidenceItem, "fingerprint" | "id">) {
+/**
+ * Reduces a payload to its semantically meaningful shape. A retrieval receipt records when and how
+ * a fact was observed; those details are bound by the collection fingerprint, not by semantic
+ * identity, so the same proven relationship yields a stable fingerprint across repeated live runs
+ * and across environments serving different GMS hosts.
+ */
+function semanticPayload(item: EvidenceDraft) {
+  if (item.kind !== "ML_MODEL") return item.payload;
+  const { trainingDataReceipt, ...rest } = item.payload;
+  return {
+    ...rest,
+    trainingDataProof: {
+      aspectName: trainingDataReceipt.aspectName,
+      credentialClass: trainingDataReceipt.credentialClass,
+      modelUrn: trainingDataReceipt.modelUrn,
+      provenDatasetUrn: trainingDataReceipt.provenDatasetUrn,
+    },
+  };
+}
+
+function normalizedEvidenceIdentity(item: EvidenceDraft) {
   const semanticProvenance = item.provenance.reduce<
     Array<Pick<z.infer<typeof evidenceProvenanceSchema>, "source" | "tool" | "role">>
   >((steps, entry) => {
@@ -370,7 +403,7 @@ function normalizedEvidenceIdentity(item: Omit<EvidenceItem, "fingerprint" | "id
     title: item.title,
     summary: item.summary,
     criticality: item.criticality,
-    payload: item.payload,
+    payload: semanticPayload(item),
     relatedEvidenceIds: [...item.relatedEvidenceIds].sort(),
     provenance: semanticProvenance,
   };
@@ -819,6 +852,16 @@ export const impactContextSchema = z
             index,
           ]);
         }
+        if (
+          item.payload.trainingDataReceipt.modelUrn !== item.payload.modelUrn ||
+          item.payload.trainingDataReceipt.provenDatasetUrn !== item.payload.featureDatasetUrn
+        ) {
+          issue(
+            refinement,
+            "ML model training data receipt does not match the model/feature relationship",
+            ["evidence", index, "payload", "trainingDataReceipt"],
+          );
+        }
       }
       if (item.kind === "QUERY_USAGE") {
         const relatedPathId =
@@ -865,7 +908,9 @@ export const impactContextSchema = z
             relatedAsset.payload.ownerUrns.includes(item.payload.ownerUrn)) ||
           (relatedAsset?.kind === "ML_MODEL" &&
             relatedAsset.payload.modelUrn === item.payload.assetUrn &&
-            relatedAsset.payload.ownerUrns.includes(item.payload.ownerUrn));
+            relatedAsset.payload.ownerUrns.includes(item.payload.ownerUrn)) ||
+          (relatedAsset?.kind === "QUERY_USAGE" &&
+            relatedAsset.payload.subjectDatasetUrn === item.payload.assetUrn);
         if (
           item.sourceUrn !== item.payload.assetUrn ||
           item.targetUrn !== item.payload.ownerUrn ||
@@ -901,12 +946,15 @@ export const impactContextSchema = z
         ...(models[0]?.payload.ownerUrns ?? []).map(
           (ownerUrn) => `${canonicalFraudModelUrn}\u0000${ownerUrn}`,
         ),
+        ...owners
+          .filter((owner) => owner.payload.assetUrn === canonicalAnalyticsRevenueUrn)
+          .map((owner) => `${canonicalAnalyticsRevenueUrn}\u0000${owner.payload.ownerUrn}`),
       ]);
       if (
         schemas.length !== 1 ||
         schemas[0]?.payload.schemaFieldUrn !== canonicalSchemaFieldUrn ||
         schemas[0]?.payload.nativeFieldPath !== canonicalNativeFieldPath ||
-        schemas[0]?.payload.nativeType !== "bigint" ||
+        schemas[0]?.payload.nativeType !== "uuid" ||
         schemas[0]?.payload.nullable !== false ||
         paths.length !== 2 ||
         !dashboardPath ||
@@ -940,6 +988,10 @@ export const impactContextSchema = z
           JSON.stringify(models[0]?.payload.ownerUrns),
         ) ||
         models[0]?.criticality !== "CRITICAL" ||
+        models[0]?.payload.trainingDataReceipt.modelUrn !== canonicalFraudModelUrn ||
+        models[0]?.payload.trainingDataReceipt.provenDatasetUrn !== canonicalFraudFeaturesUrn ||
+        models[0]?.payload.trainingDataReceipt.aspectName !== "mlModelTrainingData" ||
+        models[0]?.payload.trainingDataReceipt.credentialClass !== "READ" ||
         queries.length !== 1 ||
         queries[0]?.payload.queryUrn !== canonicalQueryUrn ||
         queries[0]?.payload.subjectDatasetUrn !== canonicalAnalyticsRevenueUrn ||
@@ -954,7 +1006,7 @@ export const impactContextSchema = z
         glossaries[0]?.payload.schemaFieldUrn !== canonicalSchemaFieldUrn ||
         glossaries[0]?.payload.name !== "Customer Identifier" ||
         glossaries[0]?.criticality !== "HIGH" ||
-        owners.length > 2 ||
+        owners.length > 3 ||
         ownerKeys.size !== owners.length ||
         ownerKeys.size !== declaredOwnerKeys.size ||
         [...ownerKeys].some((key) => !declaredOwnerKeys.has(key)) ||
@@ -966,7 +1018,10 @@ export const impactContextSchema = z
                 owner.payload.displayName === "Finance Analytics") ||
               (owner.payload.assetUrn === canonicalFraudModelUrn &&
                 owner.payload.ownerUrn === canonicalRiskOwnerUrn &&
-                owner.payload.displayName === "Risk ML")
+                owner.payload.displayName === "Risk ML") ||
+              (owner.payload.assetUrn === canonicalAnalyticsRevenueUrn &&
+                owner.payload.ownerUrn === canonicalFinanceOwnerUrn &&
+                owner.payload.displayName === "Finance Analytics")
             ),
         )
       ) {
@@ -1098,14 +1153,14 @@ export function createCanonicalImpactContextFixture(changeId: string): ImpactCon
     sourceUrn: canonicalDatasetUrn,
     fieldPath: canonicalFieldPath,
     title: "orders.customer_id schema",
-    summary: "The source field is a non-null bigint in PostgreSQL.",
+    summary: "The source field is a non-null uuid in PostgreSQL.",
     criticality: "HIGH",
     relatedEvidenceIds: [],
     provenance: [provenance("SCHEMA", "list_schema_fields", "canonical-schema")],
     payload: {
       schemaFieldUrn: canonicalSchemaFieldUrn,
       nativeFieldPath: canonicalNativeFieldPath,
-      nativeType: "bigint",
+      nativeType: "uuid",
       nullable: false,
     },
   });
@@ -1190,6 +1245,15 @@ export function createCanonicalImpactContextFixture(changeId: string): ImpactCon
       ownerUrns: [canonicalRiskOwnerUrn],
       featureDatasetUrn: canonicalFraudFeaturesUrn,
       featureField: "fraud.customer_features.customer_id",
+      trainingDataReceipt: {
+        aspectName: "mlModelTrainingData",
+        credentialClass: "READ",
+        endpoint: `http://127.0.0.1:8080/openapi/v3/entity/mlModel/${encodeURIComponent(canonicalFraudModelUrn)}/mlModelTrainingData`,
+        modelUrn: canonicalFraudModelUrn,
+        provenDatasetUrn: canonicalFraudFeaturesUrn,
+        responseSha256: sha256("canonical-training-data-response"),
+        retrievedAt,
+      },
     },
   });
   const query = createEvidence({
@@ -1248,6 +1312,25 @@ export function createCanonicalImpactContextFixture(changeId: string): ImpactCon
       ownershipType: "TECHNICAL_OWNER",
     },
   });
+  const revenueOwner = createEvidence({
+    kind: "OWNER",
+    sourceUrn: canonicalAnalyticsRevenueUrn,
+    targetUrn: canonicalFinanceOwnerUrn,
+    title: "Finance Analytics owner",
+    summary:
+      "Finance Analytics owns analytics.customer_revenue, the dataset the unmanaged Finance " +
+      "query reads from. Review for that query routes through this owner rather than an " +
+      "owner on the Query entity itself.",
+    criticality: "HIGH",
+    relatedEvidenceIds: [query.id],
+    provenance: [provenance("OWNER", "get_entities", "canonical-revenue-owner")],
+    payload: {
+      assetUrn: canonicalAnalyticsRevenueUrn,
+      ownerUrn: canonicalFinanceOwnerUrn,
+      displayName: "Finance Analytics",
+      ownershipType: "TECHNICAL_OWNER",
+    },
+  });
   const glossary = createEvidence({
     kind: "GLOSSARY_TERM",
     sourceUrn: canonicalDatasetUrn,
@@ -1285,6 +1368,7 @@ export function createCanonicalImpactContextFixture(changeId: string): ImpactCon
       query,
       financeOwner,
       riskOwner,
+      revenueOwner,
       glossary,
     ].sort((left, right) => left.id.localeCompare(right.id)),
     failures: [],

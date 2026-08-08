@@ -220,28 +220,29 @@ describe("canonical impact evidence", () => {
       }).success,
     ).toBe(false);
     expect(first.impactContextFingerprint).toBe(
-      "279bdd00ec97b74d63af2b9ac49732b17f5ee51f0ed1a35363898ab574076018",
+      "65e49f88da25aa2babb1fbcfa62428e8b12bf80f45f9e8bc08e78298d7fdf5e1",
     );
     expect(first.collectionFingerprint).toBe(
-      "4fba22f13d1fa7093e4096ba1dfa7dae113e17e075d6940375da52097b1ae1f6",
+      "93ca908a90ee081bbb03a3ee4577c19593a63c7e0e4e64c4d5d5406f546b6c83",
     );
     expect(first.evidence.map((item) => `${item.kind}:${item.id}`)).toEqual([
-      "SCHEMA:ev_09d0ce72de399bd52bd82247",
       "QUERY_USAGE:ev_171e9e739d3d518e46aad9ee",
+      "OWNER:ev_1816ead46a32f7a9a17199ba",
+      "SCHEMA:ev_1f112a8ac95df55ff9bab339",
       "DASHBOARD:ev_59eb5c12bc8d30556ca933fe",
-      "OWNER:ev_6978b44631d58088fb428f8b",
       "LINEAGE_PATH:ev_9e907158dba3dd3b5ea635af",
-      "ML_MODEL:ev_9fcccd9cd20afda2f0635602",
       "LINEAGE_PATH:ev_a193c7a6f647028a5d17fbac",
       "GLOSSARY_TERM:ev_ba2121f8360a611382d3a157",
       "OWNER:ev_d4164db054a4481b94a20931",
+      "OWNER:ev_e81b6d759a2158b1562bc984",
+      "ML_MODEL:ev_f0a45b70be19a93cda9c5129",
     ]);
     expect(first.evidence.some((item) => item.kind === "SCHEMA")).toBe(true);
     expect(first.evidence.filter((item) => item.kind === "LINEAGE_PATH")).toHaveLength(2);
     expect(first.evidence.some((item) => item.kind === "DASHBOARD")).toBe(true);
     expect(first.evidence.some((item) => item.kind === "ML_MODEL")).toBe(true);
     expect(first.evidence.some((item) => item.kind === "QUERY_USAGE")).toBe(true);
-    expect(first.evidence.filter((item) => item.kind === "OWNER")).toHaveLength(2);
+    expect(first.evidence.filter((item) => item.kind === "OWNER")).toHaveLength(3);
     expect(first.evidence.some((item) => item.kind === "GLOSSARY_TERM")).toBe(true);
     expect(first.datasetUrn).toBe(canonicalDatasetUrn);
     expect(first.resolution.schemaFieldUrn).toBe(canonicalSchemaFieldUrn);
@@ -578,6 +579,10 @@ describe("canonical impact evidence", () => {
       context.evidence.find((item) => item.kind === "ML_MODEL"),
       "model evidence",
     );
+    const query = required(
+      context.evidence.find((item) => item.kind === "QUERY_USAGE"),
+      "query evidence",
+    );
 
     for (const item of context.evidence) {
       const expectedRelations =
@@ -589,7 +594,9 @@ describe("canonical impact evidence", () => {
               ? [dashboard.id]
               : item.kind === "OWNER" && item.payload.assetUrn === canonicalFraudModelUrn
                 ? [model.id]
-                : [];
+                : item.kind === "OWNER" && item.payload.assetUrn === canonicalAnalyticsRevenueUrn
+                  ? [query.id]
+                  : [];
       expect(item.relatedEvidenceIds).toEqual(expectedRelations);
     }
     expect(impactContextSchema.safeParse(context).success).toBe(true);
@@ -1121,7 +1128,7 @@ function candidateInput(bundle = canonicalBundle()) {
         operation: "CREATE",
         path: "walkthrough/migrations/001_expand.sql",
         kind: "SQL_MIGRATION",
-        content: "alter table commerce.orders add column buyer_id bigint;",
+        content: "alter table commerce.orders add column buyer_id uuid;",
       },
       {
         operation: "CREATE",

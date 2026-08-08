@@ -15,6 +15,7 @@ from datahub.emitter.mce_builder import (
 from datahub.metadata.schema_classes import (
     DashboardInfoClass,
     DataPlatformInstanceClass,
+    DomainsClass,
     GlobalTagsClass,
     GlossaryTermsClass,
     OwnershipClass,
@@ -33,6 +34,7 @@ from lineageguard_datahub.ingestion import (
     ingestion_prerequisite_failures,
     require_dbt_build_provenance,
 )
+from lineageguard_datahub.live_query import _canonical_proposal_obj
 from lineageguard_datahub.models import ExpectedGraph, Granularity
 from lineageguard_datahub.paths import resolve_checked_file
 from lineageguard_datahub.provenance import receipt_has_registry_binding
@@ -44,6 +46,10 @@ from lineageguard_datahub.receipts import (
     ReceiptStatus,
     ResolvedOperationReceipt,
     resolve_latest_exact_operation,
+)
+from lineageguard_datahub.seed import (
+    _dataset_urn_from_schema_field_urn,
+    _is_expected_dbt_sibling_dataset,
 )
 
 Aspect = TypeVar("Aspect", bound=_Aspect)
@@ -85,6 +91,7 @@ class ObservedGraph:
     field_edges: frozenset[tuple[str, str]]
     ownership: frozenset[tuple[str, str, str]]
     tags: frozenset[tuple[str, str]]
+    domains: frozenset[tuple[str, str]]
     glossary_terms: frozenset[tuple[str, str]]
     query_signals: tuple[QuerySignal, ...]
 
@@ -139,21 +146,15 @@ def expected_observation(graph: ExpectedGraph) -> ObservedGraph:
             if edge.granularity is Granularity.FIELD
         ),
         ownership=frozenset(
-            {
-                *(
-                    (node.urn, owner_urn, node.ownership_type.value)
-                    for node in graph.nodes
-                    if node.ownership_type is not None
-                    for owner_urn in node.owner_urns
-                ),
-                *(
-                    (query.query_urn, owner_urn, query.ownership_type.value)
-                    for query in graph.query_evidence
-                    for owner_urn in query.owner_urns
-                ),
-            }
+            (node.urn, owner_urn, node.ownership_type.value)
+            for node in graph.nodes
+            if node.ownership_type is not None
+            for owner_urn in node.owner_urns
         ),
         tags=frozenset((node.urn, tag_urn) for node in graph.nodes for tag_urn in node.tag_urns),
+        domains=frozenset(
+            (node.urn, node.domain_urn) for node in graph.nodes if node.domain_urn is not None
+        ),
         glossary_terms=frozenset(
             {(graph.source_field.schema_field_urn, graph.source_field.glossary_term_urn)}
         ),
@@ -330,7 +331,6 @@ def _receipt_failures(
         "queryProperties",
         "querySubjects",
         "dataPlatformInstance",
-        "ownership",
         "queryUsageStatistics",
     }
     signal = signals[0] if len(signals) == 1 else None
@@ -516,6 +516,7 @@ def compare_observed_graph(
         ("FIELD_LINEAGE_MISMATCH", expected.field_edges, observed.field_edges),
         ("OWNER_MISMATCH", expected.ownership, observed.ownership),
         ("TAG_MISMATCH", expected.tags, observed.tags),
+        ("DOMAIN_MISMATCH", expected.domains, observed.domains),
         ("GLOSSARY_TERM_MISMATCH", expected.glossary_terms, observed.glossary_terms),
     )
     failures = [
@@ -594,6 +595,7 @@ def observe_live(reader: GraphReader, graph: ExpectedGraph) -> ObservedGraph:
     field_edges: set[tuple[str, str]] = set()
     ownership: set[tuple[str, str, str]] = set()
     tags: set[tuple[str, str]] = set()
+    domains: set[tuple[str, str]] = set()
     glossary_terms: set[tuple[str, str]] = set()
     query_signals: list[QuerySignal] = []
     dataset_nodes = [node for node in graph.nodes if node.entity_type.value == "DATASET"]
@@ -613,6 +615,14 @@ def observe_live(reader: GraphReader, graph: ExpectedGraph) -> ObservedGraph:
         if lineage is not None:
             for fine in lineage.fineGrainedLineages or []:
                 for upstream in fine.upstreams or []:
+                    upstream_dataset = _dataset_urn_from_schema_field_urn(upstream)
+                    if upstream_dataset is not None and _is_expected_dbt_sibling_dataset(
+                        upstream_dataset, node.urn
+                    ):
+                        # The connector's own preserved sibling field-level lineage
+                        # (recognized and kept by reconcile_lineage_aspect) is not part
+                        # of LineageGuard's canonical field-edge contract.
+                        continue
                     for downstream in fine.downstreams or []:
                         field_edges.add((upstream, downstream))
     for edge in graph.edges:
@@ -641,6 +651,9 @@ def observe_live(reader: GraphReader, graph: ExpectedGraph) -> ObservedGraph:
         tag_aspect = reader.get_aspect(node.urn, GlobalTagsClass)
         if tag_aspect is not None:
             tags.update((node.urn, association.tag) for association in tag_aspect.tags)
+        domain_aspect = reader.get_aspect(node.urn, DomainsClass)
+        if domain_aspect is not None:
+            domains.update((node.urn, domain_urn) for domain_urn in domain_aspect.domains)
     source_terms = reader.get_aspect(graph.source_field.schema_field_urn, GlossaryTermsClass)
     if source_terms is not None:
         glossary_terms.update(
@@ -652,22 +665,13 @@ def observe_live(reader: GraphReader, graph: ExpectedGraph) -> ObservedGraph:
         properties = reader.get_aspect(urn, QueryPropertiesClass)
         subjects = reader.get_aspect(urn, QuerySubjectsClass)
         instance = reader.get_aspect(urn, DataPlatformInstanceClass)
-        query_ownership = reader.get_aspect(urn, OwnershipClass)
-        if query_ownership is not None:
-            ownership.update(
-                (urn, owner.owner, str(owner.type)) for owner in query_ownership.owners
-            )
         usage = reader.get_timeseries_values(urn, QueryUsageStatisticsClass, {}, limit=10)
         if properties is not None and subjects is not None and instance is not None and usage:
             latest_usage = max(usage, key=lambda item: item.timestampMillis)
             from datahub.emitter.mcp import MetadataChangeProposalWrapper
 
             status = reader.get_aspect(urn, StatusClass)
-            static_aspects = (
-                (properties, subjects, instance)
-                if query_ownership is None
-                else (properties, subjects, instance, query_ownership)
-            )
+            static_aspects = (properties, subjects, instance)
             aspects = (
                 (*static_aspects, latest_usage)
                 if status is None
@@ -678,7 +682,9 @@ def observe_live(reader: GraphReader, graph: ExpectedGraph) -> ObservedGraph:
                     MetadataChangeProposalWrapper(entityUrn=urn, aspect=aspect).aspectName or "",
                     hashlib.sha256(
                         json.dumps(
-                            MetadataChangeProposalWrapper(entityUrn=urn, aspect=aspect).to_obj(),
+                            _canonical_proposal_obj(
+                                MetadataChangeProposalWrapper(entityUrn=urn, aspect=aspect)
+                            ),
                             sort_keys=True,
                             separators=(",", ":"),
                         ).encode()
@@ -705,6 +711,7 @@ def observe_live(reader: GraphReader, graph: ExpectedGraph) -> ObservedGraph:
         field_edges=frozenset(field_edges),
         ownership=frozenset(ownership),
         tags=frozenset(tags),
+        domains=frozenset(domains),
         glossary_terms=frozenset(glossary_terms),
         query_signals=tuple(sorted(query_signals, key=lambda signal: signal.urn)),
     )

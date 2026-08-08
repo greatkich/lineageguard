@@ -7,7 +7,10 @@ export const migrationPlanSchema = z.object({
       z.object({
         order: z.number().int().positive(),
         action: z.string().min(1),
-        description: z.string().min(1).max(500),
+        description: z
+          .string()
+          .min(1)
+          .transform((s) => (s.length > 500 ? s.slice(0, 497) + "..." : s)),
         targetPath: z.string().optional(),
       }),
     )

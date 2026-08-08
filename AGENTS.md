@@ -124,6 +124,115 @@ Out of scope until the required path passes:
 - `apps/web` renders state and invokes application commands; it does not contain business policy.
 - `tools/datahub` seeds and ingests walkthrough metadata but is not a second application backend.
 
+## CRITICAL — Class and function size limits
+
+**These are blocking review findings, not style preferences.** A violation stops merge.
+
+### Hard limits (blocking)
+
+- **No class exceeds 300 lines.** A class over the limit holds more than one responsibility. Split it by extracting collaborators.
+- **No function or method exceeds 50 lines**, subject to the measured ratchet below.
+- **No function takes more than 5 positional parameters.** Use a single typed options object.
+- **Nesting depth stays at or below 4 levels.** Extract a named helper instead.
+- **No boolean expression chains more than 5 conditions.** Extract named predicates that state the business rule.
+
+### What the limits do NOT apply to
+
+The 300-line limit is scoped to **classes**, not files. These are explicitly exempt from all size limits:
+
+- Markdown, documentation, plans, specs, and ADRs — these may be as long as the content requires;
+- recorded test fixtures and golden/example payloads (`*.test-support.ts`, `__fixtures__/`, `examples/`);
+- generated output (`dist/`, `*.d.ts`, lock files, dbt `target/`);
+- database migration files;
+- Zod schema modules whose length comes from field count rather than logic;
+- test files, provided each individual test body stays under 50 lines.
+
+A long module that is a flat collection of small pure functions or schema declarations is acceptable. A long module that hides control flow, state, or branching is not.
+
+### Existing violations — ratchet rule
+
+**Classes.** These two exceed the limit today and are grandfathered:
+
+| Class | Lines | File |
+|-------|-------|------|
+| `LiveGitHubPort` | 702 | `packages/github/src/live-adapter.ts` |
+| `InternalValidationSecurityBoundary` | 370 | `packages/validation/src/attestation.ts` |
+
+**Functions.** 36 functions exceeded 50 lines when this rule was introduced. They are not listed individually because the list would rot; the enforceable form is a count that only ever decreases. The largest are:
+
+| Lines | Function | File |
+|-------|----------|------|
+| 301 | `buildCanonicalCandidate` | `packages/agent/src/steps/build-canonical-candidate.ts` |
+| 287 | `createAgentPipeline` | `packages/agent/src/pipeline.ts` |
+| 280 | `execute` (inside it) | `packages/agent/src/pipeline.ts` |
+| 258 | `createCanonicalImpactContextFixture` | `packages/domain/src/evidence.ts` |
+| 246 | `LiveDataHubWritebackPort.write` | `packages/datahub/src/writeback.ts` |
+| 234 | `createWritebackPort` | `apps/worker/src/orchestration.ts` |
+
+For every grandfathered class and function:
+
+- you may modify it without splitting it first;
+- you must **not increase** its line count — a change that grows one is a blocking finding;
+- when a task substantially reworks one, split it as part of that task;
+- the repository-wide count of over-limit functions must never increase above 36.
+
+No new class or function may join these baselines. A function you create must be at or under 50 lines from the start.
+
+Both baselines were measured, not assumed. Re-measure before claiming a violation:
+
+```bash
+# classes over 300 lines
+for f in $(grep -rl "^class \|^export class " packages apps scripts \
+  --include="*.ts" --include="*.tsx" | grep -v node_modules | grep -v dist); do
+  awk -v F="$f" '/^(export )?class /{n=$0;s=NR;d=0;ic=1} ic{d+=gsub(/{/,"{");d-=gsub(/}/,"}");
+    if(d==0&&NR>s){print NR-s+1, F, n; ic=0}}' "$f"
+done | sort -rn | awk '$1>300'
+```
+
+### How to split
+
+Split along a real responsibility seam, never mechanically at the line count:
+
+- extract collaborators from a large class; do not create a `*-utils.ts` dumping ground;
+- split a normalizer by evidence kind or collection step;
+- split a schema module by domain concept, not alphabetically;
+- move shared test fixtures into a dedicated `*.test-support.ts` module.
+
+Never satisfy a limit by deleting tests, collapsing readable code into dense one-liners, or relocating code into a file that is already near its own limit.
+
+## CRITICAL — Dependency and reuse rules
+
+**Writing code that a maintained library already provides is a blocking review finding.**
+
+Before writing any non-trivial utility, in this order:
+
+1. Search this repository for an existing implementation. Reuse or extend it.
+2. Check direct dependencies already in `package.json` / `pyproject.toml`. Use what is installed.
+3. Check the ecosystem of what is already installed (Zod for validation, `node:crypto` for hashing, `AbortController` for cancellation).
+4. Only then consider a new dependency — with explicit justification in the task report.
+
+### Never hand-roll
+
+- schema validation and parsing — use Zod;
+- hashing, HMAC, random IDs — use `node:crypto`;
+- date/duration arithmetic, timezone handling, ISO parsing;
+- deep equality, deep clone, structural diffing;
+- retry, backoff, timeout, cancellation — use `AbortController` and existing helpers;
+- SQL construction beyond a fixed canonical statement — use parameterized building;
+- CSV, YAML, TOML, JSON5 parsing;
+- HTTP clients, cookie parsing, URL manipulation — use `fetch` and `URL`;
+- assertion helpers already provided by Vitest or Playwright.
+
+### Adding a dependency
+
+- pin an exact version; no `^` or `~` ranges;
+- prefer actively maintained, widely used, typed packages;
+- verify the package name character by character against typosquatting;
+- record the adoption in `docs/SOURCES.md`;
+- state in the task report what was considered and why it was necessary.
+
+Do not add a second library overlapping an existing one's responsibility. One validation library, one date library, one test runner, one HTTP client.
+
 ## Testing rules
 
 Use test-driven development for deterministic code.
@@ -202,6 +311,9 @@ A task is complete only when:
 5. no secret or generated junk is committed;
 6. a reviewer finds no unresolved blocking issue;
 7. evidence is attached to the PR or task report;
-8. documentation is updated.
+8. documentation is updated;
+9. no class you added or modified exceeds 300 lines, and no function exceeds 50 lines;
+10. no grandfathered class listed in the ratchet table grew in line count;
+11. no hand-written utility duplicates a capability an installed library already provides.
 
 “The code looks right” and “the agent said it passed” are not evidence.

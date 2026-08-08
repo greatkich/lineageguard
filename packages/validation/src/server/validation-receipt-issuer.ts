@@ -12,21 +12,13 @@ import type {
 } from "../ipc.js";
 import type { MaterializedCandidateHandle } from "../materializer.js";
 import type { ValidationRuntimePolicy } from "../validator.js";
-
-const forbiddenSignerCredentials = [
-  "OPENAI_API_KEY",
-  "GITHUB_TOKEN",
-  "DATAHUB_TOKEN",
-  "DATAHUB_GMS_TOKEN",
-  "LINEAGEGUARD_APPROVAL_AUTHORITY_DATABASE_URL",
-  "LINEAGEGUARD_EFFECT_AUTHORITY_DATABASE_URL",
-] as const;
-
-function required(name: string): string {
-  const value = process.env[name]?.trim();
-  if (!value) throw new ValidationError("ATTESTATION_INVALID", `missing=${name}`);
-  return value;
-}
+import {
+  type AuthorityEnvironment,
+  assertNoForbiddenCredentials,
+  forbiddenSignerCredentials,
+  requiredAuthorityVariable,
+  validationSignerEnvironment,
+} from "./authority-environment.js";
 
 export interface ValidationReceiptIssuerProcessDependencies {
   trustedPublicKeys: readonly TrustedValidationPublicKey[];
@@ -35,26 +27,33 @@ export interface ValidationReceiptIssuerProcessDependencies {
   resolveMaterialization(
     request: ValidationMaterializationReference,
   ): Promise<MaterializedCandidateHandle>;
+  /**
+   * The environment this authority runs with. Defaults to an allowlisted projection of
+   * `process.env`, so orchestration credentials held by the calling shell never reach the runtime.
+   */
+  environment?: AuthorityEnvironment;
 }
 
-/** Server-only production entrypoint. It reads credentials directly from its isolated process. */
+/** Server-only production entrypoint. It reads credentials from an explicit, allowlisted env. */
 export function startValidationReceiptIssuerProcess(
   dependencies: ValidationReceiptIssuerProcessDependencies,
 ): ValidationReceiptIssuerIpcClient {
-  if (process.env.LINEAGEGUARD_PROCESS_ROLE !== "VALIDATION_AUTHORITY") {
+  const environment = dependencies.environment ?? validationSignerEnvironment();
+  if (environment.LINEAGEGUARD_PROCESS_ROLE !== "VALIDATION_AUTHORITY") {
     throw new ValidationError("ATTESTATION_INVALID", "validation signer process role is required");
   }
-  for (const name of forbiddenSignerCredentials) {
-    if (process.env[name]) {
-      throw new ValidationError("ATTESTATION_INVALID", `co-resident credential=${name}`);
-    }
-  }
-  const store = dependencies.createStore(required("LINEAGEGUARD_VALIDATION_SIGNER_DATABASE_URL"));
+  assertNoForbiddenCredentials(environment, forbiddenSignerCredentials);
+  const store = dependencies.createStore(
+    requiredAuthorityVariable(environment, "LINEAGEGUARD_VALIDATION_SIGNER_DATABASE_URL"),
+  );
   const issuer = createValidationReceiptIssuerServer(
     {
-      privateKeyPkcs8Pem: required("VALIDATION_ATTESTATION_PRIVATE_KEY_PKCS8_PEM"),
-      issuer: required("VALIDATION_ATTESTATION_ISSUER"),
-      keyId: required("VALIDATION_ATTESTATION_KEY_ID"),
+      privateKeyPkcs8Pem: requiredAuthorityVariable(
+        environment,
+        "VALIDATION_ATTESTATION_PRIVATE_KEY_PKCS8_PEM",
+      ),
+      issuer: requiredAuthorityVariable(environment, "VALIDATION_ATTESTATION_ISSUER"),
+      keyId: requiredAuthorityVariable(environment, "VALIDATION_ATTESTATION_KEY_ID"),
     },
     dependencies.trustedPublicKeys,
     store,

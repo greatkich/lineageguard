@@ -33,3 +33,4 @@ export type {
 export { materializeCandidate } from "./materializer.js";
 export { loadValidationRuntimePolicy } from "./runtime-config.js";
 export * from "./validator.js";
+export { createCanonicalLiveImpactContextTestFixture } from "./canonical-impact-context.test-support.js";

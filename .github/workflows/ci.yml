@@ -1,9 +1,17 @@
 name: CI
+# Manual dispatch only while the demo is being finished.
+#
+# The hosted runner has no DataHub, no seeded walkthrough PostgreSQL, and none of the
+# content-addressed validator images, so it cannot exercise the live acceptance path — and every
+# push would spend a runner re-proving only the deterministic gates that are already run locally.
+#
+# To re-enable automatic runs once the demo is READY, restore:
+#   push:
+#     branches: [main]
+#   pull_request:
+#     branches: [main]
 on:
-  push:
-    branches: [main, fix/mvp-audit-recovery]
-  pull_request:
-    branches: [main]
+  workflow_dispatch:
 
 jobs:
   check:

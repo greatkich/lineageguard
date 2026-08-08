@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, TypeVar
@@ -17,6 +18,8 @@ from datahub.metadata.schema_classes import (
     DashboardInfoClass,
     DatasetLineageTypeClass,
     DatasetPropertiesClass,
+    DomainPropertiesClass,
+    DomainsClass,
     FineGrainedLineageClass,
     FineGrainedLineageDownstreamTypeClass,
     FineGrainedLineageUpstreamTypeClass,
@@ -29,6 +32,7 @@ from datahub.metadata.schema_classes import (
     OwnershipClass,
     OwnershipTypeClass,
     QueryPropertiesClass,
+    SchemaMetadataClass,
     StatusClass,
     TagAssociationClass,
     TagPropertiesClass,
@@ -205,6 +209,15 @@ def _node_aspects(
         upserts.append(
             _upsert(f"{node.logical_key}:tags", node.urn, _entity_name(node), _tags(node))
         )
+    if node.domain_urn is not None:
+        upserts.append(
+            _upsert(
+                f"{node.logical_key}:domains",
+                node.urn,
+                _entity_name(node),
+                DomainsClass(domains=[node.domain_urn]),
+            )
+        )
     return upserts
 
 
@@ -239,8 +252,165 @@ def _lineage_aspect(graph: ExpectedGraph, downstream_urn: str) -> UpstreamLineag
     return UpstreamLineageClass(upstreams=upstreams, fineGrainedLineages=fine_grained or None)
 
 
+_DBT_SIBLING_URN_PATTERN = re.compile(
+    r"^urn:li:dataset:\(urn:li:dataPlatform:postgres,(?P<suffix>.+),PROD\)$"
+)
+
+
+def _expected_dbt_sibling_urn(downstream_urn: str) -> str | None:
+    """The dbt source connector's own sibling-lineage upstream for a canonical dataset.
+
+    DataHub's dbt ingestion source always emits an entity-level ``COPY`` upstream from
+    the dbt-platform sibling entity onto its target-platform (postgres) sibling. That
+    edge is a byproduct of the connector's sibling model, not something LineageGuard
+    controls, and it targets a URN this function can derive deterministically: same
+    platform-instance-qualified suffix, ``dataPlatform:dbt`` instead of
+    ``dataPlatform:postgres``.
+    """
+    match = _DBT_SIBLING_URN_PATTERN.match(downstream_urn)
+    if match is None:
+        return None
+    return f"urn:li:dataset:(urn:li:dataPlatform:dbt,{match.group('suffix')},PROD)"
+
+
+def _is_expected_dbt_sibling_upstream(upstream: UpstreamClass, downstream_urn: str) -> bool:
+    expected_sibling_urn = _expected_dbt_sibling_urn(downstream_urn)
+    return (
+        expected_sibling_urn is not None
+        and upstream.dataset == expected_sibling_urn
+        and upstream.type == DatasetLineageTypeClass.COPY
+    )
+
+
+def _upstream_sort_key(upstream: UpstreamClass) -> tuple[str, str]:
+    return (upstream.dataset, str(upstream.type))
+
+
+def _fine_grained_sort_key(fine_grained: FineGrainedLineageClass) -> tuple[str, ...]:
+    return (
+        str(fine_grained.upstreamType),
+        str(fine_grained.downstreamType),
+        str(fine_grained.transformOperation),
+        *sorted(fine_grained.upstreams or []),
+        *sorted(fine_grained.downstreams or []),
+    )
+
+
+def reconcile_lineage_aspect(
+    graph: ExpectedGraph,
+    downstream_urn: str,
+    current: UpstreamLineageClass | None,
+) -> UpstreamLineageClass:
+    """Merge LineageGuard's canonical lineage overlay with the connector's live aspect.
+
+    The dbt source connector is allowed to emit its own native (entity-level, sibling)
+    lineage on a connector-owned dataset. This function no longer requires the entire
+    existing ``UpstreamLineage`` aspect to exactly equal LineageGuard's overlay. Instead
+    it deterministically:
+
+    1. reads the existing aspect (``current``, possibly ``None``);
+    2. recognizes and preserves the expected connector-emitted edge (the dbt sibling
+       ``COPY`` upstream), if present;
+    3. adds the canonical field-level lineage LineageGuard requires, if missing;
+    4. deduplicates the merged result deterministically (stable sort order, no
+       duplicate upstream/fine-grained entries);
+    5. rejects any other, unrecognized upstream as a foreign edge (fail closed) —
+       LineageGuard never silently absorbs or overwrites lineage it cannot attribute
+       to either its own canonical overlay or the one connector behavior it knows
+       about.
+    """
+    canonical = _lineage_aspect(graph, downstream_urn)
+    canonical_upstream_datasets = {upstream.dataset for upstream in canonical.upstreams}
+    existing_upstreams = list(current.upstreams) if current is not None else []
+    preserved_upstreams: list[UpstreamClass] = []
+    for upstream in existing_upstreams:
+        if upstream.dataset in canonical_upstream_datasets:
+            # LineageGuard's own canonical upstream is added back below with its
+            # canonical (TRANSFORMED) type; an existing entry for the same dataset is
+            # superseded by the canonical value, not treated as foreign.
+            continue
+        if _is_expected_dbt_sibling_upstream(upstream, downstream_urn):
+            preserved_upstreams.append(upstream)
+            continue
+        raise ValueError(f"LINEAGE_FOREIGN_EDGE_REJECTED:{downstream_urn}:{upstream.dataset}")
+    merged_upstreams = sorted(
+        {(u.dataset, u.type): u for u in (*preserved_upstreams, *canonical.upstreams)}.values(),
+        key=_upstream_sort_key,
+    )
+    existing_fine_grained = list(current.fineGrainedLineages or []) if current is not None else []
+    canonical_fine_grained = list(canonical.fineGrainedLineages or [])
+    canonical_fine_grained_keys = {
+        _fine_grained_sort_key(item) for item in canonical_fine_grained
+    }
+    preserved_fine_grained = [
+        item
+        for item in existing_fine_grained
+        if _fine_grained_sort_key(item) not in canonical_fine_grained_keys
+    ]
+    for item in preserved_fine_grained:
+        upstream_datasets = {
+            _dataset_urn_from_schema_field_urn(urn) for urn in (item.upstreams or [])
+        }
+        if not all(
+            dataset is not None and _is_expected_dbt_sibling_dataset(dataset, downstream_urn)
+            for dataset in upstream_datasets
+        ):
+            raise ValueError(
+                f"LINEAGE_FOREIGN_FIELD_EDGE_REJECTED:{downstream_urn}:"
+                f"{sorted(item.upstreams or [])}"
+            )
+    merged_fine_grained = sorted(
+        {
+            _fine_grained_sort_key(item): item
+            for item in (*preserved_fine_grained, *canonical_fine_grained)
+        }.values(),
+        key=_fine_grained_sort_key,
+    )
+    return UpstreamLineageClass(
+        upstreams=merged_upstreams,
+        fineGrainedLineages=merged_fine_grained or None,
+    )
+
+
+_SCHEMA_FIELD_URN_PATTERN = re.compile(r"^urn:li:schemaField:\((?P<dataset>.+),[^,]+\)$")
+
+
+def _dataset_urn_from_schema_field_urn(schema_field_urn: str) -> str | None:
+    match = _SCHEMA_FIELD_URN_PATTERN.match(schema_field_urn)
+    return None if match is None else match.group("dataset")
+
+
+def _is_expected_dbt_sibling_dataset(dataset_urn: str, downstream_urn: str) -> bool:
+    return dataset_urn == _expected_dbt_sibling_urn(downstream_urn)
+
+
+def _connector_entity_exists(reader: EntityReader, urn: str) -> bool:
+    """Existence check tolerant of schema-field URNs.
+
+    A schema field is not a standalone DataHub entity with its own key aspect; it is
+    part of the parent dataset's ``SchemaMetadata``. The generic ``reader.exists()``
+    (backed by the official SDK's key-aspect lookup) can therefore never confirm a
+    schema field exists, even when the ingesting connector has already published it.
+    For schema-field URNs, treat the field as present if either the generic existence
+    check succeeds (covering readers/fixtures that model schema fields directly) or
+    the parent dataset's schema lists a matching field path (the real DataHub SDK
+    reader's behavior).
+    """
+    if reader.exists(urn):
+        return True
+    dataset_urn = _dataset_urn_from_schema_field_urn(urn)
+    if dataset_urn is None:
+        return False
+    field_path = urn.rsplit(",", 1)[-1].rstrip(")")
+    schema = reader.get_aspect(dataset_urn, SchemaMetadataClass)
+    return schema is not None and any(field.fieldPath == field_path for field in schema.fields)
+
+
 def build_seed_plan(
-    graph: ExpectedGraph, root: Path, ownership_nonce: str = "offline-plan"
+    graph: ExpectedGraph,
+    root: Path,
+    ownership_nonce: str = "offline-plan",
+    reader: EntityReader | None = None,
 ) -> tuple[PlannedUpsert, ...]:
     upserts: list[PlannedUpsert] = []
     for owner in graph.owners:
@@ -270,6 +440,19 @@ def build_seed_plan(
                 TagPropertiesClass(
                     name=tag.display_name,
                     description=f"{tag.description} {_marker_text(ownership_nonce)}",
+                ),
+            )
+        )
+    for domain in graph.domains:
+        upserts.append(
+            _upsert(
+                f"{domain.logical_key}:properties",
+                domain.urn,
+                "domain",
+                DomainPropertiesClass(
+                    name=domain.display_name,
+                    description=domain.description,
+                    customProperties=_marker_properties(ownership_nonce),
                 ),
             )
         )
@@ -310,18 +493,26 @@ def build_seed_plan(
     for downstream_urn in sorted(edges_by_downstream(graph)):
         if node_types[downstream_urn] != "dataset":
             continue
+        lineage_aspect = (
+            reconcile_lineage_aspect(
+                graph, downstream_urn, reader.get_aspect(downstream_urn, UpstreamLineageClass)
+            )
+            if reader is not None
+            else _lineage_aspect(graph, downstream_urn)
+        )
         upserts.append(
             _upsert(
                 f"lineage:{downstream_urn}",
                 downstream_urn,
                 node_types[downstream_urn],
-                _lineage_aspect(graph, downstream_urn),
+                lineage_aspect,
             )
         )
     seeded_entity_types = {
         operation.proposal.entityUrn: operation.proposal.entityType
         for operation in upserts
         if operation.proposal.entityUrn in graph.owned_urns
+        and operation.proposal.entityType != "domain"
     }
     for urn, entity_type in sorted(seeded_entity_types.items()):
         if urn is None:
@@ -345,6 +536,7 @@ def _marker_aspect(entity_type: str) -> type[_Aspect]:
         "corpGroup": CorpGroupInfoClass,
         "dashboard": DashboardInfoClass,
         "dataset": DatasetPropertiesClass,
+        "domain": DomainPropertiesClass,
         "glossaryTerm": GlossaryTermInfoClass,
         "mlModel": MLModelPropertiesClass,
         "query": QueryPropertiesClass,
@@ -434,7 +626,7 @@ def _seed_metadata_under_lock(
             root, graph.query_evidence[0]
         ).normalized_fingerprint,
     )
-    plan = build_seed_plan(graph, root, nonce)
+    plan = build_seed_plan(graph, root, nonce, reader)
     target_metrics: dict[str, int | float | str] = (
         datahub_target_metrics(
             nonce,
@@ -487,7 +679,7 @@ def _seed_metadata_under_lock(
     owned: set[str] = set()
     for (urn, entity_type), operations in by_entity.items():
         if urn in connector_references:
-            if not reader.exists(urn):
+            if not _connector_entity_exists(reader, urn):
                 operation = operations[0]
                 receipt_store.append(
                     OperationReceipt.create(
@@ -508,6 +700,12 @@ def _seed_metadata_under_lock(
                 aspect = operation.proposal.aspect
                 if aspect is None:
                     raise ValueError("SEED_ASPECT_MISSING")
+                if isinstance(aspect, UpstreamLineageClass):
+                    # Lineage aspects are reconciled against the live connector-emitted
+                    # aspect when the plan is built (reconcile_lineage_aspect already
+                    # rejected any foreign edge at that point); a diff here is an
+                    # expected, safe additive change, not a conflict.
+                    continue
                 current = reader.get_aspect(urn, type(aspect))
                 if current is not None and current.to_obj() != aspect.to_obj():
                     receipt_store.append(
@@ -518,22 +716,15 @@ def _seed_metadata_under_lock(
                             aspect_name=operation.proposal.aspectName,
                             idempotency_key=operation.idempotency_key,
                             status=ReceiptStatus.RECONCILIATION_REQUIRED,
-                            detail_code=(
-                                "CONNECTOR_LINEAGE_CONFLICT"
-                                if isinstance(aspect, UpstreamLineageClass)
-                                else "CONNECTOR_OVERLAY_CONFLICT"
-                            ),
+                            detail_code="CONNECTOR_OVERLAY_CONFLICT",
                             proposal_hash=operation.idempotency_key,
                             ownership_nonce=nonce,
                             metrics=target_metrics,
                         )
                     )
-                    code = (
-                        "CONNECTOR_LINEAGE_CONFLICT"
-                        if isinstance(aspect, UpstreamLineageClass)
-                        else "CONNECTOR_OVERLAY_CONFLICT"
+                    raise ValueError(
+                        f"CONNECTOR_OVERLAY_CONFLICT:{urn}:{operation.proposal.aspectName}"
                     )
-                    raise ValueError(f"{code}:{urn}:{operation.proposal.aspectName}")
             continue
         if not reader.exists(urn):
             continue
@@ -722,7 +913,7 @@ def reconcile_seed_metadata(
             "ingestionSnapshotFingerprint": snapshot_fingerprint,
         }
     )
-    plan = build_seed_plan(graph, root, nonce)
+    plan = build_seed_plan(graph, root, nonce, reader)
     by_identity = {
         (
             operation.proposal.entityUrn,
@@ -768,12 +959,19 @@ def reconcile_seed_metadata(
                 after = "EXACT"
                 if pending.status is ReceiptStatus.FAILURE:
                     applied_after_failure.add(operation.proposal.entityUrn)
-            elif current is None or (
-                isinstance(expected, StatusClass)
-                and isinstance(current, StatusClass)
-                and current.removed is True
-                and expected.removed is False
+            elif (
+                current is None
+                or (
+                    isinstance(expected, StatusClass)
+                    and isinstance(current, StatusClass)
+                    and current.removed is True
+                    and expected.removed is False
+                )
+                or isinstance(expected, UpstreamLineageClass)
             ):
+                # Lineage aspects were already reconciled (foreign edges rejected) when
+                # the plan was rebuilt above; a live value that has not yet converged to
+                # that reconciled result is a pending additive change, not a conflict.
                 detail = "LIVE_RECONCILED_NOT_APPLIED"
                 after = "ABSENT"
             else:

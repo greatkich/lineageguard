@@ -10,6 +10,7 @@ import { GitHubEffectError } from "./errors.js";
 import { sha256Buffer } from "./hash.js";
 import { FetchGitHubTransport } from "./transport.js";
 import type {
+  EffectOutcome,
   GitHubHttpRequest,
   GitHubHttpResponse,
   GitHubOperation,
@@ -187,7 +188,9 @@ export class LiveGitHubPort implements GitHubPort<GitHubReviewRequest> {
       const failure = this.normalizeTransportError(error, "RECONCILE", "RECONCILE");
       if (failure.retry === "NEVER") throw failure;
       for (let attempt = 1; attempt <= this.#options.maxAttempts; attempt += 1) {
-        const found = await this.reconcile(boundedInput, true);
+        // This call attempted to create the effect and got an ambiguous transport response.
+        // If reconciliation now finds it, this call caused it to exist — not a pre-existing skip.
+        const found = await this.reconcile(boundedInput, true, "CREATED");
         if (found) return found;
         if (attempt < this.#options.maxAttempts)
           await new Promise((resolve) => setTimeout(resolve, 1));
@@ -503,7 +506,7 @@ export class LiveGitHubPort implements GitHubPort<GitHubReviewRequest> {
   }
 
   private async getHead(input: GitHubReviewRequest): Promise<Json | undefined> {
-    const head = deterministicHead(input.runId);
+    const head = deterministicHead(input.candidateFingerprint, input.sourcePrNumber);
     const response = await this.call(
       "GET",
       `/git/ref/heads/${encodeURIComponent(head)}`,
@@ -515,7 +518,7 @@ export class LiveGitHubPort implements GitHubPort<GitHubReviewRequest> {
   }
 
   private async pulls(input: GitHubReviewRequest): Promise<unknown[]> {
-    const head = deterministicHead(input.runId);
+    const head = deterministicHead(input.candidateFingerprint, input.sourcePrNumber);
     const query = `?state=all&head=${encodeURIComponent(`${this.#options.owner}:${head}`)}&base=${encodeURIComponent(input.baseBranch)}&per_page=2`;
     const response = await this.call("GET", `/pulls${query}`, "RECONCILE");
     if (!Array.isArray(response.body) || response.body.length > 2)
@@ -533,6 +536,7 @@ export class LiveGitHubPort implements GitHubPort<GitHubReviewRequest> {
     pull: Json,
     headSha: string,
     reconciled: boolean,
+    outcome: EffectOutcome,
   ): GitHubReviewReceipt {
     const base = object(pull.base);
     const head = object(pull.head);
@@ -554,7 +558,7 @@ export class LiveGitHubPort implements GitHubPort<GitHubReviewRequest> {
       text(base?.ref) !== input.baseBranch ||
       text(base?.sha) !== input.baseSha ||
       text(baseRepository?.full_name) !== input.repository ||
-      text(head?.ref) !== deterministicHead(input.runId) ||
+      text(head?.ref) !== deterministicHead(input.candidateFingerprint, input.sourcePrNumber) ||
       text(head?.sha) !== headSha ||
       text(headRepository?.full_name) !== input.repository ||
       !Number.isFinite(createdTime) ||
@@ -575,7 +579,7 @@ export class LiveGitHubPort implements GitHubPort<GitHubReviewRequest> {
       repository: input.repository,
       baseBranch: input.baseBranch,
       baseSha: input.baseSha,
-      headBranch: deterministicHead(input.runId),
+      headBranch: deterministicHead(input.candidateFingerprint, input.sourcePrNumber),
       headSha,
       prNumber: number,
       prUrl: url,
@@ -590,19 +594,22 @@ export class LiveGitHubPort implements GitHubPort<GitHubReviewRequest> {
       idempotencyKey: input.idempotencyKey,
       inputFingerprint: input.inputFingerprint,
       reconciled,
+      outcome,
     };
   }
 
   private async reconcile(
     input: GitHubReviewRequest,
     allowIncomplete = false,
+    outcomeOnFound: EffectOutcome = "SKIPPED_EXACT",
   ): Promise<GitHubReviewReceipt | undefined> {
     const ref = await this.getHead(input);
     if (!ref) return undefined;
     const refObject = object(ref.object);
     const headSha = text(refObject?.sha);
     if (
-      text(ref.ref) !== `refs/heads/${deterministicHead(input.runId)}` ||
+      text(ref.ref) !==
+        `refs/heads/${deterministicHead(input.candidateFingerprint, input.sourcePrNumber)}` ||
       text(refObject?.type) !== "commit" ||
       !headSha ||
       !gitObjectId.test(headSha)
@@ -651,7 +658,7 @@ export class LiveGitHubPort implements GitHubPort<GitHubReviewRequest> {
         retry: "NEVER",
         message: "GitHub pull response is malformed",
       });
-    return this.receipt(input, pull, headSha, true);
+    return this.receipt(input, pull, headSha, true, outcomeOnFound);
   }
 
   private async create(
@@ -800,13 +807,14 @@ export class LiveGitHubPort implements GitHubPort<GitHubReviewRequest> {
     const createdRef = object(
       (
         await this.call("POST", "/git/refs", "CREATE_REF", {
-          ref: `refs/heads/${deterministicHead(input.runId)}`,
+          ref: `refs/heads/${deterministicHead(input.candidateFingerprint, input.sourcePrNumber)}`,
           sha: headSha,
         })
       ).body,
     );
     if (
-      text(createdRef?.ref) !== `refs/heads/${deterministicHead(input.runId)}` ||
+      text(createdRef?.ref) !==
+        `refs/heads/${deterministicHead(input.candidateFingerprint, input.sourcePrNumber)}` ||
       text(object(createdRef?.object)?.sha) !== headSha
     )
       throw new GitHubEffectError({
@@ -815,13 +823,16 @@ export class LiveGitHubPort implements GitHubPort<GitHubReviewRequest> {
         retry: "RECONCILE",
         message: "GitHub branch receipt is malformed",
       });
-    return this.createPull(input, headSha, false);
+    // This call just authored the commit, tree, and branch ref — it is the cause of the effect
+    // existing, regardless of whether the pull request itself still needs to be opened below.
+    return this.createPull(input, headSha, false, "CREATED");
   }
 
   private async createPull(
     input: GitHubReviewRequest,
     headSha: string,
     reconciled: boolean,
+    outcome: EffectOutcome,
   ): Promise<GitHubReviewReceipt> {
     const existing = await this.pulls(input);
     if (existing.length > 1)
@@ -840,14 +851,14 @@ export class LiveGitHubPort implements GitHubPort<GitHubReviewRequest> {
           retry: "NEVER",
           message: "GitHub pull response is malformed",
         });
-      return this.receipt(input, pull, headSha, true);
+      return this.receipt(input, pull, headSha, true, outcome);
     }
     const pull = object(
       (
         await this.call("POST", "/pulls", "CREATE_PULL_REQUEST", {
           title: input.title,
           body: this.pullBody(input),
-          head: deterministicHead(input.runId),
+          head: deterministicHead(input.candidateFingerprint, input.sourcePrNumber),
           base: input.baseBranch,
           draft: true,
         })
@@ -860,6 +871,6 @@ export class LiveGitHubPort implements GitHubPort<GitHubReviewRequest> {
         retry: "RECONCILE",
         message: "GitHub pull receipt is malformed",
       });
-    return this.receipt(input, pull, headSha, reconciled);
+    return this.receipt(input, pull, headSha, reconciled, outcome);
   }
 }

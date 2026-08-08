@@ -1,4 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  canonicalCandidateFingerprint,
+  decisionMarker,
+  generatedBranchName,
+} from "./effect-identity.js";
 import { createGitHubPort, createWritebackPort } from "./orchestration.js";
 
 const ORIGINAL_ENV = { ...process.env };
@@ -35,6 +40,11 @@ function reviewInput(
     runId: "run_test_0000000000000001",
     candidate: {
       strategy: "EXPAND_MIGRATE_CONTRACT",
+      sourceChangeFingerprint: "1".repeat(64),
+      sourcePatchFingerprint: "2".repeat(64),
+      sourceImpactContextFingerprint: "3".repeat(64),
+      sourceDecision: "BLOCK",
+      sourceEvidenceIds: ["ev_0123456789abcdef01234567"],
       artifacts: [
         {
           path: "docs/migrations/customer-id.md",
@@ -49,6 +59,146 @@ function reviewInput(
   };
 }
 
+type RecoveryPull = { html_url: string; number: number; draft: boolean };
+type RecordedCall = { url: string; method: string; body?: unknown };
+
+interface RecoveryFakeState {
+  pulls: RecoveryPull[];
+  calls: RecordedCall[];
+  branchName: string;
+  baseSha: string;
+  localCommitSha: string;
+  remoteHeadSha: string;
+  baseCommit: unknown;
+  branchCreated: boolean;
+}
+
+function boundRecoveryPulls(state: RecoveryFakeState) {
+  return state.pulls.map((pull) => ({
+    ...pull,
+    base: {
+      ref: "main",
+      sha: state.baseSha,
+      repo: { full_name: "org/walkthrough" },
+    },
+    head: {
+      ref: state.branchName,
+      sha: state.remoteHeadSha,
+      repo: { full_name: "org/walkthrough" },
+    },
+  }));
+}
+
+function recoveryReadResponse(state: RecoveryFakeState, url: string): Response {
+  if (url.endsWith("/git/ref/heads/main")) return jsonResponse({ object: { sha: state.baseSha } });
+  if (url.endsWith(`/git/ref/heads/${state.branchName}`)) {
+    return state.branchCreated
+      ? jsonResponse({ object: { sha: state.remoteHeadSha } })
+      : jsonResponse({ message: "Not Found" }, 404);
+  }
+  if (url.endsWith("/git/blobs/blob-sha")) {
+    return jsonResponse({
+      encoding: "base64",
+      content: Buffer.from("# Migration\n").toString("base64"),
+    });
+  }
+  if (url.endsWith(`/git/commits/${state.baseSha}`)) return jsonResponse(state.baseCommit);
+  if (url.endsWith(`/git/commits/${state.remoteHeadSha}`)) {
+    return jsonResponse({
+      parents: [{ sha: state.baseSha }],
+      tree: { sha: "head-tree-sha" },
+    });
+  }
+  if (url.includes(`/compare/${state.baseSha}...${state.baseSha}`)) {
+    return jsonResponse({
+      status: "identical",
+      ahead_by: 0,
+      behind_by: 0,
+      base_commit: { sha: state.baseSha },
+      merge_base_commit: { sha: state.baseSha },
+    });
+  }
+  if (url.endsWith("/git/trees/base-tree-sha?recursive=1"))
+    return jsonResponse({ truncated: false, tree: [] });
+  if (url.endsWith("/git/trees/head-tree-sha?recursive=1")) {
+    return jsonResponse({
+      truncated: false,
+      tree: [
+        {
+          path: "docs/migrations/customer-id.md",
+          mode: "100644",
+          type: "blob",
+          sha: "blob-sha",
+        },
+      ],
+    });
+  }
+  if (url.includes("/pulls?")) return jsonResponse(boundRecoveryPulls(state));
+  throw new Error(`Unexpected fetch: GET ${url}`);
+}
+
+function recoveryWriteResponse(state: RecoveryFakeState, url: string): Response {
+  if (url.endsWith("/git/blobs")) return jsonResponse({ sha: "blob-sha" });
+  if (url.endsWith("/git/trees")) return jsonResponse({ sha: "head-tree-sha" });
+  if (url.endsWith("/git/commits")) return jsonResponse({ sha: state.localCommitSha });
+  if (url.endsWith("/git/refs")) {
+    state.branchCreated = true;
+    return jsonResponse({ ref: `refs/heads/${state.branchName}` });
+  }
+  if (url.endsWith("/pulls")) {
+    return jsonResponse({ message: "Response lost after creation" }, 502);
+  }
+  throw new Error(`Unexpected fetch: POST ${url}`);
+}
+
+function requestBody(init: RequestInit | undefined): unknown {
+  return typeof init?.body === "string" ? JSON.parse(init.body) : undefined;
+}
+
+function installPrRecoveryFake(options: {
+  pulls: RecoveryPull[];
+  remoteHeadSha?: string;
+  runId?: string;
+  baseCommit?: unknown;
+}) {
+  const input = reviewInput(options.runId ? { runId: options.runId } : {});
+  const state: RecoveryFakeState = {
+    pulls: options.pulls,
+    calls: [],
+    branchName: generatedBranchName(canonicalCandidateFingerprint(input.candidate)),
+    baseSha: "a".repeat(40),
+    localCommitSha: "c".repeat(40),
+    remoteHeadSha: options.remoteHeadSha ?? "c".repeat(40),
+    baseCommit: options.baseCommit ?? {
+      tree: { sha: "base-tree-sha" },
+      committer: { date: "2026-08-01T12:34:56Z" },
+    },
+    branchCreated: false,
+  };
+  vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+    const method = init?.method ?? "GET";
+    state.calls.push({ url, method, body: requestBody(init) });
+    return method === "GET" ? recoveryReadResponse(state, url) : recoveryWriteResponse(state, url);
+  });
+  return { calls: state.calls, input };
+}
+
+async function createdCommitBody(runId: string): Promise<Record<string, unknown>> {
+  githubEnv();
+  const { calls, input } = installPrRecoveryFake({
+    pulls: [{ html_url: "https://github.com/org/walkthrough/pull/7", number: 7, draft: true }],
+    runId,
+  });
+  const port = createGitHubPort();
+  if (!port) throw new Error("GitHub port should be configured");
+  await port.createReview(input);
+  const commitCall = calls.find(
+    (call) => call.method === "POST" && call.url.endsWith("/git/commits"),
+  );
+  if (!commitCall?.body) throw new Error("GitHub commit request was not recorded");
+  return commitCall.body as Record<string, unknown>;
+}
+
 describe("createGitHubPort", () => {
   it("returns undefined when GITHUB_TOKEN/OWNER/REPO are not configured", () => {
     delete process.env.GITHUB_TOKEN;
@@ -57,78 +207,96 @@ describe("createGitHubPort", () => {
     expect(createGitHubPort()).toBeUndefined();
   });
 
-  it("finds and returns the existing PR when creation fails because one is already open", async () => {
+  it("recovers an exact lost PR-create response without issuing a second write", async () => {
     githubEnv();
-    const calls: Array<{ url: string; method: string }> = [];
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (url: string, init?: RequestInit) => {
-        const method = init?.method ?? "GET";
-        calls.push({ url, method });
-        if (url.endsWith("/git/ref/heads/main"))
-          return jsonResponse({ object: { sha: "a".repeat(40) } });
-        if (url.endsWith("/git/blobs")) return jsonResponse({ sha: "blob-sha" });
-        if (url.includes("/git/commits/") && method === "GET")
-          return jsonResponse({ tree: { sha: "tree-sha" } });
-        if (url.endsWith("/git/trees")) return jsonResponse({ sha: "new-tree-sha" });
-        if (url.endsWith("/git/commits") && method === "POST")
-          return jsonResponse({ sha: "c".repeat(40) });
-        if (url.endsWith("/git/refs") && method === "POST")
-          return jsonResponse({ ref: "refs/heads/lineageguard/run-run_test_0000000000000001" });
-        if (url.endsWith("/pulls") && method === "POST") {
-          // Simulate GitHub rejecting creation because a PR for this head already exists.
-          return jsonResponse({ message: "A pull request already exists" }, 422);
-        }
-        if (url.includes("/pulls?state=open")) {
-          return jsonResponse([
-            { html_url: "https://github.com/org/walkthrough/pull/7", number: 7 },
-          ]);
-        }
-        throw new Error(`Unexpected fetch: ${method} ${url}`);
-      }),
-    );
+    const { calls, input } = installPrRecoveryFake({
+      pulls: [{ html_url: "https://github.com/org/walkthrough/pull/7", number: 7, draft: true }],
+    });
 
     const port = createGitHubPort();
     if (!port) throw new Error("GitHub port should be configured");
-    const result = await port.createReview(reviewInput());
+    const result = await port.createReview(input);
 
-    expect(result.prUrl).toBe("https://github.com/org/walkthrough/pull/7");
-    expect(result.prNumber).toBe(7);
-    // Exactly one POST to /pulls (the failed create) — no duplicate creation retry.
+    expect(result).toMatchObject({ prNumber: 7, outcome: "CREATED" });
     expect(calls.filter((c) => c.url.endsWith("/pulls") && c.method === "POST")).toHaveLength(1);
+    expect(calls.filter((call) => call.method !== "GET")).toHaveLength(5);
+    expect(calls.some((call) => call.method === "PATCH")).toBe(false);
+  });
+
+  it("rejects lost-response recovery when the remote head moved from the local commit", async () => {
+    githubEnv();
+    const { input } = installPrRecoveryFake({
+      pulls: [{ html_url: "https://github.com/org/walkthrough/pull/7", number: 7, draft: true }],
+      remoteHeadSha: "d".repeat(40),
+    });
+    const port = createGitHubPort();
+    if (!port) throw new Error("GitHub port should be configured");
+
+    await expect(port.createReview(input)).rejects.toThrow(/exact recovery failed.*head/i);
+  });
+
+  it("uses identical deterministic author and committer metadata across run ids", async () => {
+    const first = await createdCommitBody("run_deterministic_commit_0001");
+    const second = await createdCommitBody("run_deterministic_commit_0002");
+    const identity = {
+      name: "LineageGuard Bot",
+      email: "lineageguard-bot@users.noreply.github.com",
+      date: "2026-08-01T12:34:56.000Z",
+    };
+
+    expect(first).toMatchObject({ author: identity, committer: identity });
+    expect(second).toMatchObject({ author: identity, committer: identity });
+    expect(first.author).toEqual(second.author);
+    expect(first.committer).toEqual(second.committer);
+    expect(JSON.stringify([first, second])).not.toContain("run_deterministic_commit");
+  });
+
+  it.each([
+    { name: "missing tree", baseCommit: { committer: { date: "2026-08-01T12:34:56Z" } } },
+    {
+      name: "invalid date",
+      baseCommit: { tree: { sha: "base-tree-sha" }, committer: { date: "now" } },
+    },
+  ])("rejects a base commit with $name before mutation", async ({ baseCommit }) => {
+    githubEnv();
+    const { calls, input } = installPrRecoveryFake({ pulls: [], baseCommit });
+    const port = createGitHubPort();
+    if (!port) throw new Error("GitHub port should be configured");
+
+    await expect(port.createReview(input)).rejects.toThrow("Base GitHub commit");
+    expect(calls.filter((call) => call.method !== "GET")).toEqual([]);
+  });
+
+  it.each([
+    {
+      name: "duplicate",
+      pulls: [
+        { html_url: "https://github.com/org/walkthrough/pull/7", number: 7, draft: true },
+        { html_url: "https://github.com/org/walkthrough/pull/8", number: 8, draft: true },
+      ],
+    },
+    {
+      name: "non-draft",
+      pulls: [{ html_url: "https://github.com/org/walkthrough/pull/7", number: 7, draft: false }],
+    },
+  ])("rejects $name PR-create recovery", async ({ pulls }) => {
+    githubEnv();
+    const { input } = installPrRecoveryFake({ pulls });
+    const port = createGitHubPort();
+    if (!port) throw new Error("GitHub port should be configured");
+
+    await expect(port.createReview(input)).rejects.toThrow("GitHub PR creation failed");
   });
 
   it("propagates a clear error when PR creation fails and no existing PR can be found", async () => {
     githubEnv();
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (url: string, init?: RequestInit) => {
-        const method = init?.method ?? "GET";
-        if (url.endsWith("/git/ref/heads/main"))
-          return jsonResponse({ object: { sha: "a".repeat(40) } });
-        if (url.endsWith("/git/blobs")) return jsonResponse({ sha: "blob-sha" });
-        if (url.includes("/git/commits/") && method === "GET")
-          return jsonResponse({ tree: { sha: "tree-sha" } });
-        if (url.endsWith("/git/trees")) return jsonResponse({ sha: "new-tree-sha" });
-        if (url.endsWith("/git/commits") && method === "POST")
-          return jsonResponse({ sha: "c".repeat(40) });
-        if (url.endsWith("/git/refs") && method === "POST")
-          return jsonResponse({ ref: "refs/heads/x" });
-        if (url.endsWith("/pulls") && method === "POST") {
-          return jsonResponse({ message: "Validation failed" }, 422);
-        }
-        if (url.includes("/pulls?state=open")) {
-          return jsonResponse([]); // no existing PR — genuine failure, not idempotency
-        }
-        throw new Error(`Unexpected fetch: ${method} ${url}`);
-      }),
-    );
+    const { input } = installPrRecoveryFake({ pulls: [] });
 
     const port = createGitHubPort();
     if (!port) throw new Error("GitHub port should be configured");
 
-    await expect(port.createReview(reviewInput())).rejects.toThrow(
-      /GitHub PR creation failed and no existing PR found/,
+    await expect(port.createReview(input)).rejects.toThrow(
+      /GitHub PR creation failed and exact recovery failed/,
     );
   });
 
@@ -157,11 +325,45 @@ function writebackInput() {
     runId: "run_test_0000000000000002",
     comparison: { grounded: { decision: "BLOCK" }, triggeredRuleIds: ["LG001"] } as never,
     context: { evidence: [] } as never,
-    candidate: { strategy: "EXPAND_MIGRATE_CONTRACT" } as never,
+    candidate: {
+      strategy: "EXPAND_MIGRATE_CONTRACT",
+      sourceChangeFingerprint: "1".repeat(64),
+      sourcePatchFingerprint: "2".repeat(64),
+      sourceImpactContextFingerprint: "3".repeat(64),
+      sourceDecision: "BLOCK",
+      sourceEvidenceIds: ["ev_0123456789abcdef01234567"],
+      artifacts: [],
+    } as never,
     githubPrUrl: "https://github.com/org/walkthrough/pull/1",
     githubReceiptFingerprint: "f".repeat(64),
     validationReceiptFingerprint: "e".repeat(64),
   };
+}
+
+/**
+ * The exact institutional-memory description the writeback port composes for an input.
+ *
+ * Derived here from the same inputs and the same identity function rather than hardcoded, so the
+ * idempotency tests below distinguish "byte-identical decision" from "same decision, newer run".
+ */
+function expectedDecisionDocument(input: ReturnType<typeof writebackInput>): string {
+  const candidate = input.candidate as unknown as Parameters<
+    typeof canonicalCandidateFingerprint
+  >[0];
+  return [
+    `Marker: ${decisionMarker(canonicalCandidateFingerprint(candidate))}`,
+    "Decision: BLOCK",
+    `Latest verified run: ${input.runId}`,
+    "Source field: customer_id",
+    "Replacement field: buyer_id",
+    "Compatibility window: 30 days",
+    "Reasons: LG001",
+    "Candidate: EXPAND_MIGRATE_CONTRACT",
+    `Validation receipt: ${input.validationReceiptFingerprint.slice(0, 16)}`,
+    `GitHub review: ${input.githubPrUrl}`,
+    `GitHub receipt: ${input.githubReceiptFingerprint.slice(0, 16)}`,
+    "Rollback: walkthrough/migrations/001_rollback.sql",
+  ].join("\n");
 }
 
 describe("createWritebackPort", () => {
@@ -293,7 +495,7 @@ describe("createWritebackPort", () => {
                   { url: "https://example.invalid", description: "unrelated note" },
                   {
                     url: "https://github.com/org/walkthrough/pull/1",
-                    description: "lineageguard:decision:v1:lineageguard-run_test_0000000000000002",
+                    description: "lineageguard:decision:v1:candidate-46c580779287ba5f",
                   },
                 ],
               }),
@@ -325,9 +527,10 @@ describe("createWritebackPort", () => {
     ).toBe(true);
   });
 
-  it("is idempotent: skips re-writing when the decision marker and tag already exist", async () => {
+  it("is idempotent: performs no mutation when the remembered decision is already current", async () => {
     writebackEnv();
     let ingestCalls = 0;
+    const current = expectedDecisionDocument(writebackInput());
     vi.stubGlobal(
       "fetch",
       vi.fn(async (url: string, init?: RequestInit) => {
@@ -347,15 +550,7 @@ describe("createWritebackPort", () => {
         }
         if (method === "GET" && url.includes("aspect=institutionalMemory")) {
           return jsonResponse({
-            aspect: {
-              value: JSON.stringify({
-                elements: [
-                  {
-                    description: "lineageguard:decision:v1:lineageguard-run_test_0000000000000002",
-                  },
-                ],
-              }),
-            },
+            aspect: { value: JSON.stringify({ elements: [{ description: current }] }) },
           });
         }
         throw new Error(`Unexpected fetch: ${method} ${url}`);
@@ -368,5 +563,66 @@ describe("createWritebackPort", () => {
 
     expect(result.status).toBe("SUCCEEDED");
     expect(ingestCalls).toBe(0); // no mutation performed — idempotent short-circuit
+  });
+
+  it("refreshes the one decision document when the same decision names an older run", async () => {
+    writebackEnv();
+    const staleRunId = "run_test_0000000000000001";
+    const stale = expectedDecisionDocument(writebackInput()).replace(
+      `Latest verified run: ${writebackInput().runId}`,
+      `Latest verified run: ${staleRunId}`,
+    );
+    const documentWrites: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        const method = init?.method ?? "GET";
+        if (url.includes("ingestProposal")) {
+          const body = JSON.parse(String(init?.body ?? "{}")) as {
+            proposal?: { aspectName?: string; aspect?: { value?: string } };
+          };
+          if (body.proposal?.aspectName === "institutionalMemory") {
+            documentWrites.push(body.proposal.aspect?.value ?? "");
+          }
+          return jsonResponse({ status: "ok" });
+        }
+        if (method === "GET" && url.includes("aspect=globalTags")) {
+          return jsonResponse({
+            aspect: {
+              value: JSON.stringify({
+                tags: [{ tag: "urn:li:tag:lineageguard-canonical.Reviewed" }],
+              }),
+            },
+          });
+        }
+        if (method === "GET" && url.includes("aspect=institutionalMemory")) {
+          // Read-after-write verification re-reads; serve the refreshed document once written.
+          const latest = documentWrites.at(-1);
+          if (latest !== undefined) return jsonResponse({ aspect: { value: latest } });
+          return jsonResponse({
+            aspect: { value: JSON.stringify({ elements: [{ description: stale }] }) },
+          });
+        }
+        throw new Error(`Unexpected fetch: ${method} ${url}`);
+      }),
+    );
+
+    const port = createWritebackPort();
+    if (!port) throw new Error("Writeback port should be configured");
+    const result = await port.write(writebackInput());
+
+    expect(result.status).toBe("SUCCEEDED");
+    expect(documentWrites.length).toBe(1);
+    const written = JSON.parse(documentWrites[0] ?? "{}") as {
+      elements?: Array<{ description?: string }>;
+    };
+    const decisions = (written.elements ?? []).filter((element) =>
+      element.description?.includes("lineageguard:decision:v1:"),
+    );
+    // Exactly one decision element survives, and it names the current run — the identity is stable
+    // while the verified-run reference is not allowed to go stale.
+    expect(decisions.length).toBe(1);
+    expect(decisions[0]?.description).toContain(`Latest verified run: ${writebackInput().runId}`);
+    expect(decisions[0]?.description).not.toContain(staleRunId);
   });
 });

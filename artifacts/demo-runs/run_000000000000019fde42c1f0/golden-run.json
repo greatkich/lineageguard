@@ -1,0 +1,775 @@
+{
+  "runId": "run_000000000000019fde42c1f0",
+  "capturedAt": "2026-08-07T22:07:56.272Z",
+  "run": {
+    "id": "run_000000000000019fde42c1f0",
+    "status": "COMPLETED",
+    "repository": "greatkich/lineageguard",
+    "field": "customer_id",
+    "baselineDecision": "ALLOW",
+    "groundedDecision": "BLOCK",
+    "consumersFound": 4,
+    "evidenceItems": 10,
+    "artifactsGenerated": 8,
+    "patch": "diff --git a/walkthrough/migrations/001_rename_customer_id.sql b/walkthrough/migrations/001_rename_customer_id.sql\nnew file mode 100644\nindex 0000000..1234567\n--- /dev/null\n+++ b/walkthrough/migrations/001_rename_customer_id.sql\n@@ -0,0 +1,5 @@\n+-- Canonical LineageGuard walkthrough scenario: unsafe warehouse rename.\n+-- Renames commerce.orders.customer_id to buyer_id. Repository-only checks pass;\n+-- DataHub reveals downstream data consumers (dbt marts, dashboard, ML model, ad-hoc\n+-- query) that make this an unsafe breaking change without a compatible migration.\n+ALTER TABLE commerce.orders RENAME COLUMN customer_id TO buyer_id;",
+    "triggeredRules": "LG001,LG002,LG003,LG004",
+    "prUrl": "https://github.com/greatkich/lineageguard/pull/7",
+    "writebackStatus": "SUCCEEDED",
+    "validationReceiptFingerprint": "c4509c49d4aed1741fdb739df06954f25da0d2ffe7574bddf2b9062c11eff9e4",
+    "githubReceiptFingerprint": "418bbe6cab085efeab82738bfa8a7709a5c28a20e57b42a18eee47075ca73976",
+    "writebackReceiptFingerprint": "c54c1acbdec586b4e72c8c7f2329597fd482cf86c961d5367e0f24ad756e3091",
+    "contextJson": {
+      "changeId": "chg_81cda26ad872f06f0a456bcf",
+      "evidence": [
+        {
+          "id": "ev_171e9e739d3d518e46aad9ee",
+          "kind": "QUERY_USAGE",
+          "title": "Finance close SYSTEM query",
+          "payload": {
+            "source": "SYSTEM",
+            "queryUrn": "urn:li:query:lineageguard-canonical.system.e4bbe7075754d05de68f76ff0a9b127532e044da8ab0a357bce7e0d41f7ad22c",
+            "observationBasis": "DATAHUB_QUERY_ENTITY",
+            "subjectFieldPath": "customer_id",
+            "subjectDatasetUrn": "urn:li:dataset:(urn:li:dataPlatform:postgres,lineageguard-canonical.lineageguard.analytics.customer_revenue,PROD)",
+            "subjectSchemaFieldUrn": "urn:li:schemaField:(urn:li:dataset:(urn:li:dataPlatform:postgres,lineageguard-canonical.lineageguard.analytics.customer_revenue,PROD),customer_id)",
+            "normalizedStatementFingerprint": "64e7b3dc02cac7ee25acb65562fa7c075f08abc48310bf8dd16d0c9f6ef45638"
+          },
+          "summary": "A cataloged PostgreSQL query subject references analytics.customer_revenue.customer_id.",
+          "fieldPath": "commerce.orders.customer_id",
+          "sourceUrn": "urn:li:dataset:(urn:li:dataPlatform:postgres,lineageguard-canonical.lineageguard.commerce.orders,PROD)",
+          "targetUrn": "urn:li:query:lineageguard-canonical.system.e4bbe7075754d05de68f76ff0a9b127532e044da8ab0a357bce7e0d41f7ad22c",
+          "provenance": [
+            {
+              "role": "QUERY_DISCOVERY",
+              "tool": "get_dataset_queries",
+              "source": "DATAHUB_MCP",
+              "retrievedAt": "2026-08-07T22:05:52.756Z",
+              "invocationId": "mcp_29a3cfd7-626d-4aeb-8645-6cd65965d4a8",
+              "responseFingerprint": "5ae6ad2907e34df653bca7481e4eaf051e8fe240067e7fad0bdac1139b68b91b"
+            },
+            {
+              "role": "QUERY_DETAILS",
+              "tool": "get_entities",
+              "source": "DATAHUB_MCP",
+              "retrievedAt": "2026-08-07T22:05:54.047Z",
+              "invocationId": "mcp_b0cf39d8-3b5d-401c-907c-7e4fd8e9e15c",
+              "responseFingerprint": "049e633c4c9c6bcdd50381eda7831a516fa7cc94021f09944eb0e38a43ae823c"
+            }
+          ],
+          "criticality": "HIGH",
+          "fingerprint": "171e9e739d3d518e46aad9ee73a7bad7e89475ef5d185503655385adbe0fe810",
+          "relatedEvidenceIds": [
+            "ev_9e907158dba3dd3b5ea635af"
+          ]
+        },
+        {
+          "id": "ev_1816ead46a32f7a9a17199ba",
+          "kind": "OWNER",
+          "title": "Risk ML owner",
+          "payload": {
+            "assetUrn": "urn:li:mlModel:(urn:li:dataPlatform:mlflow,lineageguard-canonical.fraud-model-v3,PROD)",
+            "ownerUrn": "urn:li:corpGroup:lineageguard-canonical.risk-ml",
+            "displayName": "Risk ML",
+            "ownershipType": "TECHNICAL_OWNER"
+          },
+          "summary": "Risk ML owns Fraud Model v3.",
+          "sourceUrn": "urn:li:mlModel:(urn:li:dataPlatform:mlflow,lineageguard-canonical.fraud-model-v3,PROD)",
+          "targetUrn": "urn:li:corpGroup:lineageguard-canonical.risk-ml",
+          "provenance": [
+            {
+              "role": "OWNER",
+              "tool": "get_entities",
+              "source": "DATAHUB_MCP",
+              "retrievedAt": "2026-08-07T22:05:53.619Z",
+              "invocationId": "mcp_bc89de84-ca05-4d0b-b57e-e80b83660e5f",
+              "responseFingerprint": "79ed448c90e6fbb774c967436e07a08662448a081b76a368099fc0d53c019c89"
+            }
+          ],
+          "criticality": "HIGH",
+          "fingerprint": "1816ead46a32f7a9a17199ba1152040b027142ef1bd6ce5074e83b53239814db",
+          "relatedEvidenceIds": [
+            "ev_f0a45b70be19a93cda9c5129"
+          ]
+        },
+        {
+          "id": "ev_1f112a8ac95df55ff9bab339",
+          "kind": "SCHEMA",
+          "title": "orders.customer_id schema",
+          "payload": {
+            "nullable": false,
+            "nativeType": "uuid",
+            "schemaFieldUrn": "urn:li:schemaField:(urn:li:dataset:(urn:li:dataPlatform:postgres,lineageguard-canonical.lineageguard.commerce.orders,PROD),customer_id)",
+            "nativeFieldPath": "customer_id"
+          },
+          "summary": "The source field is a non-null uuid in PostgreSQL.",
+          "fieldPath": "commerce.orders.customer_id",
+          "sourceUrn": "urn:li:dataset:(urn:li:dataPlatform:postgres,lineageguard-canonical.lineageguard.commerce.orders,PROD)",
+          "provenance": [
+            {
+              "role": "SCHEMA",
+              "tool": "list_schema_fields",
+              "source": "DATAHUB_MCP",
+              "retrievedAt": "2026-08-07T22:05:49.847Z",
+              "invocationId": "mcp_c00661a8-632d-42cf-a4ac-c7abc9313e6b",
+              "responseFingerprint": "36f66680231e9f7f085900065d34c28c9f0e3a65887fb44b644852b124894a3e"
+            }
+          ],
+          "criticality": "HIGH",
+          "fingerprint": "1f112a8ac95df55ff9bab339978b06524588410cf436f0098861533d88d0b997",
+          "relatedEvidenceIds": []
+        },
+        {
+          "id": "ev_59eb5c12bc8d30556ca933fe",
+          "kind": "DASHBOARD",
+          "title": "Finance Revenue Dashboard",
+          "payload": {
+            "platform": "looker",
+            "lifecycle": "PRODUCTION",
+            "ownerUrns": [
+              "urn:li:corpGroup:lineageguard-canonical.finance-analytics"
+            ],
+            "dashboardUrn": "urn:li:dashboard:(looker,lineageguard-canonical.finance-revenue-dashboard)",
+            "downstreamField": "analytics.customer_revenue.customer_id",
+            "ownershipObserved": true,
+            "classificationUrns": [
+              "urn:li:tag:lineageguard-canonical.Critical",
+              "urn:li:tag:lineageguard-canonical.Production"
+            ],
+            "downstreamDatasetUrn": "urn:li:dataset:(urn:li:dataPlatform:postgres,lineageguard-canonical.lineageguard.analytics.customer_revenue,PROD)"
+          },
+          "summary": "A critical Finance dashboard consumes the revenue lineage path.",
+          "fieldPath": "commerce.orders.customer_id",
+          "sourceUrn": "urn:li:dataset:(urn:li:dataPlatform:postgres,lineageguard-canonical.lineageguard.commerce.orders,PROD)",
+          "targetUrn": "urn:li:dashboard:(looker,lineageguard-canonical.finance-revenue-dashboard)",
+          "provenance": [
+            {
+              "role": "ENTITY_DETAILS",
+              "tool": "get_entities",
+              "source": "DATAHUB_MCP",
+              "retrievedAt": "2026-08-07T22:05:53.194Z",
+              "invocationId": "mcp_b39cc0de-5c4f-4759-8fa4-0d56f1810b7f",
+              "responseFingerprint": "e890ee62c31f04a17570e6b2208a6972b81f18445f55eaf86da8f25cbfa323fa"
+            }
+          ],
+          "criticality": "CRITICAL",
+          "fingerprint": "59eb5c12bc8d30556ca933fe36a8ffc4f1f5843c9fe0d508fbca7cb2472bc7d2",
+          "relatedEvidenceIds": [
+            "ev_9e907158dba3dd3b5ea635af"
+          ]
+        },
+        {
+          "id": "ev_9e907158dba3dd3b5ea635af",
+          "kind": "LINEAGE_PATH",
+          "title": "Finance dashboard lineage path",
+          "payload": {
+            "nodes": [
+              "urn:li:dataset:(urn:li:dataPlatform:postgres,lineageguard-canonical.lineageguard.commerce.orders,PROD)",
+              "urn:li:dataset:(urn:li:dataPlatform:postgres,lineageguard-canonical.lineageguard.analytics.stg_orders,PROD)",
+              "urn:li:dataset:(urn:li:dataPlatform:postgres,lineageguard-canonical.lineageguard.analytics.customer_revenue,PROD)",
+              "urn:li:dashboard:(looker,lineageguard-canonical.finance-revenue-dashboard)"
+            ],
+            "segments": [
+              {
+                "sourceUrn": "urn:li:dataset:(urn:li:dataPlatform:postgres,lineageguard-canonical.lineageguard.commerce.orders,PROD)",
+                "targetUrn": "urn:li:dataset:(urn:li:dataPlatform:postgres,lineageguard-canonical.lineageguard.analytics.stg_orders,PROD)",
+                "granularity": "FIELD",
+                "sourceFieldPath": "customer_id",
+                "targetFieldPath": "customer_id"
+              },
+              {
+                "sourceUrn": "urn:li:dataset:(urn:li:dataPlatform:postgres,lineageguard-canonical.lineageguard.analytics.stg_orders,PROD)",
+                "targetUrn": "urn:li:dataset:(urn:li:dataPlatform:postgres,lineageguard-canonical.lineageguard.analytics.customer_revenue,PROD)",
+                "granularity": "FIELD",
+                "sourceFieldPath": "customer_id",
+                "targetFieldPath": "customer_id"
+              },
+              {
+                "sourceUrn": "urn:li:dataset:(urn:li:dataPlatform:postgres,lineageguard-canonical.lineageguard.analytics.customer_revenue,PROD)",
+                "targetUrn": "urn:li:dashboard:(looker,lineageguard-canonical.finance-revenue-dashboard)",
+                "granularity": "ENTITY"
+              }
+            ],
+            "direction": "DOWNSTREAM",
+            "fieldLevel": true
+          },
+          "summary": "customer_id flows through the revenue datasets into the Finance dashboard.",
+          "fieldPath": "commerce.orders.customer_id",
+          "sourceUrn": "urn:li:dataset:(urn:li:dataPlatform:postgres,lineageguard-canonical.lineageguard.commerce.orders,PROD)",
+          "targetUrn": "urn:li:dashboard:(looker,lineageguard-canonical.finance-revenue-dashboard)",
+          "provenance": [
+            {
+              "role": "LINEAGE_DISCOVERY",
+              "tool": "get_lineage",
+              "source": "DATAHUB_MCP",
+              "retrievedAt": "2026-08-07T22:05:50.372Z",
+              "invocationId": "mcp_4c8dc5a5-98c7-4ac8-b2f2-d1a1c384be47",
+              "responseFingerprint": "4694c581bc761f4f8f7ecaf54445108161e201191db2148ee61ac0308b774b52"
+            },
+            {
+              "role": "FIELD_PATH",
+              "tool": "get_lineage_paths_between",
+              "source": "DATAHUB_MCP",
+              "retrievedAt": "2026-08-07T22:05:50.876Z",
+              "invocationId": "mcp_95d827d8-0cd2-4517-8079-0cc2e0e996a2",
+              "responseFingerprint": "a11143f9eb5eba46baeeb20bc8a04553ff5ede4d4470fae17cc8cad7747a6258"
+            },
+            {
+              "role": "ENTITY_PATH",
+              "tool": "get_lineage_paths_between",
+              "source": "DATAHUB_MCP",
+              "retrievedAt": "2026-08-07T22:05:51.410Z",
+              "invocationId": "mcp_ff49e38d-0597-4488-a2cb-a2c872d945bc",
+              "responseFingerprint": "bc99ab9304e994cebdffefccc5ee1bd556d535070a08c7750bc234f64e9350e7"
+            }
+          ],
+          "criticality": "CRITICAL",
+          "fingerprint": "9e907158dba3dd3b5ea635aff032242f6a347f9855195d3283f7e80fbeac684d",
+          "relatedEvidenceIds": []
+        },
+        {
+          "id": "ev_a193c7a6f647028a5d17fbac",
+          "kind": "LINEAGE_PATH",
+          "title": "Fraud model lineage path",
+          "payload": {
+            "nodes": [
+              "urn:li:dataset:(urn:li:dataPlatform:postgres,lineageguard-canonical.lineageguard.commerce.orders,PROD)",
+              "urn:li:dataset:(urn:li:dataPlatform:postgres,lineageguard-canonical.lineageguard.analytics.stg_orders,PROD)",
+              "urn:li:dataset:(urn:li:dataPlatform:postgres,lineageguard-canonical.lineageguard.fraud.customer_features,PROD)",
+              "urn:li:mlModel:(urn:li:dataPlatform:mlflow,lineageguard-canonical.fraud-model-v3,PROD)"
+            ],
+            "segments": [
+              {
+                "sourceUrn": "urn:li:dataset:(urn:li:dataPlatform:postgres,lineageguard-canonical.lineageguard.commerce.orders,PROD)",
+                "targetUrn": "urn:li:dataset:(urn:li:dataPlatform:postgres,lineageguard-canonical.lineageguard.analytics.stg_orders,PROD)",
+                "granularity": "FIELD",
+                "sourceFieldPath": "customer_id",
+                "targetFieldPath": "customer_id"
+              },
+              {
+                "sourceUrn": "urn:li:dataset:(urn:li:dataPlatform:postgres,lineageguard-canonical.lineageguard.analytics.stg_orders,PROD)",
+                "targetUrn": "urn:li:dataset:(urn:li:dataPlatform:postgres,lineageguard-canonical.lineageguard.fraud.customer_features,PROD)",
+                "granularity": "FIELD",
+                "sourceFieldPath": "customer_id",
+                "targetFieldPath": "customer_id"
+              },
+              {
+                "sourceUrn": "urn:li:dataset:(urn:li:dataPlatform:postgres,lineageguard-canonical.lineageguard.fraud.customer_features,PROD)",
+                "targetUrn": "urn:li:mlModel:(urn:li:dataPlatform:mlflow,lineageguard-canonical.fraud-model-v3,PROD)",
+                "granularity": "ENTITY"
+              }
+            ],
+            "direction": "DOWNSTREAM",
+            "fieldLevel": true
+          },
+          "summary": "customer_id flows through the fraud feature set into the production model.",
+          "fieldPath": "commerce.orders.customer_id",
+          "sourceUrn": "urn:li:dataset:(urn:li:dataPlatform:postgres,lineageguard-canonical.lineageguard.commerce.orders,PROD)",
+          "targetUrn": "urn:li:mlModel:(urn:li:dataPlatform:mlflow,lineageguard-canonical.fraud-model-v3,PROD)",
+          "provenance": [
+            {
+              "role": "LINEAGE_DISCOVERY",
+              "tool": "get_lineage",
+              "source": "DATAHUB_MCP",
+              "retrievedAt": "2026-08-07T22:05:50.372Z",
+              "invocationId": "mcp_4c8dc5a5-98c7-4ac8-b2f2-d1a1c384be47",
+              "responseFingerprint": "4694c581bc761f4f8f7ecaf54445108161e201191db2148ee61ac0308b774b52"
+            },
+            {
+              "role": "FIELD_PATH",
+              "tool": "get_lineage_paths_between",
+              "source": "DATAHUB_MCP",
+              "retrievedAt": "2026-08-07T22:05:51.896Z",
+              "invocationId": "mcp_aa6a4285-47c6-42b2-8c38-387557d38dbf",
+              "responseFingerprint": "c0e9eeaa94f8b054b80dbae50d57317c1bd8eb19ff255b4355588d807b348656"
+            },
+            {
+              "role": "ENTITY_PATH",
+              "tool": "get_lineage_paths_between",
+              "source": "DATAHUB_MCP",
+              "retrievedAt": "2026-08-07T22:05:52.335Z",
+              "invocationId": "mcp_51fd0d83-f656-4f7f-b288-010183bad102",
+              "responseFingerprint": "389808c1a0bed65cb69e975fe1aa0a3f94e0138c074f7b80d219674f68c3550c"
+            }
+          ],
+          "criticality": "CRITICAL",
+          "fingerprint": "a193c7a6f647028a5d17fbacf3a10f4f4d96e81bcbde975f62e885d572d4baa9",
+          "relatedEvidenceIds": []
+        },
+        {
+          "id": "ev_ba2121f8360a611382d3a157",
+          "kind": "GLOSSARY_TERM",
+          "title": "Customer Identifier",
+          "payload": {
+            "name": "Customer Identifier",
+            "termUrn": "urn:li:glossaryTerm:lineageguard-canonical.CustomerIdentifier",
+            "fieldPath": "commerce.orders.customer_id",
+            "schemaFieldUrn": "urn:li:schemaField:(urn:li:dataset:(urn:li:dataPlatform:postgres,lineageguard-canonical.lineageguard.commerce.orders,PROD),customer_id)"
+          },
+          "summary": "customer_id is governed by the Customer Identifier glossary term.",
+          "fieldPath": "commerce.orders.customer_id",
+          "sourceUrn": "urn:li:dataset:(urn:li:dataPlatform:postgres,lineageguard-canonical.lineageguard.commerce.orders,PROD)",
+          "targetUrn": "urn:li:glossaryTerm:lineageguard-canonical.CustomerIdentifier",
+          "provenance": [
+            {
+              "role": "GLOSSARY_BINDING",
+              "tool": "list_schema_fields",
+              "source": "DATAHUB_MCP",
+              "retrievedAt": "2026-08-07T22:05:49.847Z",
+              "invocationId": "mcp_c00661a8-632d-42cf-a4ac-c7abc9313e6b",
+              "responseFingerprint": "36f66680231e9f7f085900065d34c28c9f0e3a65887fb44b644852b124894a3e"
+            },
+            {
+              "role": "GLOSSARY_DETAILS",
+              "tool": "get_entities",
+              "source": "DATAHUB_MCP",
+              "retrievedAt": "2026-08-07T22:05:55.053Z",
+              "invocationId": "mcp_606316d3-8ed4-466b-8b55-5ae77238c2b8",
+              "responseFingerprint": "8184f85926ab7fb58a3dcb378fd0334ec8acdc51d3f269236932b638f344aec4"
+            }
+          ],
+          "criticality": "HIGH",
+          "fingerprint": "ba2121f8360a611382d3a15743b34f35adc483bf361cca7e24d4e2a5113e22e5",
+          "relatedEvidenceIds": []
+        },
+        {
+          "id": "ev_d4164db054a4481b94a20931",
+          "kind": "OWNER",
+          "title": "Finance Analytics owner",
+          "payload": {
+            "assetUrn": "urn:li:dashboard:(looker,lineageguard-canonical.finance-revenue-dashboard)",
+            "ownerUrn": "urn:li:corpGroup:lineageguard-canonical.finance-analytics",
+            "displayName": "Finance Analytics",
+            "ownershipType": "BUSINESS_OWNER"
+          },
+          "summary": "Finance Analytics owns the revenue dashboard.",
+          "sourceUrn": "urn:li:dashboard:(looker,lineageguard-canonical.finance-revenue-dashboard)",
+          "targetUrn": "urn:li:corpGroup:lineageguard-canonical.finance-analytics",
+          "provenance": [
+            {
+              "role": "OWNER",
+              "tool": "get_entities",
+              "source": "DATAHUB_MCP",
+              "retrievedAt": "2026-08-07T22:05:53.194Z",
+              "invocationId": "mcp_b39cc0de-5c4f-4759-8fa4-0d56f1810b7f",
+              "responseFingerprint": "e890ee62c31f04a17570e6b2208a6972b81f18445f55eaf86da8f25cbfa323fa"
+            }
+          ],
+          "criticality": "HIGH",
+          "fingerprint": "d4164db054a4481b94a2093134f8ad047b9ca2026fc596e958378309dce701c6",
+          "relatedEvidenceIds": [
+            "ev_59eb5c12bc8d30556ca933fe"
+          ]
+        },
+        {
+          "id": "ev_e81b6d759a2158b1562bc984",
+          "kind": "OWNER",
+          "title": "Finance Analytics owner",
+          "payload": {
+            "assetUrn": "urn:li:dataset:(urn:li:dataPlatform:postgres,lineageguard-canonical.lineageguard.analytics.customer_revenue,PROD)",
+            "ownerUrn": "urn:li:corpGroup:lineageguard-canonical.finance-analytics",
+            "displayName": "Finance Analytics",
+            "ownershipType": "TECHNICAL_OWNER"
+          },
+          "summary": "Finance Analytics owns analytics.customer_revenue, the dataset the unmanaged Finance query reads from. Review for that query routes through this owner rather than an owner on the Query entity itself.",
+          "sourceUrn": "urn:li:dataset:(urn:li:dataPlatform:postgres,lineageguard-canonical.lineageguard.analytics.customer_revenue,PROD)",
+          "targetUrn": "urn:li:corpGroup:lineageguard-canonical.finance-analytics",
+          "provenance": [
+            {
+              "role": "OWNER",
+              "tool": "get_entities",
+              "source": "DATAHUB_MCP",
+              "retrievedAt": "2026-08-07T22:05:54.603Z",
+              "invocationId": "mcp_3ea77002-7af4-4190-81aa-11c92bf39aad",
+              "responseFingerprint": "83e1717524f88406cd2020948b8ee827f15bd04bdf95753ce03ba2e8f349e250"
+            }
+          ],
+          "criticality": "HIGH",
+          "fingerprint": "e81b6d759a2158b1562bc984b218e9786682643c930aa461dad1d6420b06e609",
+          "relatedEvidenceIds": [
+            "ev_171e9e739d3d518e46aad9ee"
+          ]
+        },
+        {
+          "id": "ev_f0a45b70be19a93cda9c5129",
+          "kind": "ML_MODEL",
+          "title": "Fraud Model v3",
+          "payload": {
+            "modelUrn": "urn:li:mlModel:(urn:li:dataPlatform:mlflow,lineageguard-canonical.fraud-model-v3,PROD)",
+            "lifecycle": "PRODUCTION",
+            "ownerUrns": [
+              "urn:li:corpGroup:lineageguard-canonical.risk-ml"
+            ],
+            "featureField": "fraud.customer_features.customer_id",
+            "featureDatasetUrn": "urn:li:dataset:(urn:li:dataPlatform:postgres,lineageguard-canonical.lineageguard.fraud.customer_features,PROD)",
+            "ownershipObserved": true,
+            "classificationUrns": [
+              "urn:li:tag:lineageguard-canonical.Critical",
+              "urn:li:tag:lineageguard-canonical.Production"
+            ],
+            "trainingDataReceipt": {
+              "endpoint": "http://127.0.0.1:8080/openapi/v3/entity/mlModel/urn%3Ali%3AmlModel%3A(urn%3Ali%3AdataPlatform%3Amlflow%2Clineageguard-canonical.fraud-model-v3%2CPROD)/mlModelTrainingData",
+              "modelUrn": "urn:li:mlModel:(urn:li:dataPlatform:mlflow,lineageguard-canonical.fraud-model-v3,PROD)",
+              "aspectName": "mlModelTrainingData",
+              "retrievedAt": "2026-08-07T22:05:52.354Z",
+              "responseSha256": "80faac3cadf4a038184693756a8ae33978c88cbb83af17bd2366bf560ae5c6df",
+              "credentialClass": "READ",
+              "provenDatasetUrn": "urn:li:dataset:(urn:li:dataPlatform:postgres,lineageguard-canonical.lineageguard.fraud.customer_features,PROD)"
+            }
+          },
+          "summary": "The production fraud model consumes customer_features.customer_id.",
+          "fieldPath": "commerce.orders.customer_id",
+          "sourceUrn": "urn:li:dataset:(urn:li:dataPlatform:postgres,lineageguard-canonical.lineageguard.commerce.orders,PROD)",
+          "targetUrn": "urn:li:mlModel:(urn:li:dataPlatform:mlflow,lineageguard-canonical.fraud-model-v3,PROD)",
+          "provenance": [
+            {
+              "role": "ENTITY_DETAILS",
+              "tool": "get_entities",
+              "source": "DATAHUB_MCP",
+              "retrievedAt": "2026-08-07T22:05:53.619Z",
+              "invocationId": "mcp_bc89de84-ca05-4d0b-b57e-e80b83660e5f",
+              "responseFingerprint": "79ed448c90e6fbb774c967436e07a08662448a081b76a368099fc0d53c019c89"
+            }
+          ],
+          "criticality": "CRITICAL",
+          "fingerprint": "f0a45b70be19a93cda9c5129e7667c476f73abe14a47c988fbe9a61ca8956e38",
+          "relatedEvidenceIds": [
+            "ev_a193c7a6f647028a5d17fbac"
+          ]
+        }
+      ],
+      "failures": [],
+      "fieldPath": "commerce.orders.customer_id",
+      "datasetUrn": "urn:li:dataset:(urn:li:dataPlatform:postgres,lineageguard-canonical.lineageguard.commerce.orders,PROD)",
+      "resolution": {
+        "requested": {
+          "field": "customer_id",
+          "schema": "commerce",
+          "dataset": "orders",
+          "database": "lineageguard",
+          "platform": "postgres",
+          "environment": "PROD",
+          "platformInstance": "lineageguard-canonical"
+        },
+        "datasetUrn": "urn:li:dataset:(urn:li:dataPlatform:postgres,lineageguard-canonical.lineageguard.commerce.orders,PROD)",
+        "provenance": [
+          {
+            "role": "RESOLUTION",
+            "tool": "search",
+            "source": "DATAHUB_MCP",
+            "retrievedAt": "2026-08-07T22:05:49.383Z",
+            "invocationId": "mcp_ecb9daa5-93c0-4211-b986-7e5c8f7d6967",
+            "responseFingerprint": "0e5f7d16bb9804be782c0b014c1b97cd5d8ce8eb47cb5195b476f60576304346"
+          }
+        ],
+        "schemaFieldUrn": "urn:li:schemaField:(urn:li:dataset:(urn:li:dataPlatform:postgres,lineageguard-canonical.lineageguard.commerce.orders,PROD),customer_id)",
+        "nativeFieldPath": "customer_id"
+      },
+      "collectedAt": "2026-08-07T22:05:55.053Z",
+      "collectionOrigin": {
+        "mode": "LIVE"
+      },
+      "collectionStatus": "COMPLETE",
+      "collectionFingerprint": "5a4687f6313197651bf3cf6e45d0a437c74ad26a7a525672baf5014c994ff293",
+      "impactContextFingerprint": "a44ffdb760b53fee35ae94f3f17c39c1630470224c0f6b895bf990bd849bcdc1"
+    },
+    "candidateJson": {
+      "steps": [
+        {
+          "id": "step_expand",
+          "phase": "EXPAND",
+          "title": "Expand: add buyer_id with sync trigger",
+          "rationale": "Keep old consumers working while new column is added.",
+          "artifactTargets": [
+            "walkthrough/migrations/001_expand.sql",
+            "walkthrough/migrations/001_rollback.sql"
+          ],
+          "affectedEvidenceIds": [
+            "ev_171e9e739d3d518e46aad9ee",
+            "ev_59eb5c12bc8d30556ca933fe",
+            "ev_9e907158dba3dd3b5ea635af"
+          ]
+        },
+        {
+          "id": "step_migrate",
+          "phase": "MIGRATE",
+          "title": "Migrate: update controlled readers",
+          "rationale": "Update all dbt consumers to use buyer_id and add compatibility assertions.",
+          "artifactTargets": [
+            "walkthrough/dbt/models/analytics/customer_revenue.sql",
+            "walkthrough/dbt/models/fraud/customer_features.sql",
+            "walkthrough/dbt/models/staging/stg_orders.sql",
+            "walkthrough/dbt/tests/orders_buyer_id_not_null.sql",
+            "walkthrough/dbt/tests/orders_compat.sql"
+          ],
+          "affectedEvidenceIds": [
+            "ev_a193c7a6f647028a5d17fbac",
+            "ev_f0a45b70be19a93cda9c5129"
+          ]
+        },
+        {
+          "id": "step_contract",
+          "phase": "CONTRACT",
+          "title": "Contract: deprecate customer_id",
+          "rationale": "Retire the compatibility field after approval and observation.",
+          "artifactTargets": [
+            "docs/migrations/customer-id.md"
+          ],
+          "affectedEvidenceIds": [
+            "ev_171e9e739d3d518e46aad9ee"
+          ]
+        }
+      ],
+      "summary": "Renaming a column referenced by five downstream consumers—including two CRITICAL dashboards and a production ML model—requires a phased expand-migrate-contract strategy to avoid breaking changes. The expand phase introduces buyer_id as a synchronized duplicate, allowing both old and new names to coexist. Consumers are migrated individually in priority order (CRITICAL systems first after the safe HIGH-priority system validates the path). Data integrity assertions run continuously during the migration window. A 90-day deprecation period gives unmapped or late-discovered consumers time to surface before the contract phase removes customer_id. Rollback paths are defined for each phase to ensure recoverability at any point.",
+      "strategy": "EXPAND_MIGRATE_CONTRACT",
+      "artifacts": [
+        {
+          "kind": "MIGRATION_DOCUMENT",
+          "path": "docs/migrations/customer-id.md",
+          "content": "# Migration: customer_id → buyer_id\n\n## Strategy: Expand-Migrate-Contract\n\n### Phase 1: Expand\n- Add `buyer_id` column with sync trigger\n- Both columns remain accessible\n\n### Phase 2: Migrate\n- Update dbt models to expose both columns\n- Add compatibility and not-null tests\n\n### Phase 3: Contract\n- After compatibility window (30 days), deprecate `customer_id`\n\n## Rollback Plan\nRun `walkthrough/migrations/001_rollback.sql` while `customer_id` remains the source of truth.\n\n## Compatibility Window: 30 days\n\n## Required Reviewers\n- urn:li:corpGroup:lineageguard-canonical.finance-analytics (owner of urn:li:dashboard:(looker,lineageguard-canonical.finance-revenue-dashboard), urn:li:dataset:(urn:li:dataPlatform:postgres,lineageguard-canonical.lineageguard.analytics.customer_revenue,PROD))\n- urn:li:corpGroup:lineageguard-canonical.risk-ml (owner of urn:li:mlModel:(urn:li:dataPlatform:mlflow,lineageguard-canonical.fraud-model-v3,PROD))",
+          "operation": "CREATE"
+        },
+        {
+          "kind": "DBT_MODEL",
+          "path": "walkthrough/dbt/models/analytics/customer_revenue.sql",
+          "content": "SELECT\n    customer_id,\n    buyer_id,\n    SUM(order_total) AS lifetime_revenue\nFROM {{ ref('stg_orders') }}\nGROUP BY customer_id, buyer_id",
+          "operation": "MODIFY",
+          "expectedBaseSha": "d130fd2a0307eaec187b6a764cd164e76b0062ac"
+        },
+        {
+          "kind": "DBT_MODEL",
+          "path": "walkthrough/dbt/models/fraud/customer_features.sql",
+          "content": "SELECT\n    customer_id,\n    buyer_id,\n    COUNT(*) AS order_count,\n    MAX(order_total) AS max_order_total\nFROM {{ ref('stg_orders') }}\nGROUP BY customer_id, buyer_id",
+          "operation": "MODIFY",
+          "expectedBaseSha": "d130fd2a0307eaec187b6a764cd164e76b0062ac"
+        },
+        {
+          "kind": "DBT_MODEL",
+          "path": "walkthrough/dbt/models/staging/stg_orders.sql",
+          "content": "SELECT\n    order_id,\n    customer_id,\n    buyer_id,\n    order_total,\n    ordered_at\nFROM {{ source('commerce', 'orders') }}",
+          "operation": "MODIFY",
+          "expectedBaseSha": "d130fd2a0307eaec187b6a764cd164e76b0062ac"
+        },
+        {
+          "kind": "DBT_TEST",
+          "path": "walkthrough/dbt/tests/orders_buyer_id_not_null.sql",
+          "content": "-- Not-null assertion: buyer_id must be populated for all rows\nselect *\nfrom {{ ref('stg_orders') }}\nwhere buyer_id is null",
+          "operation": "CREATE"
+        },
+        {
+          "kind": "DBT_TEST",
+          "path": "walkthrough/dbt/tests/orders_compat.sql",
+          "content": "-- Compatibility test: customer_id and buyer_id must always match\nselect *\nfrom {{ ref('stg_orders') }}\nwhere customer_id is distinct from buyer_id",
+          "operation": "CREATE"
+        },
+        {
+          "kind": "SQL_MIGRATION",
+          "path": "walkthrough/migrations/001_expand.sql",
+          "content": "alter table commerce.orders add column buyer_id uuid;\nupdate commerce.orders set buyer_id = customer_id;\ncreate function commerce.sync_order_customer_buyer() returns trigger language plpgsql as $$\nbegin\n  if tg_op = 'INSERT' then\n    if new.buyer_id is null and new.customer_id is not null then\n      new.buyer_id := new.customer_id;\n    elsif new.customer_id is null and new.buyer_id is not null then\n      new.customer_id := new.buyer_id;\n    elsif new.customer_id is null and new.buyer_id is null then\n      raise exception 'at least one identifier must be provided';\n    elsif new.customer_id is distinct from new.buyer_id then\n      raise exception 'customer_id and buyer_id must match during compatibility window';\n    end if;\n  elsif tg_op = 'UPDATE' then\n    if new.customer_id is distinct from old.customer_id and new.buyer_id is not distinct from old.buyer_id then\n      new.buyer_id := new.customer_id;\n    elsif new.buyer_id is distinct from old.buyer_id and new.customer_id is not distinct from old.customer_id then\n      new.customer_id := new.buyer_id;\n    elsif new.customer_id is distinct from old.customer_id and new.buyer_id is distinct from old.buyer_id then\n      if new.customer_id is distinct from new.buyer_id then\n        raise exception 'customer_id and buyer_id must match during compatibility window';\n      end if;\n    end if;\n  end if;\n  return new;\nend $$;\ncreate trigger orders_customer_buyer_compat\n  before insert or update on commerce.orders\n  for each row execute function commerce.sync_order_customer_buyer();\nalter table commerce.orders alter column buyer_id set not null;",
+          "operation": "CREATE"
+        },
+        {
+          "kind": "ROLLBACK_SQL",
+          "path": "walkthrough/migrations/001_rollback.sql",
+          "content": "drop trigger orders_customer_buyer_compat on commerce.orders;\ndrop function commerce.sync_order_customer_buyer();\nalter table commerce.orders drop column buyer_id cascade;\ndo $$ begin\n  if not exists (select 1 from information_schema.columns\n                 where table_schema = 'commerce' and table_name = 'orders'\n                   and column_name = 'customer_id') then\n    raise exception 'rollback removed customer_id';\n  end if;\n  if exists (select 1 from information_schema.columns\n             where table_schema = 'commerce' and table_name = 'orders'\n               and column_name = 'buyer_id') then\n    raise exception 'rollback left buyer_id in place';\n  end if;\nend $$;",
+          "operation": "CREATE"
+        }
+      ],
+      "rollbackPlan": "Run walkthrough/migrations/001_rollback.sql while customer_id remains the source of truth.",
+      "sourceDecision": "BLOCK",
+      "requiredReviewers": [
+        {
+          "kind": "OWNER",
+          "reason": "Recorded critical asset owner",
+          "ownerUrn": "urn:li:corpGroup:lineageguard-canonical.finance-analytics",
+          "affectedAssetUrns": [
+            "urn:li:dashboard:(looker,lineageguard-canonical.finance-revenue-dashboard)",
+            "urn:li:dataset:(urn:li:dataPlatform:postgres,lineageguard-canonical.lineageguard.analytics.customer_revenue,PROD)"
+          ]
+        },
+        {
+          "kind": "OWNER",
+          "reason": "Recorded critical asset owner",
+          "ownerUrn": "urn:li:corpGroup:lineageguard-canonical.risk-ml",
+          "affectedAssetUrns": [
+            "urn:li:mlModel:(urn:li:dataPlatform:mlflow,lineageguard-canonical.fraud-model-v3,PROD)"
+          ]
+        }
+      ],
+      "sourceEvidenceIds": [
+        "ev_171e9e739d3d518e46aad9ee",
+        "ev_59eb5c12bc8d30556ca933fe",
+        "ev_9e907158dba3dd3b5ea635af",
+        "ev_a193c7a6f647028a5d17fbac",
+        "ev_f0a45b70be19a93cda9c5129"
+      ],
+      "sourcePatchFingerprint": "f755da9a0f2da7ccee571476c5a650eddb3f477be482e6f0a6b3b9a06d7f670c",
+      "compatibilityWindowDays": 30,
+      "sourceChangeFingerprint": "81cda26ad872f06f0a456bcf80b896eb6a9eaa287bbba9a7767f102ab710726c",
+      "sourceImpactContextFingerprint": "a44ffdb760b53fee35ae94f3f17c39c1630470224c0f6b895bf990bd849bcdc1"
+    },
+    "comparisonJson": {
+      "baseline": {
+        "risk": "LOW",
+        "reasons": [],
+        "changeId": "chg_81cda26ad872f06f0a456bcf",
+        "decision": "ALLOW",
+        "contextMode": "REPOSITORY_ONLY",
+        "evaluatedAt": "2026-08-07T22:05:45.850Z",
+        "policyVersion": "lineageguard-p0.1"
+      },
+      "changeId": "chg_81cda26ad872f06f0a456bcf",
+      "grounded": {
+        "risk": "CRITICAL",
+        "reasons": [
+          {
+            "ruleId": "LG001",
+            "message": "The incompatible field rename has downstream field-level lineage.",
+            "severity": "CRITICAL",
+            "evidenceIds": [
+              "ev_9e907158dba3dd3b5ea635af",
+              "ev_a193c7a6f647028a5d17fbac"
+            ]
+          },
+          {
+            "ruleId": "LG002",
+            "message": "A production ML model depends on the renamed field.",
+            "severity": "CRITICAL",
+            "evidenceIds": [
+              "ev_f0a45b70be19a93cda9c5129"
+            ]
+          },
+          {
+            "ruleId": "LG003",
+            "message": "An observed system query references the renamed field.",
+            "severity": "HIGH",
+            "evidenceIds": [
+              "ev_171e9e739d3d518e46aad9ee"
+            ]
+          },
+          {
+            "ruleId": "LG004",
+            "message": "A critical dashboard depends on the incompatible field change.",
+            "severity": "CRITICAL",
+            "evidenceIds": [
+              "ev_59eb5c12bc8d30556ca933fe"
+            ]
+          }
+        ],
+        "changeId": "chg_81cda26ad872f06f0a456bcf",
+        "decision": "BLOCK",
+        "contextMode": "DATAHUB_GROUNDED",
+        "evaluatedAt": "2026-08-07T22:05:55.664Z",
+        "policyVersion": "lineageguard-p0.1",
+        "impactContextFingerprint": "a44ffdb760b53fee35ae94f3f17c39c1630470224c0f6b895bf990bd849bcdc1"
+      },
+      "transition": "ALLOW→BLOCK",
+      "decisionChanged": true,
+      "triggeredRuleIds": [
+        "LG001",
+        "LG002",
+        "LG003",
+        "LG004"
+      ],
+      "changedBecauseEvidenceIds": [
+        "ev_171e9e739d3d518e46aad9ee",
+        "ev_59eb5c12bc8d30556ca933fe",
+        "ev_9e907158dba3dd3b5ea635af",
+        "ev_a193c7a6f647028a5d17fbac",
+        "ev_f0a45b70be19a93cda9c5129"
+      ]
+    },
+    "validationReceiptJson": {
+      "checks": [
+        {
+          "check": "SQL_MIGRATION",
+          "status": "PASS",
+          "summary": "SQL_MIGRATION passed"
+        },
+        {
+          "check": "BACKFILL_EQUALITY",
+          "status": "PASS",
+          "summary": "BACKFILL_EQUALITY passed"
+        },
+        {
+          "check": "DBT_PARSE",
+          "status": "PASS",
+          "summary": "DBT_PARSE passed"
+        },
+        {
+          "check": "DBT_COMPILE",
+          "status": "PASS",
+          "summary": "DBT_COMPILE passed"
+        },
+        {
+          "check": "DBT_TEST",
+          "status": "PASS",
+          "summary": "DBT_TEST passed"
+        },
+        {
+          "check": "OLD_CONSUMER_COMPATIBILITY",
+          "status": "PASS",
+          "summary": "OLD_CONSUMER_COMPATIBILITY passed"
+        },
+        {
+          "check": "NEW_CONSUMER_COMPATIBILITY",
+          "status": "PASS",
+          "summary": "NEW_CONSUMER_COMPATIBILITY passed"
+        },
+        {
+          "check": "ROLLBACK",
+          "status": "PASS",
+          "summary": "ROLLBACK passed"
+        }
+      ],
+      "allPass": true,
+      "artifacts": [
+        {
+          "path": "docs/migrations/customer-id.md",
+          "sha256": "a541026291994af73819554bcc2f6a57fb07038e65d10e5ab99c85e25dd291dd"
+        },
+        {
+          "path": "walkthrough/dbt/models/analytics/customer_revenue.sql",
+          "sha256": "9e904f1d45953794d29a97850826d91c24236b1bee42225a19ebfab2d2570bfe"
+        },
+        {
+          "path": "walkthrough/dbt/models/fraud/customer_features.sql",
+          "sha256": "9c469769f407ad40c24e672a19c263aa407e01018b8bfc7eb1df41902004be75"
+        },
+        {
+          "path": "walkthrough/dbt/models/staging/stg_orders.sql",
+          "sha256": "45b252168cdc66d02c7a2e56e9bb4e6b5a8ca06caf4c46339ff731e4570b85dd"
+        },
+        {
+          "path": "walkthrough/dbt/tests/orders_buyer_id_not_null.sql",
+          "sha256": "0e54da4f37ff5002f7346f2822bd4eca7058c3feccfaa7c5b386049e178d1823"
+        },
+        {
+          "path": "walkthrough/dbt/tests/orders_compat.sql",
+          "sha256": "5cb7a95b34f0415885f7f390630086240b3317089dde7d5ca009ccd805f769e9"
+        },
+        {
+          "path": "walkthrough/migrations/001_expand.sql",
+          "sha256": "3d8a3fa91ceb4e55dfd6e7d1a633dfdb38e207bf96078568a00734e2eed8e2f1"
+        },
+        {
+          "path": "walkthrough/migrations/001_rollback.sql",
+          "sha256": "b53745e467468c80481a24be4d93cd94780218922605587b0d7403015954a7e2"
+        }
+      ],
+      "receiptFingerprint": "c4509c49d4aed1741fdb739df06954f25da0d2ffe7574bddf2b9062c11eff9e4",
+      "candidateFingerprint": "55e099499756f132e673f1459bb6ed0ad52782434edf96e7acfea891cdf2e72f"
+    },
+    "githubHeadSha": "3c9237679b5161ba5d4d236897b01e0e76e62e23",
+    "githubHeadBranch": "lineageguard/generated/pr-3-55e099499756",
+    "githubBaseSha": "290ce411bfd5372e82063fea9f1f8ca861d36442",
+    "executionMode": "LIVE",
+    "sourcePrUrl": "https://github.com/greatkich/lineageguard/pull/3",
+    "sourcePrNumber": 3,
+    "sourceBaseSha": "d130fd2a0307eaec187b6a764cd164e76b0062ac",
+    "sourceHeadSha": "1be5ee50f14ba2d31122dc8d21e71eb516a2bf78",
+    "sourceDiffFingerprint": "6c981734adda29d0d6d86dc1f71411505b40a3993316690f49217e629bb0f08e",
+    "sourceFilePath": "walkthrough/migrations/001_rename_customer_id.sql",
+    "createdAt": "2026-08-07T22:05:45.836Z",
+    "updatedAt": "2026-08-07T22:06:43.762Z"
+  }
+}

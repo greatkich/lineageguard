@@ -1,0 +1,345 @@
+$ biome lint .
+apps/worker/src/orchestration.ts:33:43 lint/style/useTemplate  FIXABLE  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  i Template literals are preferred over string concatenation.
+  
+    31 │   const gmsUrl = process.env.DATAHUB_GMS_URL ?? "http://127.0.0.1:8080";
+    32 │   const readToken = process.env.DATAHUB_READ_TOKEN ?? process.env.DATAHUB_TOKEN ?? "";
+  > 33 │   const uvxPath = process.env.UVX_PATH ?? process.env.HOME + "/.local/bin/uvx";
+       │                                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    34 │   const uvCacheDir = process.env.UV_CACHE_DIR ?? process.env.HOME + "/.cache/uv";
+    35 │ 
+  
+  i Unsafe fix: Use a template literal.
+  
+     31  31 │     const gmsUrl = process.env.DATAHUB_GMS_URL ?? "http://127.0.0.1:8080";
+     32  32 │     const readToken = process.env.DATAHUB_READ_TOKEN ?? process.env.DATAHUB_TOKEN ?? "";
+     33     │ - ··const·uvxPath·=·process.env.UVX_PATH·??·process.env.HOME·+·"/.local/bin/uvx";
+         33 │ + ··const·uvxPath·=·process.env.UVX_PATH·??·`${process.env.HOME}/.local/bin/uvx`;
+     34  34 │     const uvCacheDir = process.env.UV_CACHE_DIR ?? process.env.HOME + "/.cache/uv";
+     35  35 │   
+  
+
+apps/worker/src/orchestration.ts:34:50 lint/style/useTemplate  FIXABLE  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  i Template literals are preferred over string concatenation.
+  
+    32 │   const readToken = process.env.DATAHUB_READ_TOKEN ?? process.env.DATAHUB_TOKEN ?? "";
+    33 │   const uvxPath = process.env.UVX_PATH ?? process.env.HOME + "/.local/bin/uvx";
+  > 34 │   const uvCacheDir = process.env.UV_CACHE_DIR ?? process.env.HOME + "/.cache/uv";
+       │                                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    35 │ 
+    36 │   if (readToken.length <= 8) {
+  
+  i Unsafe fix: Use a template literal.
+  
+     32  32 │     const readToken = process.env.DATAHUB_READ_TOKEN ?? process.env.DATAHUB_TOKEN ?? "";
+     33  33 │     const uvxPath = process.env.UVX_PATH ?? process.env.HOME + "/.local/bin/uvx";
+     34     │ - ··const·uvCacheDir·=·process.env.UV_CACHE_DIR·??·process.env.HOME·+·"/.cache/uv";
+         34 │ + ··const·uvCacheDir·=·process.env.UV_CACHE_DIR·??·`${process.env.HOME}/.cache/uv`;
+     35  35 │   
+     36  36 │     if (readToken.length <= 8) {
+  
+
+packages/agent/src/llm/schemas.ts:13:47 lint/style/useTemplate  FIXABLE  ━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  i Template literals are preferred over string concatenation.
+  
+    11 │           .string()
+    12 │           .min(1)
+  > 13 │           .transform((s) => (s.length > 500 ? s.slice(0, 497) + "..." : s)),
+       │                                               ^^^^^^^^^^^^^^^^^^^^^^^
+    14 │         targetPath: z.string().optional(),
+    15 │       }),
+  
+  i Unsafe fix: Use a template literal.
+  
+    11 11 │             .string()
+    12 12 │             .min(1)
+    13    │ - ··········.transform((s)·=>·(s.length·>·500·?·s.slice(0,·497)·+·"..."·:·s)),
+       13 │ + ··········.transform((s)·=>·(s.length·>·500·?·`${s.slice(0,·497)}...`·:·s)),
+    14 14 │           targetPath: z.string().optional(),
+    15 15 │         }),
+  
+
+apps/web/app/api/runs/[runId]/route.ts:10:17 lint/suspicious/noExplicitAny ━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ! Unexpected any. Specify a different type.
+  
+     8 │     if (!run) return NextResponse.json({ error: "Not found" }, { status: 404 });
+     9 │     return NextResponse.json(run);
+  > 10 │   } catch (err: any) {
+       │                 ^^^
+    11 │     return NextResponse.json({ error: err.message }, { status: 500 });
+    12 │   }
+  
+  i any disables many type checking rules. Its use should be avoided.
+  
+
+apps/web/app/api/runs/route.ts:8:17 lint/suspicious/noExplicitAny ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ! Unexpected any. Specify a different type.
+  
+     6 │     const runs = await fetchRuns();
+     7 │     return NextResponse.json(runs);
+   > 8 │   } catch (err: any) {
+       │                 ^^^
+     9 │     return NextResponse.json({ error: err.message }, { status: 500 });
+    10 │   }
+  
+  i any disables many type checking rules. Its use should be avoided.
+  
+
+apps/web/app/page.tsx:12:3 lint/correctness/noUnusedImports  FIXABLE  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ! Several of these imports are unused.
+  
+    10 │   IconDatabase,
+    11 │   IconFileText,
+  > 12 │   IconGitPullRequest,
+       │   ^^^^^^^^^^^^^^^^^^^
+  > 13 │   IconLayers,
+        ...
+  > 17 │   IconShieldCheck,
+  > 18 │   IconUpload,
+       │   ^^^^^^^^^^
+    19 │   IconZap,
+    20 │ } from "@/components/ui/icons";
+  
+  i Unused imports might be the result of an incomplete refactoring.
+  
+  i Unsafe fix: Remove the unused imports.
+  
+     10  10 │     IconDatabase,
+     11  11 │     IconFileText,
+     12     │ - ··IconGitPullRequest,
+     13  12 │     IconLayers,
+     14  13 │     IconSearch,
+    ······· │ 
+     16  15 │     IconShieldAlert,
+     17  16 │     IconShieldCheck,
+     18     │ - ··IconUpload,
+     19  17 │     IconZap,
+     20  18 │   } from "@/components/ui/icons";
+  
+
+apps/worker/src/orchestration.test.ts:257:11 lint/correctness/noUnusedVariables  FIXABLE  ━━━━━━━━━━
+
+  ! This variable existingMemoryAspect is unused.
+  
+    255 │       aspect: { value: JSON.stringify({ tags: [{ tag: "urn:li:tag:team-finance" }] }) },
+    256 │     };
+  > 257 │     const existingMemoryAspect = {
+        │           ^^^^^^^^^^^^^^^^^^^^
+    258 │       aspect: {
+    259 │         value: JSON.stringify({
+  
+  i Unused variables are often the result of typos, incomplete refactors, or other sources of bugs.
+  
+  i Unsafe fix: If this is intentional, prepend existingMemoryAspect with an underscore.
+  
+    255 255 │         aspect: { value: JSON.stringify({ tags: [{ tag: "urn:li:tag:team-finance" }] }) },
+    256 256 │       };
+    257     │ - ····const·existingMemoryAspect·=·{
+        257 │ + ····const·_existingMemoryAspect·=·{
+    258 258 │         aspect: {
+    259 259 │           value: JSON.stringify({
+  
+
+apps/worker/src/orchestration.ts:61:44 lint/suspicious/noExplicitAny ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ! Unexpected any. Specify a different type.
+  
+    59 │     async collect(input: { changeId: string; request?: unknown }) {
+    60 │       try {
+  > 61 │         return await port.collect(input as any);
+       │                                            ^^^
+    62 │       } catch (err: unknown) {
+    63 │         const msg = err instanceof Error ? err.message : String(err);
+  
+  i any disables many type checking rules. Its use should be avoided.
+  
+
+apps/worker/src/orchestration.ts:227:31 lint/suspicious/noExplicitAny ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ! Unexpected any. Specify a different type.
+  
+    225 │               schemaVersion: 1,
+    226 │               purpose: "LINEAGEGUARD_EXPECTED_VALIDATION_EXECUTION",
+  > 227 │               runId: runId as any,
+        │                               ^^^
+    228 │               sandboxId,
+    229 │               worktreeId,
+  
+  i any disables many type checking rules. Its use should be avoided.
+  
+
+apps/worker/src/orchestration.ts:233:36 lint/suspicious/noExplicitAny ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ! Unexpected any. Specify a different type.
+  
+    231 │                 .update(runId + sandboxId)
+    232 │                 .digest("hex")
+  > 233 │                 .slice(0, 24)}` as any,
+        │                                    ^^^
+    234 │               workerId,
+    235 │               generation: 1,
+  
+  i any disables many type checking rules. Its use should be avoided.
+  
+
+apps/worker/src/orchestration.ts:237:35 lint/suspicious/noExplicitAny ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ! Unexpected any. Specify a different type.
+  
+    235 │               generation: 1,
+    236 │               validators: validators.map((v) => ({
+  > 237 │                 check: v.check as any,
+        │                                   ^^^
+    238 │                 commandId: v.commandId as any,
+    239 │                 implementationId: v.impl,
+  
+  i any disables many type checking rules. Its use should be avoided.
+  
+
+apps/worker/src/orchestration.ts:238:43 lint/suspicious/noExplicitAny ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ! Unexpected any. Specify a different type.
+  
+    236 │               validators: validators.map((v) => ({
+    237 │                 check: v.check as any,
+  > 238 │                 commandId: v.commandId as any,
+        │                                           ^^^
+    239 │                 implementationId: v.impl,
+    240 │                 version: v.ver,
+  
+  i any disables many type checking rules. Its use should be avoided.
+  
+
+apps/worker/src/orchestration.ts:389:31 lint/style/noNonNullAssertion  FIXABLE  ━━━━━━━━━━━━━━━━━━━━
+
+  ! Forbidden non-null assertion.
+  
+    387 │           `${apiBase}/repos/${owner}/${repo}/pulls?state=open&head=${owner}:${branchName}`,
+    388 │         )) as Array<{ html_url: string; number: number }>;
+  > 389 │         if (prs.length > 0 && prs[0]!.number > 0) {
+        │                               ^^^^^^^
+    390 │           pr = prs[0]!;
+    391 │         } else {
+  
+  i Unsafe fix: Replace with optional chain operator ?. This operator includes runtime checks, so it is safer than the compile-only non-null assertion operator
+  
+    387 387 │             `${apiBase}/repos/${owner}/${repo}/pulls?state=open&head=${owner}:${branchName}`,
+    388 388 │           )) as Array<{ html_url: string; number: number }>;
+    389     │ - ········if·(prs.length·>·0·&&·prs[0]!.number·>·0)·{
+        389 │ + ········if·(prs.length·>·0·&&·prs[0]?.number·>·0)·{
+    390 390 │             pr = prs[0]!;
+    391 391 │           } else {
+  
+
+apps/worker/src/orchestration.ts:390:16 lint/style/noNonNullAssertion ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ! Forbidden non-null assertion.
+  
+    388 │         )) as Array<{ html_url: string; number: number }>;
+    389 │         if (prs.length > 0 && prs[0]!.number > 0) {
+  > 390 │           pr = prs[0]!;
+        │                ^^^^^^^
+    391 │         } else {
+    392 │           const msg = createErr instanceof Error ? createErr.message : String(createErr);
+  
+
+apps/worker/src/source-pr-reader.ts:98:16 lint/style/noNonNullAssertion ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ! Forbidden non-null assertion.
+  
+     96 │   if (sqlPatches.length !== 1) return null;
+     97 │ 
+   > 98 │   const file = sqlPatches[0]!;
+        │                ^^^^^^^^^^^^^^
+     99 │   // GitHub API patch starts at the @@ hunk header.
+    100 │   // The domain parser expects full unified diff: diff --git, ---, +++, then hunks.
+  
+
+packages/agent/src/llm/client.ts:50:38 lint/suspicious/noExplicitAny ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ! Unexpected any. Specify a different type.
+  
+    48 │   });
+    49 │   if (!res.ok) throw new Error(`LLM call failed: ${res.status}`);
+  > 50 │   const data = (await res.json()) as any;
+       │                                      ^^^
+    51 │   return data.choices?.[0]?.message?.content ?? "";
+    52 │ }
+  
+  i any disables many type checking rules. Its use should be avoided.
+  
+
+packages/agent/src/steps/build-canonical-candidate.ts:219:29 lint/style/noNonNullAssertion ━━━━━━━━━━
+
+  ! Forbidden non-null assertion.
+  
+    217 │   const migrateEvidence = sourceEvidenceIds.slice(midpoint);
+    218 │   // CONTRACT must reference at least one evidence
+  > 219 │   const contractEvidence = [sourceEvidenceIds[0]!];
+        │                             ^^^^^^^^^^^^^^^^^^^^^
+    220 │ 
+    221 │   // Ensure all evidence is covered exactly once across steps
+  
+
+packages/agent/src/steps/build-canonical-candidate.ts:15:3 lint/correctness/noUnusedImports  FIXABLE  ━━━━━━━━━━
+
+  ! Several of these imports are unused.
+  
+    13 │   MigrationCandidate,
+    14 │   ProposedChange,
+  > 15 │   RiskAssessment,
+       │   ^^^^^^^^^^^^^^
+    16 │   RiskComparison,
+    17 │ } from "@lineageguard/domain";
+  
+  i Unused imports might be the result of an incomplete refactoring.
+  
+  i Unsafe fix: Remove the unused imports.
+  
+     13  13 │     MigrationCandidate,
+     14  14 │     ProposedChange,
+     15     │ - ··RiskAssessment,
+     16  15 │     RiskComparison,
+     17  16 │   } from "@lineageguard/domain";
+  
+
+packages/agent/src/steps/plan-migration.ts:35:23 lint/suspicious/noExplicitAny ━━━━━━━━━━━━━━━━━━━━━
+
+  ! Unexpected any. Specify a different type.
+  
+    33 │ ): Promise<PlanMigrationResult> {
+    34 │   const consumers =
+  > 35 │     (input.context as any).evidence?.map((evidence: any) => ({
+       │                       ^^^
+    36 │       name: evidence.title ?? evidence.entityName ?? "unknown",
+    37 │       type: evidence.kind,
+  
+  i any disables many type checking rules. Its use should be avoided.
+  
+
+packages/agent/src/steps/plan-migration.ts:35:53 lint/suspicious/noExplicitAny ━━━━━━━━━━━━━━━━━━━━━
+
+  ! Unexpected any. Specify a different type.
+  
+    33 │ ): Promise<PlanMigrationResult> {
+    34 │   const consumers =
+  > 35 │     (input.context as any).evidence?.map((evidence: any) => ({
+       │                                                     ^^^
+    36 │       name: evidence.title ?? evidence.entityName ?? "unknown",
+    37 │       type: evidence.kind,
+  
+  i any disables many type checking rules. Its use should be avoided.
+  
+
+The number of diagnostics exceeds the limit allowed. Use --max-diagnostics to increase it.
+Diagnostics not shown: 29.
+Checked 188 files in 114ms. No fixes applied.
+Found 46 warnings.
+Found 3 infos.
+EXIT: 0
