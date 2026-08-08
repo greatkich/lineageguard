@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { reconcileGitHubEffect } from "./github-effect-reconciler.js";
 
 const baseSha = "b".repeat(40);
+const olderBaseSha = "1".repeat(40);
 const headSha = "h".repeat(40);
 const baseTreeSha = "t".repeat(40);
 const headTreeSha = "u".repeat(40);
@@ -34,6 +35,8 @@ interface FakeOverrides {
   modeOnlyChange?: boolean;
   submoduleChange?: boolean;
   treeAncestorChanges?: boolean;
+  publicationBaseSha?: string;
+  compareResponse?: unknown;
   pullRequests?: PullRequestFixture[];
 }
 
@@ -76,6 +79,7 @@ function jsonResponse(value: unknown, status = 200): Response {
 
 function installHttpFake(overrides: FakeOverrides = {}): RecordedRequest[] {
   const requests: RecordedRequest[] = [];
+  const publicationBaseSha = overrides.publicationBaseSha ?? baseSha;
   const baseEntries = [
     { path: "README.md", mode: "100644", type: "blob", sha: "base-readme" },
     ...(overrides.missingBasePath
@@ -124,10 +128,21 @@ function installHttpFake(overrides: FakeOverrides = {}): RecordedRequest[] {
         : jsonResponse({ object: { sha: headSha } });
     }
     if (url.endsWith(`/git/commits/${headSha}`)) {
-      return jsonResponse({ parents: [{ sha: baseSha }], tree: { sha: headTreeSha } });
+      return jsonResponse({ parents: [{ sha: publicationBaseSha }], tree: { sha: headTreeSha } });
     }
-    if (url.endsWith(`/git/commits/${baseSha}`)) {
+    if (url.endsWith(`/git/commits/${publicationBaseSha}`)) {
       return jsonResponse({ tree: { sha: baseTreeSha } });
+    }
+    if (url.includes(`/compare/${publicationBaseSha}...${baseSha}`)) {
+      return jsonResponse(
+        overrides.compareResponse ?? {
+          status: publicationBaseSha === baseSha ? "identical" : "ahead",
+          ahead_by: publicationBaseSha === baseSha ? 0 : 1,
+          behind_by: 0,
+          base_commit: { sha: publicationBaseSha },
+          merge_base_commit: { sha: publicationBaseSha },
+        },
+      );
     }
     if (url.endsWith(`/git/trees/${headTreeSha}?recursive=1`)) {
       if (overrides.missingHeadTree) return jsonResponse({ truncated: false });
@@ -149,7 +164,9 @@ function installHttpFake(overrides: FakeOverrides = {}): RecordedRequest[] {
       return jsonResponse({ encoding: "base64", content: Buffer.from(content).toString("base64") });
     }
     if (url.includes("/pulls?")) {
-      return jsonResponse(overrides.pullRequests ?? [pullRequestFixture()]);
+      return jsonResponse(
+        overrides.pullRequests ?? [pullRequestFixture({ baseSha: publicationBaseSha })],
+      );
     }
     return jsonResponse({ message: `Unhandled fake request: ${url}` }, 500);
   });
@@ -181,9 +198,61 @@ describe("reconcileGitHubEffect", () => {
 
     expect(result).toMatchObject({ kind: "EXACT", receipt: { outcome: "SKIPPED_EXACT" } });
     expect(requests.filter((request) => request.method !== "GET")).toEqual([]);
+    expect(
+      requests.some((request) => request.url.includes(`/compare/${baseSha}...${baseSha}`)),
+    ).toBe(true);
     expect(requests.find((request) => request.url.includes("/pulls?"))?.url).toBe(
       `https://api.github.test/repos/owner/repo/pulls?state=open&head=owner%3A${encodeURIComponent(branchName)}&base=main&per_page=2`,
     );
+  });
+
+  it("accepts an exact publication whose base is an ancestor of advanced main", async () => {
+    const publicationBaseSha = olderBaseSha;
+    const requests = installHttpFake({ publicationBaseSha });
+
+    const result = await reconcile();
+
+    expect(result).toMatchObject({ kind: "EXACT", receipt: { baseSha: publicationBaseSha } });
+    expect(requests.filter((request) => request.method !== "GET")).toEqual([]);
+    expect(requests.some((request) => request.url.endsWith("?per_page=1&page=1"))).toBe(true);
+  });
+
+  it.each([
+    {
+      name: "diverged",
+      compareResponse: {
+        status: "diverged",
+        ahead_by: 1,
+        behind_by: 1,
+        base_commit: { sha: olderBaseSha },
+        merge_base_commit: { sha: "a".repeat(40) },
+      },
+    },
+    {
+      name: "behind",
+      compareResponse: {
+        status: "behind",
+        ahead_by: 0,
+        behind_by: 1,
+        base_commit: { sha: olderBaseSha },
+        merge_base_commit: { sha: olderBaseSha },
+      },
+    },
+    {
+      name: "unrelated",
+      compareResponse: {
+        status: "ahead",
+        ahead_by: 1,
+        behind_by: 0,
+        base_commit: { sha: olderBaseSha },
+        merge_base_commit: { sha: "a".repeat(40) },
+      },
+    },
+    { name: "malformed", compareResponse: { status: "ahead", ahead_by: "1" } },
+  ])("rejects a $name publication-base comparison", async ({ compareResponse }) => {
+    installHttpFake({ publicationBaseSha: olderBaseSha, compareResponse });
+
+    await expect(reconcile()).rejects.toThrow("publication base");
   });
 
   it("treats only a 404 ref as missing", async () => {

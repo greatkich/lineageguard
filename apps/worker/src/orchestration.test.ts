@@ -109,6 +109,15 @@ function recoveryReadResponse(state: RecoveryFakeState, url: string): Response {
       tree: { sha: "head-tree-sha" },
     });
   }
+  if (url.includes(`/compare/${state.baseSha}...${state.baseSha}`)) {
+    return jsonResponse({
+      status: "identical",
+      ahead_by: 0,
+      behind_by: 0,
+      base_commit: { sha: state.baseSha },
+      merge_base_commit: { sha: state.baseSha },
+    });
+  }
   if (url.endsWith("/git/trees/base-tree-sha?recursive=1"))
     return jsonResponse({ truncated: false, tree: [] });
   if (url.endsWith("/git/trees/head-tree-sha?recursive=1")) {

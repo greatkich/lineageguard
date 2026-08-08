@@ -37,6 +37,14 @@ interface TreeEntry {
   sha: string;
 }
 
+interface CompareResponse {
+  status?: unknown;
+  ahead_by?: unknown;
+  behind_by?: unknown;
+  base_commit?: { sha?: unknown };
+  merge_base_commit?: { sha?: unknown };
+}
+
 class GitHubReadError extends Error {
   constructor(
     readonly status: number,
@@ -83,6 +91,54 @@ async function readCommit(
   sha: string,
 ): Promise<CommitResponse> {
   return requestJson<CommitResponse>(options, `/git/commits/${sha}`);
+}
+
+function isGitSha(value: unknown): value is string {
+  return typeof value === "string" && /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(value);
+}
+
+function publicationBaseSha(commit: CommitResponse): string {
+  const parents = commit.parents;
+  if (parents?.length !== 1 || !isGitSha(parents[0]?.sha)) {
+    throw new Error("Existing GitHub commit must have exactly one valid publication base parent");
+  }
+  return parents[0].sha;
+}
+
+async function assertPublicationBaseReachable(
+  options: ReconcileGitHubEffectOptions,
+  publicationBase: string,
+): Promise<void> {
+  if (!isGitSha(options.baseSha)) throw new Error("Current target head is not a valid Git SHA");
+  const response = await requestJson<CompareResponse>(
+    options,
+    `/compare/${publicationBase}...${options.baseSha}?per_page=1&page=1`,
+  );
+  const shapeIsValid =
+    typeof response.ahead_by === "number" &&
+    Number.isSafeInteger(response.ahead_by) &&
+    typeof response.behind_by === "number" &&
+    Number.isSafeInteger(response.behind_by) &&
+    response.ahead_by >= 0 &&
+    response.behind_by >= 0 &&
+    isGitSha(response.base_commit?.sha) &&
+    response.base_commit.sha === publicationBase &&
+    isGitSha(response.merge_base_commit?.sha) &&
+    response.merge_base_commit.sha === publicationBase;
+  const identical =
+    response.status === "identical" &&
+    publicationBase === options.baseSha &&
+    response.ahead_by === 0 &&
+    response.behind_by === 0;
+  const advanced =
+    response.status === "ahead" &&
+    publicationBase !== options.baseSha &&
+    typeof response.ahead_by === "number" &&
+    response.ahead_by > 0 &&
+    response.behind_by === 0;
+  if (!shapeIsValid || (!identical && !advanced)) {
+    throw new Error("GitHub publication base is not an ancestor of the current target head");
+  }
 }
 
 async function readTree(
@@ -180,6 +236,7 @@ async function assertExactArtifactBytes(
 async function readExactDraftPullRequest(
   options: ReconcileGitHubEffectOptions,
   headSha: string,
+  publicationBase: string,
 ): Promise<{ prUrl: string; prNumber: number }> {
   const query = new URLSearchParams([
     ["state", "open"],
@@ -198,7 +255,7 @@ async function readExactDraftPullRequest(
   const repository = `${options.owner}/${options.repo}`;
   const bindingIsExact =
     pull.base?.ref === options.baseBranch &&
-    pull.base.sha === options.baseSha &&
+    pull.base.sha === publicationBase &&
     pull.base.repo?.full_name === repository &&
     pull.head?.ref === options.branchName &&
     pull.head.sha === headSha &&
@@ -218,15 +275,14 @@ export async function reconcileGitHubEffect(
   const headSha = await readHeadSha(options);
   if (headSha === undefined) return { kind: "MISSING" };
   const headCommit = await readCommit(options, headSha);
-  if (headCommit.parents?.length !== 1 || headCommit.parents[0]?.sha !== options.baseSha) {
-    throw new Error("Existing GitHub commit is not parented on the expected base");
-  }
-  const baseCommit = await readCommit(options, options.baseSha);
+  const publicationBase = publicationBaseSha(headCommit);
+  await assertPublicationBaseReachable(options, publicationBase);
+  const baseCommit = await readCommit(options, publicationBase);
   const headEntries = await readTree(options, requireTreeSha(headCommit, "Head"));
   const baseEntries = await readTree(options, requireTreeSha(baseCommit, "Base"));
   assertExactTreeDelta(baseEntries, headEntries, options.artifacts);
   await assertExactArtifactBytes(options, headEntries);
-  const pull = await readExactDraftPullRequest(options, headSha);
+  const pull = await readExactDraftPullRequest(options, headSha, publicationBase);
   const receiptFingerprint = createHash("sha256")
     .update(JSON.stringify({ prUrl: pull.prUrl, headSha }))
     .digest("hex");
@@ -236,7 +292,7 @@ export async function reconcileGitHubEffect(
       ...pull,
       headSha,
       headBranch: options.branchName,
-      baseSha: options.baseSha,
+      baseSha: publicationBase,
       receiptFingerprint,
       outcome: "SKIPPED_EXACT",
     },
