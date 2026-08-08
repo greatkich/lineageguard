@@ -438,6 +438,11 @@ export function createGitHubPort(): AgentGitHubPort | undefined {
         try {
           const recovered = await reconcileGitHubEffect(reconciliationOptions);
           if (recovered.kind !== "EXACT") throw new Error("generated branch is missing");
+          if (recovered.receipt.headSha !== commit.sha) {
+            throw new Error(
+              `recovered head ${recovered.receipt.headSha.slice(0, 12)} does not match local commit ${commit.sha.slice(0, 12)}`,
+            );
+          }
           pr = {
             html_url: recovered.receipt.prUrl,
             number: recovered.receipt.prNumber,

@@ -66,7 +66,8 @@ interface RecoveryFakeState {
   calls: Array<{ url: string; method: string }>;
   branchName: string;
   baseSha: string;
-  headSha: string;
+  localCommitSha: string;
+  remoteHeadSha: string;
   branchCreated: boolean;
 }
 
@@ -74,7 +75,7 @@ function recoveryReadResponse(state: RecoveryFakeState, url: string): Response {
   if (url.endsWith("/git/ref/heads/main")) return jsonResponse({ object: { sha: state.baseSha } });
   if (url.endsWith(`/git/ref/heads/${state.branchName}`)) {
     return state.branchCreated
-      ? jsonResponse({ object: { sha: state.headSha } })
+      ? jsonResponse({ object: { sha: state.remoteHeadSha } })
       : jsonResponse({ message: "Not Found" }, 404);
   }
   if (url.endsWith("/git/blobs/blob-sha")) {
@@ -85,7 +86,7 @@ function recoveryReadResponse(state: RecoveryFakeState, url: string): Response {
   }
   if (url.endsWith(`/git/commits/${state.baseSha}`))
     return jsonResponse({ tree: { sha: "base-tree-sha" } });
-  if (url.endsWith(`/git/commits/${state.headSha}`)) {
+  if (url.endsWith(`/git/commits/${state.remoteHeadSha}`)) {
     return jsonResponse({
       parents: [{ sha: state.baseSha }],
       tree: { sha: "head-tree-sha" },
@@ -114,7 +115,7 @@ function recoveryReadResponse(state: RecoveryFakeState, url: string): Response {
 function recoveryWriteResponse(state: RecoveryFakeState, url: string): Response {
   if (url.endsWith("/git/blobs")) return jsonResponse({ sha: "blob-sha" });
   if (url.endsWith("/git/trees")) return jsonResponse({ sha: "head-tree-sha" });
-  if (url.endsWith("/git/commits")) return jsonResponse({ sha: state.headSha });
+  if (url.endsWith("/git/commits")) return jsonResponse({ sha: state.localCommitSha });
   if (url.endsWith("/git/refs")) {
     state.branchCreated = true;
     return jsonResponse({ ref: `refs/heads/${state.branchName}` });
@@ -125,14 +126,15 @@ function recoveryWriteResponse(state: RecoveryFakeState, url: string): Response 
   throw new Error(`Unexpected fetch: POST ${url}`);
 }
 
-function installPrRecoveryFake(pulls: RecoveryPull[]) {
+function installPrRecoveryFake(options: { pulls: RecoveryPull[]; remoteHeadSha?: string }) {
   const input = reviewInput();
   const state: RecoveryFakeState = {
-    pulls,
+    pulls: options.pulls,
     calls: [],
     branchName: generatedBranchName(canonicalCandidateFingerprint(input.candidate)),
     baseSha: "a".repeat(40),
-    headSha: "c".repeat(40),
+    localCommitSha: "c".repeat(40),
+    remoteHeadSha: options.remoteHeadSha ?? "c".repeat(40),
     branchCreated: false,
   };
   vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
@@ -153,9 +155,9 @@ describe("createGitHubPort", () => {
 
   it("recovers an exact lost PR-create response without issuing a second write", async () => {
     githubEnv();
-    const { calls, input } = installPrRecoveryFake([
-      { html_url: "https://github.com/org/walkthrough/pull/7", number: 7, draft: true },
-    ]);
+    const { calls, input } = installPrRecoveryFake({
+      pulls: [{ html_url: "https://github.com/org/walkthrough/pull/7", number: 7, draft: true }],
+    });
 
     const port = createGitHubPort();
     if (!port) throw new Error("GitHub port should be configured");
@@ -165,6 +167,18 @@ describe("createGitHubPort", () => {
     expect(calls.filter((c) => c.url.endsWith("/pulls") && c.method === "POST")).toHaveLength(1);
     expect(calls.filter((call) => call.method !== "GET")).toHaveLength(5);
     expect(calls.some((call) => call.method === "PATCH")).toBe(false);
+  });
+
+  it("rejects lost-response recovery when the remote head moved from the local commit", async () => {
+    githubEnv();
+    const { input } = installPrRecoveryFake({
+      pulls: [{ html_url: "https://github.com/org/walkthrough/pull/7", number: 7, draft: true }],
+      remoteHeadSha: "d".repeat(40),
+    });
+    const port = createGitHubPort();
+    if (!port) throw new Error("GitHub port should be configured");
+
+    await expect(port.createReview(input)).rejects.toThrow(/exact recovery failed.*head/i);
   });
 
   it.each([
@@ -181,7 +195,7 @@ describe("createGitHubPort", () => {
     },
   ])("rejects $name PR-create recovery", async ({ pulls }) => {
     githubEnv();
-    const { input } = installPrRecoveryFake(pulls);
+    const { input } = installPrRecoveryFake({ pulls });
     const port = createGitHubPort();
     if (!port) throw new Error("GitHub port should be configured");
 
@@ -190,7 +204,7 @@ describe("createGitHubPort", () => {
 
   it("propagates a clear error when PR creation fails and no existing PR can be found", async () => {
     githubEnv();
-    const { input } = installPrRecoveryFake([]);
+    const { input } = installPrRecoveryFake({ pulls: [] });
 
     const port = createGitHubPort();
     if (!port) throw new Error("GitHub port should be configured");
