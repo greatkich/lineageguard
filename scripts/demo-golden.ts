@@ -10,7 +10,7 @@
  */
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { withAcceptanceCodeState } from "./acceptance-code-state.js";
+import { goldenEvidenceRoots, withAcceptanceCodeState } from "./acceptance-code-state.js";
 import {
   argValue,
   type CheckResult,
@@ -201,6 +201,7 @@ async function main(): Promise<void> {
   try {
     const guarded = await withAcceptanceCodeState({
       expectedApplicationCodeSha: selectedRun.applicationCodeSha ?? "",
+      allowedDirtyPathsAfterAction: goldenEvidenceRoots,
       action: async () => produceGoldenArtifacts(selectedRun),
     });
     results = guarded.value;

@@ -107,4 +107,24 @@ describe("captureGoldenScreenshotManifest", () => {
       }),
     ).resolves.toMatchObject({ applicationCodeSha, states: [...states] });
   });
+
+  it("tolerates only fixed golden evidence roots around nested screenshot capture", async () => {
+    const requestedAllowances: readonly (readonly string[])[] = [];
+    const mutableAllowances = requestedAllowances as (readonly string[])[];
+
+    await captureGoldenScreenshotManifest({
+      run: completedLiveRun,
+      viewport: { width: 1440, height: 900 },
+      readState: async (allowedDirtyPaths = []) => {
+        mutableAllowances.push(allowedDirtyPaths);
+        return { applicationCodeSha, porcelain: "" };
+      },
+      capture: async () => ({ capturedAt: "2026-08-08T10:00:00.000Z", states }),
+    });
+
+    expect(requestedAllowances).toEqual([
+      ["examples/canonical-run", "artifacts/demo-readiness", "artifacts/demo-runs"],
+      ["examples/canonical-run", "artifacts/demo-readiness", "artifacts/demo-runs"],
+    ]);
+  });
 });

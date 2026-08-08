@@ -15,6 +15,7 @@ import {
 import pg from "pg";
 import {
   type AcceptanceCodeStateReader,
+  goldenEvidenceRoots,
   withAcceptanceCodeState,
 } from "./acceptance-code-state.js";
 
@@ -221,6 +222,8 @@ export async function exportEvidenceWithCodeState<T>(options: {
 }): Promise<T> {
   const guarded = await withAcceptanceCodeState({
     expectedApplicationCodeSha: options.applicationCodeSha,
+    allowedDirtyPathsAtStart: goldenEvidenceRoots,
+    allowedDirtyPathsAfterAction: goldenEvidenceRoots,
     ...(options.readState ? { readState: options.readState } : {}),
     action: async (accepted) => options.writeEvidence(accepted.applicationCodeSha),
   });

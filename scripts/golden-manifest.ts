@@ -1,5 +1,6 @@
 import {
   type AcceptanceCodeStateReader,
+  goldenEvidenceRoots,
   withAcceptanceCodeState,
 } from "./acceptance-code-state.js";
 
@@ -85,6 +86,8 @@ export async function captureGoldenScreenshotManifest(
 ): Promise<GoldenScreenshotManifest> {
   const guarded = await withAcceptanceCodeState({
     expectedApplicationCodeSha: input.run.applicationCodeSha,
+    allowedDirtyPathsAtStart: goldenEvidenceRoots,
+    allowedDirtyPathsAfterAction: goldenEvidenceRoots,
     ...(input.readState ? { readState: input.readState } : {}),
     action: async () => input.capture(),
   });
