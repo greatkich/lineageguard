@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { buildGoldenScreenshotManifest } from "../scripts/golden-manifest.js";
+import {
+  buildGoldenScreenshotManifest,
+  captureGoldenScreenshotManifest,
+} from "../scripts/golden-manifest.js";
 
 const applicationCodeSha = "0123456789abcdef0123456789abcdef01234567";
 const states = [
@@ -65,5 +68,43 @@ describe("buildGoldenScreenshotManifest", () => {
         states: outOfOrder,
       }),
     ).toThrowError(/canonical ordered eight states/);
+  });
+});
+
+describe("captureGoldenScreenshotManifest", () => {
+  it("rejects when code changes during screenshot capture", async () => {
+    const observed = [
+      { applicationCodeSha, porcelain: "" },
+      {
+        applicationCodeSha: "89abcdef0123456789abcdef0123456789abcdef",
+        porcelain: "",
+      },
+    ];
+
+    await expect(
+      captureGoldenScreenshotManifest({
+        run: completedLiveRun,
+        viewport: { width: 1440, height: 900 },
+        readState: async () => observed.shift() as (typeof observed)[number],
+        capture: async () => ({
+          capturedAt: "2026-08-08T10:00:00.000Z",
+          states,
+        }),
+      }),
+    ).rejects.toThrowError(/changed/);
+  });
+
+  it("binds capture output to the observed clean matching checkout", async () => {
+    await expect(
+      captureGoldenScreenshotManifest({
+        run: completedLiveRun,
+        viewport: { width: 1440, height: 900 },
+        readState: async () => ({ applicationCodeSha, porcelain: "" }),
+        capture: async () => ({
+          capturedAt: "2026-08-08T10:00:00.000Z",
+          states,
+        }),
+      }),
+    ).resolves.toMatchObject({ applicationCodeSha, states: [...states] });
   });
 });

@@ -1,9 +1,9 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { createSimpleRunStore, type SimpleRun } from "@lineageguard/db";
-import { expect, test } from "@playwright/test";
+import { expect, type Page, test } from "@playwright/test";
 import pg from "pg";
 import {
-  buildGoldenScreenshotManifest,
+  captureGoldenScreenshotManifest,
   canonicalGoldenStates,
 } from "../../scripts/golden-manifest.js";
 
@@ -27,6 +27,54 @@ const outputDir =
 
 /** The eight states the recording script needs, in narrative order. */
 const requiredStates = canonicalGoldenStates;
+type GoldenState = (typeof requiredStates)[number];
+
+async function shootPage(page: Page, state: GoldenState, captured: string[]): Promise<void> {
+  await page.screenshot({ path: `${outputDir}/${state}.png`, fullPage: true });
+  captured.push(state);
+}
+
+async function shootElement(
+  page: Page,
+  state: GoldenState,
+  testId: string,
+  captured: string[],
+): Promise<void> {
+  const target = page.getByTestId(testId);
+  await target.scrollIntoViewIfNeeded();
+  await target.screenshot({ path: `${outputDir}/${state}.png` });
+  captured.push(state);
+}
+
+async function captureRiskStates(page: Page, captured: string[]): Promise<void> {
+  await page.goto("/");
+  await expect(page.locator(`a[href="/runs/${goldenRunId}"]`)).toBeVisible();
+  await page.goto(`/runs/${goldenRunId}`);
+  await expect(page.getByTestId("baseline-assessment")).toContainText("Repository-only");
+  await shootPage(page, "01-baseline-allow", captured);
+  await expect(page.getByTestId("downstream-consumer-count")).toHaveText("4");
+  await expect(page.getByTestId("downstream-consumer")).toHaveCount(4);
+  await shootElement(page, "02-datahub-consumers", "downstream-consumers", captured);
+  const transition = page.getByTestId("decision-transition");
+  await expect(transition).toContainText("ALLOW");
+  await expect(transition).toContainText("BLOCK");
+  await shootElement(page, "03-allow-to-block", "decision-transition", captured);
+  await expect(page.getByTestId("migration-strategy")).toContainText("Expand");
+  await shootElement(page, "04-uuid-migration", "migration-strategy", captured);
+}
+
+async function captureOutcomeStates(page: Page, run: SimpleRun, captured: string[]): Promise<void> {
+  await expect(page.getByTestId("validation-status")).toContainText("PASS");
+  await shootElement(page, "05-validation-pass", "validation-status", captured);
+  const prLink = page.getByTestId("generated-pr-link");
+  await expect(prLink).toBeVisible();
+  await expect(prLink).toHaveAttribute("href", run.prUrl ?? "");
+  await shootElement(page, "06-generated-pr", "generated-pr-link", captured);
+  await expect(page.getByTestId("datahub-writeback")).toContainText("SUCCEEDED");
+  await shootElement(page, "07-datahub-writeback", "datahub-writeback", captured);
+  await expect(page.getByTestId("run-summary-banner")).toContainText("Breaking change prevented");
+  await shootPage(page, "08-completed-summary", captured);
+}
 
 /**
  * Only runs when a golden run id is supplied, which `pnpm demo:golden` always does. A bare
@@ -82,85 +130,17 @@ describeGolden("Golden recording (LIVE run)", () => {
   });
 
   test("captures the eight recording states from the live run at 1440x900", async ({ page }) => {
-    const captured: string[] = [];
-    /**
-     * Full-page frames bookend the narrative; the six middle states clip to the element that
-     * carries the claim. Screenshotting the whole page eight times produced eight near-identical
-     * images, which is not evidence of eight states.
-     */
-    const shootPage = async (state: (typeof requiredStates)[number]): Promise<void> => {
-      await page.screenshot({ path: `${outputDir}/${state}.png`, fullPage: true });
-      captured.push(state);
-    };
-    const shootElement = async (
-      state: (typeof requiredStates)[number],
-      testId: string,
-    ): Promise<void> => {
-      const target = page.getByTestId(testId);
-      await target.scrollIntoViewIfNeeded();
-      await target.screenshot({ path: `${outputDir}/${state}.png` });
-      captured.push(state);
-    };
-
-    // The dashboard must list this exact live run before anything else is claimed.
-    await page.goto("/");
-    await expect(page.locator(`a[href="/runs/${goldenRunId}"]`)).toBeVisible();
-
-    await page.goto(`/runs/${goldenRunId}`);
-
-    // 1. Baseline ALLOW — the repository-only assessment, in the context of the whole workspace.
-    await expect(page.getByTestId("baseline-assessment")).toContainText("Repository-only");
-    await shootPage("01-baseline-allow");
-
-    // 2. Four DataHub downstream consumers.
-    await expect(page.getByTestId("downstream-consumer-count")).toHaveText("4");
-    await expect(page.getByTestId("downstream-consumer")).toHaveCount(4);
-    await shootElement("02-datahub-consumers", "downstream-consumers");
-
-    // 3. ALLOW → BLOCK.
-    const transition = page.getByTestId("decision-transition");
-    await expect(transition).toContainText("ALLOW");
-    await expect(transition).toContainText("BLOCK");
-    await shootElement("03-allow-to-block", "decision-transition");
-
-    // 4. UUID-safe expand–migrate–contract migration.
-    await expect(page.getByTestId("migration-strategy")).toContainText("Expand");
-    await shootElement("04-uuid-migration", "migration-strategy");
-
-    // 5. Validation PASS.
-    await expect(page.getByTestId("validation-status")).toContainText("PASS");
-    await shootElement("05-validation-pass", "validation-status");
-
-    // 6. The generated pull request.
-    const prLink = page.getByTestId("generated-pr-link");
-    await expect(prLink).toBeVisible();
-    await expect(prLink).toHaveAttribute("href", run.prUrl ?? "");
-    await shootElement("06-generated-pr", "generated-pr-link");
-
-    // 7. DataHub write-back.
-    await expect(page.getByTestId("datahub-writeback")).toContainText("SUCCEEDED");
-    await shootElement("07-datahub-writeback", "datahub-writeback");
-
-    // 8. Final COMPLETED summary, again in full-page context to close the narrative.
-    await expect(page.getByTestId("run-summary-banner")).toContainText("Breaking change prevented");
-    await shootPage("08-completed-summary");
-
-    expect(captured).toEqual([...requiredStates]);
-
-    // The manifest binds the screenshots to the run and code they came from, so evidence can never
-    // be re-attributed to a different execution later.
-    writeFileSync(
-      `${outputDir}/manifest.json`,
-      `${JSON.stringify(
-        buildGoldenScreenshotManifest({
-          run: { ...run, applicationCodeSha: run.applicationCodeSha ?? "" },
-          capturedAt: new Date().toISOString(),
-          viewport: { width: 1440, height: 900 },
-          states: captured,
-        }),
-        null,
-        2,
-      )}\n`,
-    );
+    const manifest = await captureGoldenScreenshotManifest({
+      run: { ...run, applicationCodeSha: run.applicationCodeSha ?? "" },
+      viewport: { width: 1440, height: 900 },
+      capture: async () => {
+        const captured: string[] = [];
+        await captureRiskStates(page, captured);
+        await captureOutcomeStates(page, run, captured);
+        expect(captured).toEqual([...requiredStates]);
+        return { capturedAt: new Date().toISOString(), states: captured };
+      },
+    });
+    writeFileSync(`${outputDir}/manifest.json`, `${JSON.stringify(manifest, null, 2)}\n`);
   });
 });

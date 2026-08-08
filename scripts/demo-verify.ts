@@ -42,7 +42,7 @@ import {
 import {
   assertAcceptanceCodeState,
   type AcceptanceCodeState,
-  readAcceptanceCodeState,
+  withAcceptanceCodeState,
 } from "./acceptance-code-state.js";
 import {
   argValue,
@@ -663,35 +663,39 @@ async function main(): Promise<void> {
     return;
   }
 
-  let currentCodeState: AcceptanceCodeState;
+  const requested = argValue("--runId");
+  const runRecord = await withRunStore(async (store) =>
+    requested ? store.get(requested) : latestLiveRun(store),
+  );
+  if (!runRecord) {
+    console.error(requested ? `run ${requested} not found` : "no LIVE runs recorded");
+    console.log("\nverify: FAIL\n");
+    process.exitCode = 1;
+    return;
+  }
+  console.log(`verifying run ${runRecord.id}`);
+  let results: CheckResult[];
   try {
-    currentCodeState = await readAcceptanceCodeState();
+    const guarded = await withAcceptanceCodeState({
+      expectedApplicationCodeSha: runRecord.applicationCodeSha ?? "",
+      action: async (accepted) => [
+        verifyApplicationCode(runRecord, accepted),
+        ...verifyDecisions(runRecord),
+        ...(await verifySource(runRecord)),
+        ...verifyConsumers(runRecord),
+        ...verifyValidation(runRecord),
+        ...(await verifyGitHub(runRecord)),
+        ...(await verifyDataHub(runRecord)),
+      ],
+    });
+    results = guarded.value;
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
     console.log("\nverify: FAIL\n");
     process.exitCode = 1;
     return;
   }
-
-  const requested = argValue("--runId");
-  const ok = await withRunStore(async (store) => {
-    const runRecord = requested ? await store.get(requested) : await latestLiveRun(store);
-    if (!runRecord) {
-      console.error(requested ? `run ${requested} not found` : "no LIVE runs recorded");
-      return false;
-    }
-    console.log(`verifying run ${runRecord.id}`);
-    const results = [
-      verifyApplicationCode(runRecord, currentCodeState),
-      ...verifyDecisions(runRecord),
-      ...(await verifySource(runRecord)),
-      ...verifyConsumers(runRecord),
-      ...verifyValidation(runRecord),
-      ...(await verifyGitHub(runRecord)),
-      ...(await verifyDataHub(runRecord)),
-    ];
-    return reportMatrix(`demo:verify ${runRecord.id}`, results);
-  });
+  const ok = reportMatrix(`demo:verify ${runRecord.id}`, results);
 
   console.log(ok ? "\nverify: PASS\n" : "\nverify: FAIL\n");
   process.exitCode = ok ? 0 : 1;

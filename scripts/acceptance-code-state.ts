@@ -11,6 +11,14 @@ export type AcceptanceGitExecutor = (
   args: readonly string[],
 ) => Promise<string>;
 
+export type AcceptanceCodeStateReader = () => Promise<AcceptanceCodeState>;
+
+export interface AcceptanceCodeStateOperation<T> {
+  expectedApplicationCodeSha?: string;
+  readState?: AcceptanceCodeStateReader;
+  action: (accepted: AcceptanceCodeState) => Promise<T>;
+}
+
 export type AcceptanceCodeStateErrorCode =
   | "GIT_UNAVAILABLE"
   | "INVALID_HEAD"
@@ -82,4 +90,22 @@ export function assertAcceptanceCodeState(
       `ACCEPTANCE_CODE_SHA_CHANGED: code changed from ${expected.applicationCodeSha} to ${observed.applicationCodeSha}`,
     );
   }
+}
+
+export async function withAcceptanceCodeState<T>(
+  options: AcceptanceCodeStateOperation<T>,
+): Promise<{ accepted: AcceptanceCodeState; value: T }> {
+  const readState = options.readState ?? readAcceptanceCodeState;
+  const accepted = await readState();
+  if (options.expectedApplicationCodeSha !== undefined) {
+    assertAcceptanceCodeState(
+      { applicationCodeSha: options.expectedApplicationCodeSha, porcelain: "" },
+      accepted,
+    );
+  } else {
+    assertAcceptanceCodeState(accepted, accepted);
+  }
+  const value = await options.action(accepted);
+  assertAcceptanceCodeState(accepted, await readState());
+  return { accepted, value };
 }

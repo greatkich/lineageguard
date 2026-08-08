@@ -10,6 +10,7 @@
  */
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { withAcceptanceCodeState } from "./acceptance-code-state.js";
 import {
   argValue,
   type CheckResult,
@@ -72,9 +73,7 @@ async function gate(name: string, action: () => Promise<void>): Promise<CheckRes
   }
 }
 
-/** Asserts the recording produced exactly the required states, each a non-empty PNG. */
-function verifyScreenshots(runId: string, applicationCodeSha: string | null): CheckResult[] {
-  const results: CheckResult[] = [];
+function verifyScreenshotFiles(): CheckResult {
   const missing: string[] = [];
   const empty: string[] = [];
   for (const state of requiredStates) {
@@ -85,19 +84,18 @@ function verifyScreenshots(runId: string, applicationCodeSha: string | null): Ch
     }
     if (statSync(path).size === 0) empty.push(state);
   }
-  results.push(
-    missing.length === 0 && empty.length === 0
-      ? pass("recording screenshots", `all ${String(requiredStates.length)} LIVE states captured`)
-      : fail(
-          "recording screenshots",
-          missing.length > 0 ? `missing: ${missing.join(", ")}` : `empty: ${empty.join(", ")}`,
-        ),
-  );
+  return missing.length === 0 && empty.length === 0
+    ? pass("recording screenshots", `all ${String(requiredStates.length)} LIVE states captured`)
+    : fail(
+        "recording screenshots",
+        missing.length > 0 ? `missing: ${missing.join(", ")}` : `empty: ${empty.join(", ")}`,
+      );
+}
 
+function verifyScreenshotManifest(runId: string, applicationCodeSha: string | null): CheckResult {
   const manifestPath = join(screenshotDir, "manifest.json");
   if (!existsSync(manifestPath)) {
-    results.push(fail("recording manifest", "manifest.json was not written"));
-    return results;
+    return fail("recording manifest", "manifest.json was not written");
   }
   try {
     const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as {
@@ -110,25 +108,67 @@ function verifyScreenshots(runId: string, applicationCodeSha: string | null): Ch
       Array.isArray(manifest.states) &&
       manifest.states.length === requiredStates.length &&
       requiredStates.every((state, index) => manifest.states?.[index] === state);
-    results.push(
-      manifest.runId === runId &&
-        manifest.applicationCodeSha === applicationCodeSha &&
-        manifest.executionMode === "LIVE" &&
-        statesMatch
-        ? pass(
-            "recording manifest",
-            `binds ${String(requiredStates.length)} states to ${runId} at ${String(applicationCodeSha)}`,
-          )
-        : fail(
-            "recording manifest",
-            `manifest names run ${String(manifest.runId)} at ${String(manifest.applicationCodeSha)} (${String(manifest.executionMode)}) with ${String(manifest.states?.length)} states`,
-          ),
-    );
+    return manifest.runId === runId &&
+      manifest.applicationCodeSha === applicationCodeSha &&
+      manifest.executionMode === "LIVE" &&
+      statesMatch
+      ? pass(
+          "recording manifest",
+          `binds ${String(requiredStates.length)} states to ${runId} at ${String(applicationCodeSha)}`,
+        )
+      : fail(
+          "recording manifest",
+          `manifest names run ${String(manifest.runId)} at ${String(manifest.applicationCodeSha)} (${String(manifest.executionMode)}) with ${String(manifest.states?.length)} states`,
+        );
   } catch (error) {
-    results.push(
-      fail("recording manifest", error instanceof Error ? error.message : String(error)),
-    );
+    return fail("recording manifest", error instanceof Error ? error.message : String(error));
   }
+}
+
+/** Asserts the recording produced exactly the required states, each a non-empty PNG. */
+function verifyScreenshots(runId: string, applicationCodeSha: string | null): CheckResult[] {
+  return [verifyScreenshotFiles(), verifyScreenshotManifest(runId, applicationCodeSha)];
+}
+
+async function writeGoldenRunSnapshot(runId: string, artifactsDir: string): Promise<void> {
+  const summary = await withRunStore(async (store) => store.get(runId));
+  if (!summary) throw new Error(`run ${runId} disappeared from the store`);
+  writeFileSync(
+    join(artifactsDir, "golden-run.json"),
+    `${JSON.stringify({ runId, capturedAt: new Date().toISOString(), run: summary }, null, 2)}\n`,
+  );
+}
+
+async function produceGoldenArtifacts(selectedRun: {
+  id: string;
+  applicationCodeSha: string | null;
+}): Promise<CheckResult[]> {
+  const artifactsDir = join(process.cwd(), "artifacts/demo-runs", selectedRun.id);
+  mkdirSync(artifactsDir, { recursive: true });
+  mkdirSync(screenshotDir, { recursive: true });
+  const results: CheckResult[] = [];
+  results.push(
+    await gate("independent verification", async () => {
+      await run("pnpm", ["demo:verify", "--runId", selectedRun.id], {
+        maxBuffer: 16 * 1024 * 1024,
+      });
+    }),
+    await gate("evidence export", async () => {
+      await run("pnpm", ["export-evidence", selectedRun.id], { maxBuffer: 16 * 1024 * 1024 });
+    }),
+    await gate("live recording capture", async () => {
+      await run("npx", ["playwright", "test", "tests/e2e/golden-recording.spec.ts"], {
+        maxBuffer: 16 * 1024 * 1024,
+        env: { ...process.env, LINEAGEGUARD_GOLDEN_RUN_ID: selectedRun.id },
+      });
+    }),
+  );
+  results.push(...verifyScreenshots(selectedRun.id, selectedRun.applicationCodeSha));
+  results.push(
+    await gate("golden run snapshot", async () => {
+      await writeGoldenRunSnapshot(selectedRun.id, artifactsDir);
+    }),
+  );
   return results;
 }
 
@@ -157,44 +197,19 @@ async function main(): Promise<void> {
 
   console.log(`golden run: ${runId}\n`);
   const artifactsDir = join(process.cwd(), "artifacts/demo-runs", runId);
-  mkdirSync(artifactsDir, { recursive: true });
-  mkdirSync(screenshotDir, { recursive: true });
-
-  const results: CheckResult[] = [];
-
-  results.push(
-    await gate("independent verification", async () => {
-      await run("pnpm", ["demo:verify", "--runId", runId], { maxBuffer: 16 * 1024 * 1024 });
-    }),
-  );
-
-  results.push(
-    await gate("evidence export", async () => {
-      await run("pnpm", ["export-evidence", runId], { maxBuffer: 16 * 1024 * 1024 });
-    }),
-  );
-
-  results.push(
-    await gate("live recording capture", async () => {
-      await run("npx", ["playwright", "test", "tests/e2e/golden-recording.spec.ts"], {
-        maxBuffer: 16 * 1024 * 1024,
-        env: { ...process.env, LINEAGEGUARD_GOLDEN_RUN_ID: runId },
-      });
-    }),
-  );
-
-  results.push(...verifyScreenshots(runId, selectedRun.applicationCodeSha));
-
-  results.push(
-    await gate("golden run snapshot", async () => {
-      const summary = await withRunStore(async (store) => store.get(runId));
-      if (!summary) throw new Error(`run ${runId} disappeared from the store`);
-      writeFileSync(
-        join(artifactsDir, "golden-run.json"),
-        `${JSON.stringify({ runId, capturedAt: new Date().toISOString(), run: summary }, null, 2)}\n`,
-      );
-    }),
-  );
+  let results: CheckResult[];
+  try {
+    const guarded = await withAcceptanceCodeState({
+      expectedApplicationCodeSha: selectedRun.applicationCodeSha ?? "",
+      action: async () => produceGoldenArtifacts(selectedRun),
+    });
+    results = guarded.value;
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    console.log("\ngolden: FAILED\n");
+    process.exitCode = 1;
+    return;
+  }
 
   const ok = reportMatrix(`demo:golden ${runId}`, results);
 

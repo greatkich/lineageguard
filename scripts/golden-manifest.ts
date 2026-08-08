@@ -1,3 +1,8 @@
+import {
+  type AcceptanceCodeStateReader,
+  withAcceptanceCodeState,
+} from "./acceptance-code-state.js";
+
 export const canonicalGoldenStates = [
   "01-baseline-allow",
   "02-datahub-consumers",
@@ -35,6 +40,13 @@ export interface GoldenScreenshotManifest {
   states: string[];
 }
 
+export interface GoldenScreenshotCaptureInput {
+  run: GoldenScreenshotRun;
+  viewport: Readonly<{ width: number; height: number }>;
+  readState?: AcceptanceCodeStateReader;
+  capture: () => Promise<{ capturedAt: string; states: readonly string[] }>;
+}
+
 function hasCanonicalStates(states: readonly string[]): boolean {
   return (
     states.length === canonicalGoldenStates.length &&
@@ -66,4 +78,20 @@ export function buildGoldenScreenshotManifest(
     viewport: { ...input.viewport },
     states: [...input.states],
   };
+}
+
+export async function captureGoldenScreenshotManifest(
+  input: GoldenScreenshotCaptureInput,
+): Promise<GoldenScreenshotManifest> {
+  const guarded = await withAcceptanceCodeState({
+    expectedApplicationCodeSha: input.run.applicationCodeSha,
+    ...(input.readState ? { readState: input.readState } : {}),
+    action: async () => input.capture(),
+  });
+  return buildGoldenScreenshotManifest({
+    run: { ...input.run, applicationCodeSha: guarded.accepted.applicationCodeSha },
+    capturedAt: guarded.value.capturedAt,
+    viewport: input.viewport,
+    states: guarded.value.states,
+  });
 }

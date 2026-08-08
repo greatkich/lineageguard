@@ -25,6 +25,7 @@ import {
   assertAcceptanceCodeState,
   type AcceptanceCodeState,
   readAcceptanceCodeState,
+  withAcceptanceCodeState,
 } from "./acceptance-code-state.js";
 import {
   argValue,
@@ -346,6 +347,65 @@ async function verifySandboxHygiene(
   return results;
 }
 
+async function runAcceptedRepetitions(count: number): Promise<{
+  accepted: AcceptanceCodeState;
+  dataHubDecision: string;
+  outcomes: RunOutcome[];
+  results: CheckResult[];
+}> {
+  const guarded = await withAcceptanceCodeState({
+    action: async (accepted) => {
+      const containersBefore = await listValidatorContainers();
+      const worktreesBefore = await listValidationWorktrees();
+      if (!containersBefore.ok || !worktreesBefore.ok) {
+        const reason = !containersBefore.ok
+          ? containersBefore.reason
+          : !worktreesBefore.ok
+            ? worktreesBefore.reason
+            : "unknown";
+        throw new Error(`cannot establish a sandbox baseline: ${reason}`);
+      }
+      const outcomes: RunOutcome[] = [];
+      for (let index = 1; index <= count; index += 1) {
+        outcomes.push(await executeOnce(index, accepted));
+      }
+      const results = [
+        ...summarise(outcomes),
+        ...(await verifyConvergedDecision(outcomes)),
+        ...(await verifySandboxHygiene(containersBefore.value, worktreesBefore.value)),
+      ];
+      const state = await readDataHubDecisionState();
+      const dataHubDecision = state.ok
+        ? state.value.markers.join(", ") || "none"
+        : `uninspectable (${state.reason})`;
+      return { accepted, dataHubDecision, outcomes, results };
+    },
+  });
+  return guarded.value;
+}
+
+function printStableIdentities(
+  outcomes: readonly RunOutcome[],
+  accepted: AcceptanceCodeState,
+  dataHubDecision: string,
+): void {
+  console.log("\nstable identities");
+  const prUrls = [...new Set(outcomes.map((outcome) => outcome.prUrl).filter(Boolean))];
+  const candidates = [
+    ...new Set(outcomes.map((outcome) => outcome.candidateFingerprint).filter(Boolean)),
+  ];
+  const headShas = [...new Set(outcomes.map((outcome) => outcome.githubHeadSha).filter(Boolean))];
+  console.log(`  run ids:              ${outcomes.map((outcome) => outcome.runId).join(", ")}`);
+  console.log(`  accepted code sha:    ${accepted.applicationCodeSha}`);
+  console.log(`  candidate identity:   ${candidates.join(", ") || "none"}`);
+  console.log(`  generated pr:         ${prUrls.join(", ") || "none"}`);
+  console.log(`  generated head sha:   ${headShas.join(", ") || "none"}`);
+  console.log(
+    `  github outcomes:      ${outcomes.map((outcome) => outcome.githubEffectOutcome ?? "missing").join(", ")}`,
+  );
+  console.log(`  datahub decision:     ${dataHubDecision}`);
+}
+
 async function main(): Promise<void> {
   if (wantsHelp()) {
     printUsage("demo:repeat -- --count 3", [
@@ -363,65 +423,26 @@ async function main(): Promise<void> {
     return;
   }
 
-  const acceptedCodeState = await readAcceptanceCodeState();
-
-  // A pre-run inspection that fails is fatal: without a baseline we cannot claim zero leaks.
-  const containersBefore = await listValidatorContainers();
-  const worktreesBefore = await listValidationWorktrees();
-  if (!containersBefore.ok || !worktreesBefore.ok) {
-    const reason = !containersBefore.ok
-      ? containersBefore.reason
-      : !worktreesBefore.ok
-        ? worktreesBefore.reason
-        : "unknown";
-    console.error(`cannot establish a sandbox baseline: ${reason}`);
+  let acceptedRun: Awaited<ReturnType<typeof runAcceptedRepetitions>>;
+  try {
+    acceptedRun = await runAcceptedRepetitions(count);
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
     console.log("\nrepeat: FAIL\n");
     process.exitCode = 1;
     return;
   }
 
-  const outcomes: RunOutcome[] = [];
-  for (let index = 1; index <= count; index += 1) {
-    outcomes.push(await executeOnce(index, acceptedCodeState));
-  }
-  assertAcceptanceCodeState(acceptedCodeState, await readAcceptanceCodeState());
-
-  const results = [
-    ...summarise(outcomes),
-    ...(await verifyConvergedDecision(outcomes)),
-    ...(await verifySandboxHygiene(containersBefore.value, worktreesBefore.value)),
-  ];
-
   console.log("");
-  for (const outcome of outcomes) {
+  for (const outcome of acceptedRun.outcomes) {
     console.log(
       `  run ${String(outcome.index)}: ${outcome.runId} → ${outcome.status}` +
         ` (GitHub ${outcome.githubEffectOutcome ?? "missing"}; candidate ${outcome.candidateFingerprint?.slice(0, 12) ?? "none"})`,
     );
   }
 
-  const ok = reportMatrix(`demo:repeat ×${String(count)}`, results);
-
-  console.log("\nstable identities");
-  const prUrls = [...new Set(outcomes.map((outcome) => outcome.prUrl).filter(Boolean))];
-  const candidates = [
-    ...new Set(outcomes.map((outcome) => outcome.candidateFingerprint).filter(Boolean)),
-  ];
-  const headShas = [...new Set(outcomes.map((outcome) => outcome.githubHeadSha).filter(Boolean))];
-  console.log(`  run ids:              ${outcomes.map((outcome) => outcome.runId).join(", ")}`);
-  console.log(`  accepted code sha:    ${acceptedCodeState.applicationCodeSha}`);
-  console.log(`  candidate identity:   ${candidates.join(", ") || "none"}`);
-  console.log(`  generated pr:         ${prUrls.join(", ") || "none"}`);
-  console.log(`  generated head sha:   ${headShas.join(", ") || "none"}`);
-  console.log(
-    `  github outcomes:      ${outcomes.map((outcome) => outcome.githubEffectOutcome ?? "missing").join(", ")}`,
-  );
-  const state = await readDataHubDecisionState();
-  console.log(
-    `  datahub decision:     ${
-      state.ok ? state.value.markers.join(", ") || "none" : `uninspectable (${state.reason})`
-    }`,
-  );
+  const ok = reportMatrix(`demo:repeat ×${String(count)}`, acceptedRun.results);
+  printStableIdentities(acceptedRun.outcomes, acceptedRun.accepted, acceptedRun.dataHubDecision);
 
   console.log(ok ? "\nrepeat: PASS\n" : "\nrepeat: FAIL\n");
   process.exitCode = ok ? 0 : 1;
