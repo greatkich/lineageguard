@@ -2,6 +2,8 @@ import type pg from "pg";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
+type GitHubEffectOutcome = "CREATED" | "UPDATED" | "SKIPPED_EXACT";
+
 export interface SimpleRun {
   id: string;
   status: string;
@@ -18,6 +20,7 @@ export interface SimpleRun {
   writebackStatus: string | null;
   validationReceiptFingerprint: string | null;
   githubReceiptFingerprint: string | null;
+  githubEffectOutcome: GitHubEffectOutcome | null;
   writebackReceiptFingerprint: string | null;
   contextJson: unknown | null;
   candidateJson: unknown | null;
@@ -59,6 +62,7 @@ export interface SimpleRunUpdateExtra {
   writebackStatus: string;
   validationReceiptFingerprint: string;
   githubReceiptFingerprint: string;
+  githubEffectOutcome: GitHubEffectOutcome;
   writebackReceiptFingerprint: string;
   contextJson: unknown;
   candidateJson: unknown;
@@ -116,6 +120,7 @@ function mapRow(row: Record<string, unknown>): SimpleRun {
     writebackStatus: (row.writeback_status as string) ?? null,
     validationReceiptFingerprint: (row.validation_receipt_fingerprint as string) ?? null,
     githubReceiptFingerprint: (row.github_receipt_fingerprint as string) ?? null,
+    githubEffectOutcome: (row.github_effect_outcome as GitHubEffectOutcome) ?? null,
     writebackReceiptFingerprint: (row.writeback_receipt_fingerprint as string) ?? null,
     contextJson: (row.context_json as unknown) ?? null,
     candidateJson: (row.candidate_json as unknown) ?? null,
@@ -159,6 +164,7 @@ export function createSimpleRunStore(pool: pg.Pool): SimpleRunStore {
           writeback_status TEXT,
           validation_receipt_fingerprint TEXT,
           github_receipt_fingerprint TEXT,
+          github_effect_outcome TEXT,
           writeback_receipt_fingerprint TEXT,
           context_json JSONB,
           candidate_json JSONB,
@@ -187,6 +193,7 @@ export function createSimpleRunStore(pool: pg.Pool): SimpleRunStore {
         "evidence_items INTEGER DEFAULT 0",
         "validation_receipt_fingerprint TEXT",
         "github_receipt_fingerprint TEXT",
+        "github_effect_outcome TEXT",
         "writeback_receipt_fingerprint TEXT",
         "context_json JSONB",
         "candidate_json JSONB",
@@ -277,6 +284,10 @@ export function createSimpleRunStore(pool: pg.Pool): SimpleRunStore {
       if (extra?.githubReceiptFingerprint !== undefined) {
         sets.push(`github_receipt_fingerprint = $${idx++}`);
         values.push(extra.githubReceiptFingerprint);
+      }
+      if (extra?.githubEffectOutcome !== undefined) {
+        sets.push(`github_effect_outcome = $${idx++}`);
+        values.push(extra.githubEffectOutcome);
       }
       if (extra?.writebackReceiptFingerprint !== undefined) {
         sets.push(`writeback_receipt_fingerprint = $${idx++}`);

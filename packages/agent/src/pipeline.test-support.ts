@@ -438,6 +438,7 @@ export function canonicalPipelineConfig() {
         headSha: "c".repeat(40),
         headBranch: "lineageguard/buyer-id-migration",
         receiptFingerprint: "sha256:gh-receipt",
+        outcome: "CREATED" as const,
       }),
     },
     writeback: {

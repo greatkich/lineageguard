@@ -53,6 +53,7 @@ type RunOutcome = Readonly<{
   validationCheckCount: number | null;
   validationAllPass: boolean | null;
   githubHeadSha: string | null;
+  githubEffectOutcome: string | null;
 }>;
 
 async function executeOnce(index: number): Promise<RunOutcome> {
@@ -93,6 +94,7 @@ async function executeOnce(index: number): Promise<RunOutcome> {
       validationCheckCount: Array.isArray(receipt?.checks) ? receipt.checks.length : null,
       validationAllPass: typeof receipt?.allPass === "boolean" ? receipt.allPass : null,
       githubHeadSha: latest.githubHeadSha,
+      githubEffectOutcome: latest.githubEffectOutcome,
     };
   });
 }
@@ -140,6 +142,16 @@ function summarise(outcomes: readonly RunOutcome[]): CheckResult[] {
       (outcome) => outcome.applicationCodeSha,
       (value) => `identical across runs (${value.slice(0, 12)})`,
     ),
+  );
+
+  const githubOutcomes = outcomes.map((outcome) => outcome.githubEffectOutcome);
+  results.push(
+    githubOutcomes.every((outcome) => outcome === "SKIPPED_EXACT")
+      ? pass(
+          "github effect outcome",
+          `${String(githubOutcomes.length)} SKIPPED_EXACT outcomes persisted`,
+        )
+      : fail("github effect outcome", `observed ${githubOutcomes.map(String).join(", ")}`),
   );
 
   results.push(
@@ -362,7 +374,7 @@ async function main(): Promise<void> {
   for (const outcome of outcomes) {
     console.log(
       `  run ${String(outcome.index)}: ${outcome.runId} → ${outcome.status}` +
-        ` (candidate ${outcome.candidateFingerprint?.slice(0, 12) ?? "none"})`,
+        ` (GitHub ${outcome.githubEffectOutcome ?? "missing"}; candidate ${outcome.candidateFingerprint?.slice(0, 12) ?? "none"})`,
     );
   }
 
@@ -376,14 +388,15 @@ async function main(): Promise<void> {
   const codeShas = [
     ...new Set(outcomes.map((outcome) => outcome.applicationCodeSha).filter(Boolean)),
   ];
-  const headShas = [
-    ...new Set(outcomes.map((outcome) => outcome.githubHeadSha).filter(Boolean)),
-  ];
+  const headShas = [...new Set(outcomes.map((outcome) => outcome.githubHeadSha).filter(Boolean))];
   console.log(`  run ids:              ${outcomes.map((outcome) => outcome.runId).join(", ")}`);
   console.log(`  application code sha: ${codeShas.join(", ") || "none"}`);
   console.log(`  candidate identity:   ${candidates.join(", ") || "none"}`);
   console.log(`  generated pr:         ${prUrls.join(", ") || "none"}`);
   console.log(`  generated head sha:   ${headShas.join(", ") || "none"}`);
+  console.log(
+    `  github outcomes:      ${outcomes.map((outcome) => outcome.githubEffectOutcome ?? "missing").join(", ")}`,
+  );
   const state = await readDataHubDecisionState();
   console.log(
     `  datahub decision:     ${

@@ -62,6 +62,7 @@ type StoredRun = SimpleRun;
 const canonicalValidationCheckCount = 8;
 
 function verifyDecisions(runRecord: StoredRun): CheckResult[] {
+  const githubEffectOutcomes = new Set(["CREATED", "UPDATED", "SKIPPED_EXACT"]);
   return [
     runRecord.applicationCodeSha && /^[0-9a-f]{40}$/.test(runRecord.applicationCodeSha)
       ? pass("application code sha", runRecord.applicationCodeSha.slice(0, 12))
@@ -78,6 +79,12 @@ function verifyDecisions(runRecord: StoredRun): CheckResult[] {
     runRecord.groundedDecision === "BLOCK"
       ? pass("grounded decision", "BLOCK (DataHub-grounded)")
       : fail("grounded decision", `${String(runRecord.groundedDecision)} — expected BLOCK`),
+    runRecord.githubEffectOutcome && githubEffectOutcomes.has(runRecord.githubEffectOutcome)
+      ? pass("github effect outcome", runRecord.githubEffectOutcome)
+      : fail(
+          "github effect outcome",
+          `${String(runRecord.githubEffectOutcome)} — expected CREATED, UPDATED, or SKIPPED_EXACT`,
+        ),
   ];
 }
 

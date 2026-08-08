@@ -35,12 +35,15 @@ export interface GitHubReviewInput {
   context: ImpactContext;
 }
 
+export type GitHubEffectOutcome = "CREATED" | "UPDATED" | "SKIPPED_EXACT";
+
 export interface GitHubReviewOutput {
   prUrl: string;
   prNumber: number;
   headSha: string;
   headBranch: string;
   receiptFingerprint: string;
+  outcome: GitHubEffectOutcome;
   /** The base commit the generated commit was parented on. */
   baseSha?: string | undefined;
 }
@@ -404,6 +407,7 @@ export function createAgentPipeline(config: AgentPipelineConfig) {
             prUrl: githubReceipt.prUrl,
             prNumber: githubReceipt.prNumber,
             githubReceiptFingerprint: githubReceipt.receiptFingerprint,
+            githubEffectOutcome: githubReceipt.outcome,
             // Bind the published commit identity so acceptance can prove the remote branch still
             // points at exactly the commit this run created.
             githubHeadSha: githubReceipt.headSha,

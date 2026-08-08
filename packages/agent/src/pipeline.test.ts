@@ -47,6 +47,7 @@ describe("Full pipeline to COMPLETED", () => {
             headSha: "c".repeat(40),
             headBranch: "lineageguard/buyer-id-migration",
             receiptFingerprint: "sha256:gh-receipt",
+            outcome: "SKIPPED_EXACT" as const,
           }),
         },
         writeback: {
@@ -79,6 +80,9 @@ describe("Full pipeline to COMPLETED", () => {
         "WRITEBACK_PENDING",
         "COMPLETED",
       ]);
+      expect(events.find((event) => event.status === "REVIEW_ARTIFACT_CREATED")?.extra).toEqual(
+        expect.objectContaining({ githubEffectOutcome: "SKIPPED_EXACT" }),
+      );
     } finally {
       vi.unstubAllGlobals();
     }

@@ -55,6 +55,7 @@ function trackingGitHub() {
           headSha: "abc123",
           headBranch: "lineageguard/generated/pr-3-test",
           receiptFingerprint: "b".repeat(64),
+          outcome: "CREATED" as const,
         };
       },
     },

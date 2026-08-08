@@ -137,6 +137,7 @@ async function main(): Promise<void> {
         triggeredRules: (run.triggeredRules ?? "").split(",").filter(Boolean),
         generatedArtifacts: run.artifactsGenerated,
         prUrl: run.prUrl,
+        githubEffectOutcome: run.githubEffectOutcome,
         writebackStatus: run.writebackStatus,
       },
       createdAt: run.createdAt,
@@ -167,6 +168,7 @@ async function main(): Promise<void> {
       candidateFingerprint,
       validationReceiptFingerprint: run.validationReceiptFingerprint,
       githubReceiptFingerprint: run.githubReceiptFingerprint,
+      githubEffectOutcome: run.githubEffectOutcome,
       writebackReceiptFingerprint: run.writebackReceiptFingerprint,
       exportedAt: new Date().toISOString(),
     };
@@ -194,6 +196,7 @@ async function main(): Promise<void> {
         generatedArtifacts: run.artifactsGenerated,
         validationReceiptFingerprint: run.validationReceiptFingerprint,
         prUrl: run.prUrl,
+        githubEffectOutcome: run.githubEffectOutcome,
         writebackStatus: run.writebackStatus,
         writebackReceiptFingerprint: run.writebackReceiptFingerprint,
       },
