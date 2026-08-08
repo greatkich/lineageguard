@@ -98,4 +98,30 @@ describe.skipIf(!hasIntegrationDb)("SimpleRunStore source change persistence", (
       sourceFilePath: "migrations/002.sql",
     });
   });
+
+  it("adds, updates, and maps github_effect_outcome", async () => {
+    const id = `test_${crypto.randomUUID().replaceAll("-", "")}`;
+    try {
+      const created = await store.create({
+        id,
+        repository: "org/walkthrough",
+        field: "customer_id",
+        patch: "RENAME COLUMN customer_id TO buyer_id",
+      });
+      expect(created.githubEffectOutcome).toBeNull();
+
+      await store.update(id, "REVIEW_ARTIFACT_CREATED", {
+        githubEffectOutcome: "SKIPPED_EXACT",
+      });
+
+      expect(await store.get(id)).toMatchObject({ githubEffectOutcome: "SKIPPED_EXACT" });
+      const raw = await pool.query<{ github_effect_outcome: string }>(
+        "SELECT github_effect_outcome FROM lineageguard.simple_runs WHERE id = $1",
+        [id],
+      );
+      expect(raw.rows[0]?.github_effect_outcome).toBe("SKIPPED_EXACT");
+    } finally {
+      await pool.query("DELETE FROM lineageguard.simple_runs WHERE id = $1", [id]);
+    }
+  });
 });

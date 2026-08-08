@@ -18,8 +18,14 @@ interface RecordedRequest {
 
 interface FakeOverrides {
   refStatus?: number;
+  headTreeTruncated?: boolean;
+  missingHeadTree?: boolean;
+  malformedHeadTree?: boolean;
   missingBasePath?: boolean;
   mismatchedBlob?: boolean;
+  modeOnlyChange?: boolean;
+  submoduleChange?: boolean;
+  treeAncestorChanges?: boolean;
   pullRequests?: Array<{ html_url: string; number: number; draft: boolean }>;
 }
 
@@ -33,18 +39,43 @@ function jsonResponse(value: unknown, status = 200): Response {
 function installHttpFake(overrides: FakeOverrides = {}): RecordedRequest[] {
   const requests: RecordedRequest[] = [];
   const baseEntries = [
-    { path: "README.md", type: "blob", sha: "base-readme" },
+    { path: "README.md", mode: "100644", type: "blob", sha: "base-readme" },
     ...(overrides.missingBasePath
-      ? [{ path: "deleted-from-head.sql", type: "blob", sha: "base-deleted" }]
+      ? [
+          {
+            path: "deleted-from-head.sql",
+            mode: "100644",
+            type: "blob",
+            sha: "base-deleted",
+          },
+        ]
+      : []),
+    ...(overrides.submoduleChange
+      ? [{ path: "vendor/tool", mode: "160000", type: "commit", sha: "base-submodule" }]
+      : []),
+    ...(overrides.treeAncestorChanges
+      ? [{ path: "artifacts", mode: "040000", type: "tree", sha: "base-artifacts-tree" }]
       : []),
   ];
   const headEntries = [
-    { path: "README.md", type: "blob", sha: "base-readme" },
+    {
+      path: "README.md",
+      mode: overrides.modeOnlyChange ? "100755" : "100644",
+      type: "blob",
+      sha: "base-readme",
+    },
     ...artifacts.map((artifact, index) => ({
       path: artifact.path,
+      mode: "100644",
       type: "blob",
       sha: `artifact-${String(index + 1)}`,
     })),
+    ...(overrides.submoduleChange
+      ? [{ path: "vendor/tool", mode: "160000", type: "commit", sha: "head-submodule" }]
+      : []),
+    ...(overrides.treeAncestorChanges
+      ? [{ path: "artifacts", mode: "040000", type: "tree", sha: "head-artifacts-tree" }]
+      : []),
   ];
   vi.stubGlobal("fetch", async (input: string | URL | Request, init?: RequestInit) => {
     const url = String(input);
@@ -61,10 +92,13 @@ function installHttpFake(overrides: FakeOverrides = {}): RecordedRequest[] {
       return jsonResponse({ tree: { sha: baseTreeSha } });
     }
     if (url.endsWith(`/git/trees/${headTreeSha}?recursive=1`)) {
-      return jsonResponse({ tree: headEntries });
+      if (overrides.missingHeadTree) return jsonResponse({ truncated: false });
+      if (overrides.malformedHeadTree)
+        return jsonResponse({ tree: "not-an-array", truncated: false });
+      return jsonResponse({ tree: headEntries, truncated: overrides.headTreeTruncated ?? false });
     }
     if (url.endsWith(`/git/trees/${baseTreeSha}?recursive=1`)) {
-      return jsonResponse({ tree: baseEntries });
+      return jsonResponse({ tree: baseEntries, truncated: false });
     }
     const blobIndex = artifacts.findIndex((_artifact, index) =>
       url.endsWith(`/git/blobs/artifact-${String(index + 1)}`),
@@ -130,6 +164,42 @@ describe("reconcileGitHubEffect", () => {
     installHttpFake({ missingBasePath: true });
 
     await expect(reconcile()).rejects.toThrow("tree delta");
+  });
+
+  it("rejects a truncated recursive tree response", async () => {
+    installHttpFake({ headTreeTruncated: true });
+
+    await expect(reconcile()).rejects.toThrow("truncated");
+  });
+
+  it("rejects a missing recursive tree payload", async () => {
+    installHttpFake({ missingHeadTree: true });
+
+    await expect(reconcile()).rejects.toThrow("tree payload");
+  });
+
+  it("rejects a malformed recursive tree payload", async () => {
+    installHttpFake({ malformedHeadTree: true });
+
+    await expect(reconcile()).rejects.toThrow("tree payload");
+  });
+
+  it("rejects a mode-only change outside the authorized artifacts", async () => {
+    installHttpFake({ modeOnlyChange: true });
+
+    await expect(reconcile()).rejects.toThrow("tree delta");
+  });
+
+  it("rejects a changed submodule outside the authorized artifacts", async () => {
+    installHttpFake({ submoduleChange: true });
+
+    await expect(reconcile()).rejects.toThrow("tree delta");
+  });
+
+  it("allows changed tree entries that are ancestors of authorized artifacts", async () => {
+    installHttpFake({ treeAncestorChanges: true });
+
+    await expect(reconcile()).resolves.toMatchObject({ kind: "EXACT" });
   });
 
   it("rejects a generated blob whose bytes differ", async () => {

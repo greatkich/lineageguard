@@ -34,6 +34,7 @@ import {
   wantsHelp,
   withRunStore,
 } from "./demo-support.js";
+import { assessRepeatGitHubEffectOutcomes } from "./github-effect-outcome.js";
 
 loadEnv();
 
@@ -144,14 +145,17 @@ function summarise(outcomes: readonly RunOutcome[]): CheckResult[] {
     ),
   );
 
-  const githubOutcomes = outcomes.map((outcome) => outcome.githubEffectOutcome);
+  const githubOutcomes = assessRepeatGitHubEffectOutcomes({
+    outcomes: outcomes.map((outcome) => outcome.githubEffectOutcome),
+    expectedCount: outcomes.length,
+  });
   results.push(
-    githubOutcomes.every((outcome) => outcome === "SKIPPED_EXACT")
+    githubOutcomes.ok
       ? pass(
           "github effect outcome",
-          `${String(githubOutcomes.length)} SKIPPED_EXACT outcomes persisted`,
+          `${String(githubOutcomes.count)} SKIPPED_EXACT outcomes persisted`,
         )
-      : fail("github effect outcome", `observed ${githubOutcomes.map(String).join(", ")}`),
+      : fail("github effect outcome", githubOutcomes.reason),
   );
 
   results.push(

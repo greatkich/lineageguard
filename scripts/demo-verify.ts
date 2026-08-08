@@ -52,6 +52,7 @@ import {
   wantsHelp,
   withRunStore,
 } from "./demo-support.js";
+import { assessGitHubEffectOutcome } from "./github-effect-outcome.js";
 
 loadEnv();
 
@@ -62,7 +63,7 @@ type StoredRun = SimpleRun;
 const canonicalValidationCheckCount = 8;
 
 function verifyDecisions(runRecord: StoredRun): CheckResult[] {
-  const githubEffectOutcomes = new Set(["CREATED", "UPDATED", "SKIPPED_EXACT"]);
+  const githubEffectOutcome = assessGitHubEffectOutcome(runRecord.githubEffectOutcome);
   return [
     runRecord.applicationCodeSha && /^[0-9a-f]{40}$/.test(runRecord.applicationCodeSha)
       ? pass("application code sha", runRecord.applicationCodeSha.slice(0, 12))
@@ -79,12 +80,9 @@ function verifyDecisions(runRecord: StoredRun): CheckResult[] {
     runRecord.groundedDecision === "BLOCK"
       ? pass("grounded decision", "BLOCK (DataHub-grounded)")
       : fail("grounded decision", `${String(runRecord.groundedDecision)} — expected BLOCK`),
-    runRecord.githubEffectOutcome && githubEffectOutcomes.has(runRecord.githubEffectOutcome)
-      ? pass("github effect outcome", runRecord.githubEffectOutcome)
-      : fail(
-          "github effect outcome",
-          `${String(runRecord.githubEffectOutcome)} — expected CREATED, UPDATED, or SKIPPED_EXACT`,
-        ),
+    githubEffectOutcome.ok
+      ? pass("github effect outcome", githubEffectOutcome.outcome)
+      : fail("github effect outcome", githubEffectOutcome.reason),
   ];
 }
 

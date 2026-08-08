@@ -356,7 +356,7 @@ export function createGitHubPort(): AgentGitHubPort | undefined {
       // If the deterministic branch already exists with the correct base parent and
       // byte-identical artifact tree, skip the effect entirely (SKIPPED_EXACT).
       const artifacts = input.candidate.artifacts;
-      const reconciled = await reconcileGitHubEffect({
+      const reconciliationOptions = {
         token,
         apiBase,
         owner,
@@ -364,7 +364,8 @@ export function createGitHubPort(): AgentGitHubPort | undefined {
         branchName,
         baseSha,
         artifacts,
-      });
+      };
+      const reconciled = await reconcileGitHubEffect(reconciliationOptions);
       if (reconciled.kind === "EXACT") {
         console.log(
           `  [github] SKIPPED_EXACT — branch ${branchName} already at ${reconciled.receipt.headSha.slice(0, 12)}`,
@@ -431,17 +432,21 @@ export function createGitHubPort(): AgentGitHubPort | undefined {
           },
         })) as { html_url: string; number: number };
       } catch (createErr: unknown) {
-        // PR creation failed — check if one already exists (idempotency)
-        const prs = (await ghFetch(
-          token,
-          `${apiBase}/repos/${owner}/${repo}/pulls?state=open&head=${owner}:${branchName}`,
-        )) as Array<{ html_url: string; number: number }>;
-        if (prs.length > 0 && prs[0]!.number > 0) {
-          pr = prs[0]!;
-        } else {
+        // GitHub may persist the PR and lose the response. Re-read the entire effect rather than
+        // trusting the first PR returned by a list call. Because this invocation already wrote the
+        // Git objects, a successful recovery remains CREATED rather than SKIPPED_EXACT.
+        try {
+          const recovered = await reconcileGitHubEffect(reconciliationOptions);
+          if (recovered.kind !== "EXACT") throw new Error("generated branch is missing");
+          pr = {
+            html_url: recovered.receipt.prUrl,
+            number: recovered.receipt.prNumber,
+          };
+        } catch (recoveryErr: unknown) {
           const msg = createErr instanceof Error ? createErr.message : String(createErr);
+          const recovery = recoveryErr instanceof Error ? recoveryErr.message : String(recoveryErr);
           throw new Error(
-            `GitHub PR creation failed and no existing PR found: ${msg.slice(0, 200)}`,
+            `GitHub PR creation failed and exact recovery failed: ${msg.slice(0, 120)}; ${recovery.slice(0, 160)}`,
           );
         }
       }

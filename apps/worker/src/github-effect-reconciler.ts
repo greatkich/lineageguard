@@ -27,6 +27,13 @@ interface PullRequestResponse {
   draft?: boolean;
 }
 
+interface TreeEntry {
+  path: string;
+  mode: string;
+  type: string;
+  sha: string;
+}
+
 class GitHubReadError extends Error {
   constructor(
     readonly status: number,
@@ -78,37 +85,62 @@ async function readCommit(
 async function readTree(
   options: ReconcileGitHubEffectOptions,
   treeSha: string,
-): Promise<Map<string, string>> {
+): Promise<Map<string, TreeEntry>> {
   const response = await requestJson<{
-    tree?: Array<{ path?: string; sha?: string; type?: string }>;
+    tree?: unknown;
+    truncated?: unknown;
   }>(options, `/git/trees/${treeSha}?recursive=1`);
-  const blobs = new Map<string, string>();
-  for (const entry of response.tree ?? []) {
-    if (entry.type !== "blob") continue;
-    if (!entry.path || !entry.sha || blobs.has(entry.path)) {
-      throw new Error("GitHub tree contains a malformed or duplicate blob entry");
+  if (response.truncated !== false) throw new Error("GitHub recursive tree response is truncated");
+  if (!Array.isArray(response.tree)) throw new Error("GitHub recursive tree payload is malformed");
+  const entries = new Map<string, TreeEntry>();
+  for (const value of response.tree) {
+    const entry = value as Partial<TreeEntry>;
+    if (!entry.path || !entry.mode || !entry.type || !entry.sha || entries.has(entry.path)) {
+      throw new Error("GitHub tree payload contains a malformed or duplicate entry");
     }
-    blobs.set(entry.path, entry.sha);
+    entries.set(entry.path, entry as TreeEntry);
   }
-  return blobs;
+  return entries;
+}
+
+function treeIdentity(entry: TreeEntry | undefined): string | undefined {
+  return entry && `${entry.mode}:${entry.type}:${entry.sha}`;
+}
+
+function isAuthorizedTreeAncestor(
+  path: string,
+  baseEntry: TreeEntry | undefined,
+  headEntry: TreeEntry | undefined,
+  artifactPaths: ReadonlySet<string>,
+): boolean {
+  const present = [baseEntry, headEntry].filter((entry) => entry !== undefined);
+  return (
+    present.length > 0 &&
+    present.every((entry) => entry.type === "tree" && entry.mode === "040000") &&
+    [...artifactPaths].some((artifactPath) => artifactPath.startsWith(`${path}/`))
+  );
 }
 
 function assertExactTreeDelta(
-  baseBlobs: ReadonlyMap<string, string>,
-  headBlobs: ReadonlyMap<string, string>,
+  baseEntries: ReadonlyMap<string, TreeEntry>,
+  headEntries: ReadonlyMap<string, TreeEntry>,
   artifacts: readonly GitHubArtifact[],
 ): void {
   const expected = new Set(artifacts.map((artifact) => artifact.path));
   if (expected.size !== artifacts.length)
     throw new Error("Generated artifact paths are duplicated");
   const changed = new Set<string>();
-  for (const [path, sha] of headBlobs) {
-    if (baseBlobs.get(path) !== sha) changed.add(path);
+  for (const [path, entry] of headEntries) {
+    if (treeIdentity(baseEntries.get(path)) !== treeIdentity(entry)) changed.add(path);
   }
-  for (const path of baseBlobs.keys()) {
-    if (!headBlobs.has(path)) changed.add(path);
+  for (const path of baseEntries.keys()) {
+    if (!headEntries.has(path)) changed.add(path);
   }
-  const unexpected = [...changed].filter((path) => !expected.has(path));
+  const unexpected = [...changed].filter(
+    (path) =>
+      !expected.has(path) &&
+      !isAuthorizedTreeAncestor(path, baseEntries.get(path), headEntries.get(path), expected),
+  );
   const absent = [...expected].filter((path) => !changed.has(path));
   if (unexpected.length > 0 || absent.length > 0) {
     throw new Error(
@@ -119,14 +151,18 @@ function assertExactTreeDelta(
 
 async function assertExactArtifactBytes(
   options: ReconcileGitHubEffectOptions,
-  headBlobs: ReadonlyMap<string, string>,
+  headEntries: ReadonlyMap<string, TreeEntry>,
 ): Promise<void> {
   for (const artifact of options.artifacts) {
-    const blobSha = headBlobs.get(artifact.path);
-    if (!blobSha) throw new Error(`Existing GitHub artifact is missing: ${artifact.path}`);
+    const entry = headEntries.get(artifact.path);
+    if (!entry || entry.type !== "blob" || entry.mode !== "100644") {
+      throw new Error(
+        `Existing GitHub artifact is missing or not a regular blob: ${artifact.path}`,
+      );
+    }
     const blob = await requestJson<{ content?: string; encoding?: string }>(
       options,
-      `/git/blobs/${blobSha}`,
+      `/git/blobs/${entry.sha}`,
     );
     if (blob.encoding !== "base64" || !blob.content) {
       throw new Error(`Existing GitHub blob is unreadable: ${artifact.path}`);
@@ -170,10 +206,10 @@ export async function reconcileGitHubEffect(
     throw new Error("Existing GitHub commit is not parented on the expected base");
   }
   const baseCommit = await readCommit(options, options.baseSha);
-  const headBlobs = await readTree(options, requireTreeSha(headCommit, "Head"));
-  const baseBlobs = await readTree(options, requireTreeSha(baseCommit, "Base"));
-  assertExactTreeDelta(baseBlobs, headBlobs, options.artifacts);
-  await assertExactArtifactBytes(options, headBlobs);
+  const headEntries = await readTree(options, requireTreeSha(headCommit, "Head"));
+  const baseEntries = await readTree(options, requireTreeSha(baseCommit, "Base"));
+  assertExactTreeDelta(baseEntries, headEntries, options.artifacts);
+  await assertExactArtifactBytes(options, headEntries);
   const pull = await readExactDraftPullRequest(options);
   const receiptFingerprint = createHash("sha256")
     .update(JSON.stringify({ prUrl: pull.prUrl, headSha }))

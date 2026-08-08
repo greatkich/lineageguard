@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { canonicalCandidateFingerprint, decisionMarker } from "./effect-identity.js";
+import {
+  canonicalCandidateFingerprint,
+  decisionMarker,
+  generatedBranchName,
+} from "./effect-identity.js";
 import { createGitHubPort, createWritebackPort } from "./orchestration.js";
 
 const ORIGINAL_ENV = { ...process.env };
@@ -55,6 +59,90 @@ function reviewInput(
   };
 }
 
+type RecoveryPull = { html_url: string; number: number; draft: boolean };
+
+interface RecoveryFakeState {
+  pulls: RecoveryPull[];
+  calls: Array<{ url: string; method: string }>;
+  branchName: string;
+  baseSha: string;
+  headSha: string;
+  branchCreated: boolean;
+}
+
+function recoveryReadResponse(state: RecoveryFakeState, url: string): Response {
+  if (url.endsWith("/git/ref/heads/main")) return jsonResponse({ object: { sha: state.baseSha } });
+  if (url.endsWith(`/git/ref/heads/${state.branchName}`)) {
+    return state.branchCreated
+      ? jsonResponse({ object: { sha: state.headSha } })
+      : jsonResponse({ message: "Not Found" }, 404);
+  }
+  if (url.endsWith("/git/blobs/blob-sha")) {
+    return jsonResponse({
+      encoding: "base64",
+      content: Buffer.from("# Migration\n").toString("base64"),
+    });
+  }
+  if (url.endsWith(`/git/commits/${state.baseSha}`))
+    return jsonResponse({ tree: { sha: "base-tree-sha" } });
+  if (url.endsWith(`/git/commits/${state.headSha}`)) {
+    return jsonResponse({
+      parents: [{ sha: state.baseSha }],
+      tree: { sha: "head-tree-sha" },
+    });
+  }
+  if (url.endsWith("/git/trees/base-tree-sha?recursive=1"))
+    return jsonResponse({ truncated: false, tree: [] });
+  if (url.endsWith("/git/trees/head-tree-sha?recursive=1")) {
+    return jsonResponse({
+      truncated: false,
+      tree: [
+        {
+          path: "docs/migrations/customer-id.md",
+          mode: "100644",
+          type: "blob",
+          sha: "blob-sha",
+        },
+      ],
+    });
+  }
+  if (url.includes(`/pulls?state=open&head=org:${state.branchName}`))
+    return jsonResponse(state.pulls);
+  throw new Error(`Unexpected fetch: GET ${url}`);
+}
+
+function recoveryWriteResponse(state: RecoveryFakeState, url: string): Response {
+  if (url.endsWith("/git/blobs")) return jsonResponse({ sha: "blob-sha" });
+  if (url.endsWith("/git/trees")) return jsonResponse({ sha: "head-tree-sha" });
+  if (url.endsWith("/git/commits")) return jsonResponse({ sha: state.headSha });
+  if (url.endsWith("/git/refs")) {
+    state.branchCreated = true;
+    return jsonResponse({ ref: `refs/heads/${state.branchName}` });
+  }
+  if (url.endsWith("/pulls")) {
+    return jsonResponse({ message: "Response lost after creation" }, 502);
+  }
+  throw new Error(`Unexpected fetch: POST ${url}`);
+}
+
+function installPrRecoveryFake(pulls: RecoveryPull[]) {
+  const input = reviewInput();
+  const state: RecoveryFakeState = {
+    pulls,
+    calls: [],
+    branchName: generatedBranchName(canonicalCandidateFingerprint(input.candidate)),
+    baseSha: "a".repeat(40),
+    headSha: "c".repeat(40),
+    branchCreated: false,
+  };
+  vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+    const method = init?.method ?? "GET";
+    state.calls.push({ url, method });
+    return method === "GET" ? recoveryReadResponse(state, url) : recoveryWriteResponse(state, url);
+  });
+  return { calls: state.calls, input };
+}
+
 describe("createGitHubPort", () => {
   it("returns undefined when GITHUB_TOKEN/OWNER/REPO are not configured", () => {
     delete process.env.GITHUB_TOKEN;
@@ -63,78 +151,52 @@ describe("createGitHubPort", () => {
     expect(createGitHubPort()).toBeUndefined();
   });
 
-  it("finds and returns the existing PR when creation fails because one is already open", async () => {
+  it("recovers an exact lost PR-create response without issuing a second write", async () => {
     githubEnv();
-    const calls: Array<{ url: string; method: string }> = [];
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (url: string, init?: RequestInit) => {
-        const method = init?.method ?? "GET";
-        calls.push({ url, method });
-        if (url.endsWith("/git/ref/heads/main"))
-          return jsonResponse({ object: { sha: "a".repeat(40) } });
-        if (url.endsWith("/git/blobs")) return jsonResponse({ sha: "blob-sha" });
-        if (url.includes("/git/commits/") && method === "GET")
-          return jsonResponse({ tree: { sha: "tree-sha" } });
-        if (url.endsWith("/git/trees")) return jsonResponse({ sha: "new-tree-sha" });
-        if (url.endsWith("/git/commits") && method === "POST")
-          return jsonResponse({ sha: "c".repeat(40) });
-        if (url.endsWith("/git/refs") && method === "POST")
-          return jsonResponse({ ref: "refs/heads/lineageguard/run-run_test_0000000000000001" });
-        if (url.endsWith("/pulls") && method === "POST") {
-          // Simulate GitHub rejecting creation because a PR for this head already exists.
-          return jsonResponse({ message: "A pull request already exists" }, 422);
-        }
-        if (url.includes("/pulls?state=open")) {
-          return jsonResponse([
-            { html_url: "https://github.com/org/walkthrough/pull/7", number: 7 },
-          ]);
-        }
-        throw new Error(`Unexpected fetch: ${method} ${url}`);
-      }),
-    );
+    const { calls, input } = installPrRecoveryFake([
+      { html_url: "https://github.com/org/walkthrough/pull/7", number: 7, draft: true },
+    ]);
 
     const port = createGitHubPort();
     if (!port) throw new Error("GitHub port should be configured");
-    const result = await port.createReview(reviewInput());
+    const result = await port.createReview(input);
 
-    expect(result.prUrl).toBe("https://github.com/org/walkthrough/pull/7");
-    expect(result.prNumber).toBe(7);
-    // Exactly one POST to /pulls (the failed create) — no duplicate creation retry.
+    expect(result).toMatchObject({ prNumber: 7, outcome: "CREATED" });
     expect(calls.filter((c) => c.url.endsWith("/pulls") && c.method === "POST")).toHaveLength(1);
+    expect(calls.filter((call) => call.method !== "GET")).toHaveLength(5);
+    expect(calls.some((call) => call.method === "PATCH")).toBe(false);
+  });
+
+  it.each([
+    {
+      name: "duplicate",
+      pulls: [
+        { html_url: "https://github.com/org/walkthrough/pull/7", number: 7, draft: true },
+        { html_url: "https://github.com/org/walkthrough/pull/8", number: 8, draft: true },
+      ],
+    },
+    {
+      name: "non-draft",
+      pulls: [{ html_url: "https://github.com/org/walkthrough/pull/7", number: 7, draft: false }],
+    },
+  ])("rejects $name PR-create recovery", async ({ pulls }) => {
+    githubEnv();
+    const { input } = installPrRecoveryFake(pulls);
+    const port = createGitHubPort();
+    if (!port) throw new Error("GitHub port should be configured");
+
+    await expect(port.createReview(input)).rejects.toThrow("GitHub PR creation failed");
   });
 
   it("propagates a clear error when PR creation fails and no existing PR can be found", async () => {
     githubEnv();
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (url: string, init?: RequestInit) => {
-        const method = init?.method ?? "GET";
-        if (url.endsWith("/git/ref/heads/main"))
-          return jsonResponse({ object: { sha: "a".repeat(40) } });
-        if (url.endsWith("/git/blobs")) return jsonResponse({ sha: "blob-sha" });
-        if (url.includes("/git/commits/") && method === "GET")
-          return jsonResponse({ tree: { sha: "tree-sha" } });
-        if (url.endsWith("/git/trees")) return jsonResponse({ sha: "new-tree-sha" });
-        if (url.endsWith("/git/commits") && method === "POST")
-          return jsonResponse({ sha: "c".repeat(40) });
-        if (url.endsWith("/git/refs") && method === "POST")
-          return jsonResponse({ ref: "refs/heads/x" });
-        if (url.endsWith("/pulls") && method === "POST") {
-          return jsonResponse({ message: "Validation failed" }, 422);
-        }
-        if (url.includes("/pulls?state=open")) {
-          return jsonResponse([]); // no existing PR — genuine failure, not idempotency
-        }
-        throw new Error(`Unexpected fetch: ${method} ${url}`);
-      }),
-    );
+    const { input } = installPrRecoveryFake([]);
 
     const port = createGitHubPort();
     if (!port) throw new Error("GitHub port should be configured");
 
-    await expect(port.createReview(reviewInput())).rejects.toThrow(
-      /GitHub PR creation failed and no existing PR found/,
+    await expect(port.createReview(input)).rejects.toThrow(
+      /GitHub PR creation failed and exact recovery failed/,
     );
   });
 
