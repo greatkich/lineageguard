@@ -36,6 +36,9 @@ export async function runWorker(options: WorkerOptions = {}): Promise<PipelineRe
     await store.ensureSchema();
 
     const runId = `run_${Date.now().toString(16).padStart(24, "0")}`;
+    // Capture the application code SHA at the moment of run creation. This binds the run
+    // to the exact code version that produced it, enabling acceptance to prove repeatability.
+    const applicationCodeSha = await resolveApplicationCodeSha();
     const repository = process.env.LINEAGEGUARD_REPOSITORY ?? "greatkich/lineageguard";
     const owner = process.env.GITHUB_OWNER ?? "greatkich";
     const repo = process.env.GITHUB_REPO ?? "lineageguard";
@@ -107,6 +110,7 @@ export async function runWorker(options: WorkerOptions = {}): Promise<PipelineRe
       repository,
       field: "customer_id",
       patch,
+      applicationCodeSha,
       ...(sourcePR
         ? {
             sourcePrUrl: sourcePR.prUrl,
@@ -178,4 +182,14 @@ export async function runWorker(options: WorkerOptions = {}): Promise<PipelineRe
   });
 
   return null;
+}
+
+/** Resolves the application code SHA from the git working tree at runtime. */
+async function resolveApplicationCodeSha(): Promise<string> {
+  const { execFileSync } = await import("node:child_process");
+  try {
+    return execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+  } catch {
+    return "UNAVAILABLE";
+  }
 }

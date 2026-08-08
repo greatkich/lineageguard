@@ -180,6 +180,7 @@ async function main(): Promise<void> {
       runId: run.id,
       executionMode: run.executionMode,
       status: run.status,
+      applicationCodeSha: run.applicationCodeSha,
       codeCommitSha: commitSha,
       generatedAt: new Date().toISOString(),
       note:

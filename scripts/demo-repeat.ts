@@ -41,6 +41,7 @@ type RunOutcome = Readonly<{
   index: number;
   runId: string;
   status: string;
+  applicationCodeSha: string | null;
   consumers: number | null;
   prUrl: string | null;
   writeback: string | null;
@@ -51,6 +52,7 @@ type RunOutcome = Readonly<{
   impactContextFingerprint: string | null;
   validationCheckCount: number | null;
   validationAllPass: boolean | null;
+  githubHeadSha: string | null;
 }>;
 
 async function executeOnce(index: number): Promise<RunOutcome> {
@@ -76,6 +78,7 @@ async function executeOnce(index: number): Promise<RunOutcome> {
       index,
       runId: latest.id,
       status: latest.status,
+      applicationCodeSha: latest.applicationCodeSha,
       consumers: latest.consumersFound,
       prUrl: latest.prUrl,
       writeback: latest.writebackStatus,
@@ -89,6 +92,7 @@ async function executeOnce(index: number): Promise<RunOutcome> {
         : null,
       validationCheckCount: Array.isArray(receipt?.checks) ? receipt.checks.length : null,
       validationAllPass: typeof receipt?.allPass === "boolean" ? receipt.allPass : null,
+      githubHeadSha: latest.githubHeadSha,
     };
   });
 }
@@ -131,6 +135,15 @@ function summarise(outcomes: readonly RunOutcome[]): CheckResult[] {
 
   results.push(
     invariant(
+      "application code sha",
+      outcomes,
+      (outcome) => outcome.applicationCodeSha,
+      (value) => `identical across runs (${value.slice(0, 12)})`,
+    ),
+  );
+
+  results.push(
+    invariant(
       "source fingerprint",
       outcomes,
       (outcome) => outcome.sourceFingerprint,
@@ -159,6 +172,14 @@ function summarise(outcomes: readonly RunOutcome[]): CheckResult[] {
       outcomes,
       (outcome) => outcome.prUrl,
       (value) => `1 stable PR: ${value}`,
+    ),
+  );
+  results.push(
+    invariant(
+      "generated branch head sha",
+      outcomes,
+      (outcome) => outcome.githubHeadSha,
+      (value) => `1 stable commit: ${value.slice(0, 12)}`,
     ),
   );
 
@@ -352,9 +373,17 @@ async function main(): Promise<void> {
   const candidates = [
     ...new Set(outcomes.map((outcome) => outcome.candidateFingerprint).filter(Boolean)),
   ];
+  const codeShas = [
+    ...new Set(outcomes.map((outcome) => outcome.applicationCodeSha).filter(Boolean)),
+  ];
+  const headShas = [
+    ...new Set(outcomes.map((outcome) => outcome.githubHeadSha).filter(Boolean)),
+  ];
   console.log(`  run ids:              ${outcomes.map((outcome) => outcome.runId).join(", ")}`);
+  console.log(`  application code sha: ${codeShas.join(", ") || "none"}`);
   console.log(`  candidate identity:   ${candidates.join(", ") || "none"}`);
   console.log(`  generated pr:         ${prUrls.join(", ") || "none"}`);
+  console.log(`  generated head sha:   ${headShas.join(", ") || "none"}`);
   const state = await readDataHubDecisionState();
   console.log(
     `  datahub decision:     ${

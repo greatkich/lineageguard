@@ -63,6 +63,12 @@ const canonicalValidationCheckCount = 8;
 
 function verifyDecisions(runRecord: StoredRun): CheckResult[] {
   return [
+    runRecord.applicationCodeSha && /^[0-9a-f]{40}$/.test(runRecord.applicationCodeSha)
+      ? pass("application code sha", runRecord.applicationCodeSha.slice(0, 12))
+      : fail(
+          "application code sha",
+          `${String(runRecord.applicationCodeSha)} — expected 40 hex chars`,
+        ),
     runRecord.status === "COMPLETED"
       ? pass("final state", "COMPLETED")
       : fail("final state", `${runRecord.status} — only COMPLETED is a successful demo`),

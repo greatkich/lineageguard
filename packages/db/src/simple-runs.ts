@@ -41,6 +41,8 @@ export interface SimpleRun {
   sourceHeadSha: string | null;
   sourceDiffFingerprint: string | null;
   sourceFilePath: string | null;
+  /** The git HEAD of the application code at the moment the run was created. */
+  applicationCodeSha: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -81,6 +83,7 @@ export interface SimpleRunStore {
     repository: string;
     field: string;
     patch: string;
+    applicationCodeSha?: string;
     sourcePrUrl?: string;
     sourcePrNumber?: number;
     sourceBaseSha?: string;
@@ -128,6 +131,7 @@ function mapRow(row: Record<string, unknown>): SimpleRun {
     sourceHeadSha: (row.source_head_sha as string) ?? null,
     sourceDiffFingerprint: (row.source_diff_fingerprint as string) ?? null,
     sourceFilePath: (row.source_file_path as string) ?? null,
+    applicationCodeSha: (row.application_code_sha as string) ?? null,
     createdAt: row.created_at as Date,
     updatedAt: row.updated_at as Date,
   };
@@ -170,6 +174,7 @@ export function createSimpleRunStore(pool: pg.Pool): SimpleRunStore {
           source_head_sha TEXT,
           source_diff_fingerprint TEXT,
           source_file_path TEXT,
+          application_code_sha TEXT,
           created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
           updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
         )
@@ -197,6 +202,7 @@ export function createSimpleRunStore(pool: pg.Pool): SimpleRunStore {
         "source_head_sha TEXT",
         "source_diff_fingerprint TEXT",
         "source_file_path TEXT",
+        "application_code_sha TEXT",
       ];
       for (const col of columns) {
         await pool.query(`ALTER TABLE lineageguard.simple_runs ADD COLUMN IF NOT EXISTS ${col}`);
@@ -206,15 +212,16 @@ export function createSimpleRunStore(pool: pg.Pool): SimpleRunStore {
     async create(input): Promise<SimpleRun> {
       const result = await pool.query(
         `INSERT INTO lineageguard.simple_runs
-           (id, repository, field, patch, source_pr_url, source_pr_number,
+           (id, repository, field, patch, application_code_sha, source_pr_url, source_pr_number,
             source_base_sha, source_head_sha, source_diff_fingerprint, source_file_path)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
          RETURNING *`,
         [
           input.id,
           input.repository,
           input.field,
           input.patch,
+          input.applicationCodeSha ?? null,
           input.sourcePrUrl ?? null,
           input.sourcePrNumber ?? null,
           input.sourceBaseSha ?? null,

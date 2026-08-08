@@ -351,6 +351,24 @@ export function createGitHubPort(): AgentGitHubPort | undefined {
       const baseSha = (baseRef as { object?: { sha?: string } })?.object?.sha;
       if (!baseSha) throw new Error("Cannot resolve base branch SHA");
 
+      // ── Reconciliation: check existing branch before any writes ──
+      // If the deterministic branch already exists with the correct base parent and
+      // byte-identical artifact tree, skip the effect entirely (SKIPPED_EXACT).
+      const reconciled = await reconcileExistingEffect(
+        token,
+        apiBase,
+        owner,
+        repo,
+        branchName,
+        baseSha,
+        input,
+        createHash,
+      );
+      if (reconciled) {
+        console.log(`  [github] SKIPPED_EXACT — branch ${branchName} already at ${reconciled.headSha.slice(0, 12)}`);
+        return reconciled;
+      }
+
       // Create tree with artifacts
       const treeEntries: Array<{ path: string; mode: string; type: string; sha: string }> = [];
       const artifacts =
@@ -437,6 +455,7 @@ export function createGitHubPort(): AgentGitHubPort | undefined {
         .update(JSON.stringify({ prUrl: pr.html_url, headSha: commit.sha }))
         .digest("hex");
 
+      console.log(`  [github] CREATED — branch ${branchName} at ${commit.sha.slice(0, 12)}`);
       return {
         prUrl: pr.html_url,
         prNumber: pr.number,
@@ -446,6 +465,118 @@ export function createGitHubPort(): AgentGitHubPort | undefined {
         receiptFingerprint,
       };
     },
+  };
+}
+
+/**
+ * Reconciles an existing generated branch against the desired effect.
+ *
+ * If the deterministic branch exists, its commit is parented on the correct base, and every
+ * artifact blob is byte-identical to the candidate, returns the existing receipt without
+ * creating any new Git objects. This guarantees strict effect idempotency: identical semantic
+ * input produces zero new commits, zero branch ref movements.
+ */
+async function reconcileExistingEffect(
+  token: string,
+  apiBase: string,
+  owner: string,
+  repo: string,
+  branchName: string,
+  baseSha: string,
+  input: GitHubReviewInput,
+  createHash: typeof import("node:crypto").createHash,
+): Promise<GitHubReviewOutput | undefined> {
+  // 1. Check if the branch exists
+  let ref: { object?: { sha?: string } };
+  try {
+    ref = (await ghFetch(
+      token,
+      `${apiBase}/repos/${owner}/${repo}/git/ref/heads/${branchName}`,
+    )) as { object?: { sha?: string } };
+  } catch {
+    return undefined; // Branch doesn't exist — nothing to reconcile
+  }
+  const headSha = ref?.object?.sha;
+  if (!headSha) return undefined;
+
+  // 2. Verify the commit is parented on the expected base
+  const commit = (await ghFetch(
+    token,
+    `${apiBase}/repos/${owner}/${repo}/git/commits/${headSha}`,
+  )) as { parents?: Array<{ sha?: string }>; tree?: { sha?: string } };
+  const parents = commit?.parents ?? [];
+  if (parents.length !== 1 || parents[0]?.sha !== baseSha) return undefined;
+  const treeSha = commit?.tree?.sha;
+  if (!treeSha) return undefined;
+
+  // 3. Verify the tree contains exactly the expected artifact blobs
+  const artifacts =
+    (input.candidate as { artifacts?: Array<{ path: string; content: string }> }).artifacts ?? [];
+  const tree = (await ghFetch(
+    token,
+    `${apiBase}/repos/${owner}/${repo}/git/trees/${treeSha}?recursive=1`,
+  )) as { tree?: Array<{ path?: string; sha?: string; type?: string }> };
+  const treeEntries = new Map(
+    (tree?.tree ?? [])
+      .filter((e) => e.type === "blob")
+      .map((e) => [e.path, e.sha]),
+  );
+
+  // Get the base tree to compute the delta
+  const baseCommit = (await ghFetch(
+    token,
+    `${apiBase}/repos/${owner}/${repo}/git/commits/${baseSha}`,
+  )) as { tree?: { sha?: string } };
+  const baseTreeSha = baseCommit?.tree?.sha;
+  if (!baseTreeSha) return undefined;
+  const baseTree = (await ghFetch(
+    token,
+    `${apiBase}/repos/${owner}/${repo}/git/trees/${baseTreeSha}?recursive=1`,
+  )) as { tree?: Array<{ path?: string; sha?: string; type?: string }> };
+  const baseEntries = new Map(
+    (baseTree?.tree ?? [])
+      .filter((e) => e.type === "blob")
+      .map((e) => [e.path, e.sha]),
+  );
+
+  // The delta must be exactly the artifact paths and nothing else
+  const artifactPaths = new Set(artifacts.map((a) => a.path));
+  for (const [path, sha] of treeEntries) {
+    if (artifactPaths.has(path!)) continue;
+    if (baseEntries.get(path!) !== sha) return undefined; // Unauthorized delta
+  }
+
+  // Verify each artifact blob is byte-identical
+  for (const artifact of artifacts) {
+    const blobSha = treeEntries.get(artifact.path);
+    if (!blobSha) return undefined;
+    const blob = (await ghFetch(
+      token,
+      `${apiBase}/repos/${owner}/${repo}/git/blobs/${blobSha}`,
+    )) as { content?: string; encoding?: string };
+    if (blob?.encoding !== "base64" || !blob.content) return undefined;
+    const decoded = Buffer.from(blob.content.replace(/\r?\n/g, ""), "base64");
+    if (decoded.toString("utf8") !== artifact.content) return undefined;
+  }
+
+  // 4. Find the existing PR
+  const prs = (await ghFetch(
+    token,
+    `${apiBase}/repos/${owner}/${repo}/pulls?state=open&head=${owner}:${branchName}`,
+  )) as Array<{ html_url: string; number: number }>;
+  if (prs.length === 0 || !prs[0]!.number) return undefined;
+
+  const receiptFingerprint = createHash("sha256")
+    .update(JSON.stringify({ prUrl: prs[0]!.html_url, headSha }))
+    .digest("hex");
+
+  return {
+    prUrl: prs[0]!.html_url,
+    prNumber: prs[0]!.number,
+    headSha,
+    headBranch: branchName,
+    baseSha,
+    receiptFingerprint,
   };
 }
 
