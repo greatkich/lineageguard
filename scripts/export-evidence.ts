@@ -28,6 +28,12 @@ function writeJson(path: string, value: unknown): void {
   writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`);
 }
 
+function assertExportableApplicationSha(executionMode: string, applicationCodeSha: unknown): void {
+  if (executionMode === "LIVE" && !/^[0-9a-f]{40}$/.test(String(applicationCodeSha ?? ""))) {
+    throw new Error("EVIDENCE_EXPORT_BLOCKED: LIVE run has no valid 40-hex applicationCodeSha");
+  }
+}
+
 /** The commit the exported evidence was produced from, so evidence names its own code version. */
 function currentCommitSha(): string {
   try {
@@ -90,6 +96,7 @@ async function main(): Promise<void> {
       process.exitCode = 1;
       return;
     }
+    assertExportableApplicationSha(run.executionMode, run.applicationCodeSha);
 
     const examplesDir = join(process.cwd(), "examples/canonical-run");
     const artifactsDir = join(process.cwd(), "artifacts/demo-readiness");
@@ -111,6 +118,7 @@ async function main(): Promise<void> {
       description: "ALTER TABLE commerce.orders RENAME COLUMN customer_id TO buyer_id",
       executionMode: run.executionMode,
       runId: run.id,
+      applicationCodeSha: run.applicationCodeSha,
       status: run.status,
       repository: run.repository,
       source: {
@@ -161,6 +169,7 @@ async function main(): Promise<void> {
 
     const replayManifest = {
       sourceRunId: run.id,
+      applicationCodeSha: run.applicationCodeSha,
       sourceCommitSha: run.sourceHeadSha,
       sourceChangeFingerprint: changeFingerprint,
       impactContextFingerprint,
@@ -220,6 +229,7 @@ async function main(): Promise<void> {
         `node ${process.version}`,
         `platform ${process.platform}`,
         `runId ${run.id}`,
+        `applicationCodeSha ${String(run.applicationCodeSha)}`,
         `codeCommitSha ${commitSha}`,
         `exportedAt ${new Date().toISOString()}`,
         "",

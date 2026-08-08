@@ -2,6 +2,10 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { createSimpleRunStore, type SimpleRun } from "@lineageguard/db";
 import { expect, test } from "@playwright/test";
 import pg from "pg";
+import {
+  buildGoldenScreenshotManifest,
+  canonicalGoldenStates,
+} from "../../scripts/golden-manifest.js";
 
 /**
  * LIVE golden recording capture.
@@ -22,16 +26,7 @@ const outputDir =
   process.env.LINEAGEGUARD_GOLDEN_SCREENSHOT_DIR ?? "artifacts/demo-readiness/screenshots";
 
 /** The eight states the recording script needs, in narrative order. */
-const requiredStates = [
-  "01-baseline-allow",
-  "02-datahub-consumers",
-  "03-allow-to-block",
-  "04-uuid-migration",
-  "05-validation-pass",
-  "06-generated-pr",
-  "07-datahub-writeback",
-  "08-completed-summary",
-] as const;
+const requiredStates = canonicalGoldenStates;
 
 /**
  * Only runs when a golden run id is supplied, which `pnpm demo:golden` always does. A bare
@@ -157,15 +152,12 @@ describeGolden("Golden recording (LIVE run)", () => {
     writeFileSync(
       `${outputDir}/manifest.json`,
       `${JSON.stringify(
-        {
-          runId: goldenRunId,
-          executionMode: run.executionMode,
-          status: run.status,
-          prUrl: run.prUrl,
+        buildGoldenScreenshotManifest({
+          run: { ...run, applicationCodeSha: run.applicationCodeSha ?? "" },
           capturedAt: new Date().toISOString(),
           viewport: { width: 1440, height: 900 },
           states: captured,
-        },
+        }),
         null,
         2,
       )}\n`,

@@ -40,6 +40,11 @@ import {
   sha256Bytes,
 } from "./acceptance-inspect.js";
 import {
+  assertAcceptanceCodeState,
+  type AcceptanceCodeState,
+  readAcceptanceCodeState,
+} from "./acceptance-code-state.js";
+import {
   argValue,
   type CheckResult,
   fail,
@@ -65,12 +70,6 @@ const canonicalValidationCheckCount = 8;
 function verifyDecisions(runRecord: StoredRun): CheckResult[] {
   const githubEffectOutcome = assessGitHubEffectOutcome(runRecord.githubEffectOutcome);
   return [
-    runRecord.applicationCodeSha && /^[0-9a-f]{40}$/.test(runRecord.applicationCodeSha)
-      ? pass("application code sha", runRecord.applicationCodeSha.slice(0, 12))
-      : fail(
-          "application code sha",
-          `${String(runRecord.applicationCodeSha)} — expected 40 hex chars`,
-        ),
     runRecord.status === "COMPLETED"
       ? pass("final state", "COMPLETED")
       : fail("final state", `${runRecord.status} — only COMPLETED is a successful demo`),
@@ -84,6 +83,18 @@ function verifyDecisions(runRecord: StoredRun): CheckResult[] {
       ? pass("github effect outcome", githubEffectOutcome.outcome)
       : fail("github effect outcome", githubEffectOutcome.reason),
   ];
+}
+
+function verifyApplicationCode(runRecord: StoredRun, current: AcceptanceCodeState): CheckResult {
+  try {
+    assertAcceptanceCodeState(current, {
+      applicationCodeSha: runRecord.applicationCodeSha ?? "",
+      porcelain: "",
+    });
+    return pass("application code sha", `${current.applicationCodeSha} (clean and exact)`);
+  } catch (error) {
+    return fail("application code sha", error instanceof Error ? error.message : String(error));
+  }
 }
 
 function verifyConsumers(runRecord: StoredRun): CheckResult[] {
@@ -652,6 +663,16 @@ async function main(): Promise<void> {
     return;
   }
 
+  let currentCodeState: AcceptanceCodeState;
+  try {
+    currentCodeState = await readAcceptanceCodeState();
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    console.log("\nverify: FAIL\n");
+    process.exitCode = 1;
+    return;
+  }
+
   const requested = argValue("--runId");
   const ok = await withRunStore(async (store) => {
     const runRecord = requested ? await store.get(requested) : await latestLiveRun(store);
@@ -661,6 +682,7 @@ async function main(): Promise<void> {
     }
     console.log(`verifying run ${runRecord.id}`);
     const results = [
+      verifyApplicationCode(runRecord, currentCodeState),
       ...verifyDecisions(runRecord),
       ...(await verifySource(runRecord)),
       ...verifyConsumers(runRecord),

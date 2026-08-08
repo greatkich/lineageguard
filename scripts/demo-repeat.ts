@@ -22,6 +22,11 @@ import {
   readDataHubDecisionState,
 } from "./acceptance-inspect.js";
 import {
+  assertAcceptanceCodeState,
+  type AcceptanceCodeState,
+  readAcceptanceCodeState,
+} from "./acceptance-code-state.js";
+import {
   argValue,
   type CheckResult,
   fail,
@@ -57,7 +62,14 @@ type RunOutcome = Readonly<{
   githubEffectOutcome: string | null;
 }>;
 
-async function executeOnce(index: number): Promise<RunOutcome> {
+function assertRunCodeSha(outcome: RunOutcome, accepted: AcceptanceCodeState): void {
+  assertAcceptanceCodeState(accepted, {
+    applicationCodeSha: outcome.applicationCodeSha ?? "",
+    porcelain: "",
+  });
+}
+
+async function executeOnce(index: number, accepted: AcceptanceCodeState): Promise<RunOutcome> {
   console.log(`\n--- run ${String(index)} ---`);
   try {
     await run("pnpm", ["demo:run"], { maxBuffer: 32 * 1024 * 1024 });
@@ -66,7 +78,7 @@ async function executeOnce(index: number): Promise<RunOutcome> {
     const message = error instanceof Error ? error.message : String(error);
     console.log(`  demo:run exited non-zero: ${message.slice(0, 160)}`);
   }
-  return withRunStore(async (store) => {
+  const outcome = await withRunStore(async (store) => {
     const latest = await latestLiveRun(store);
     if (!latest) throw new Error("demo:run produced no LIVE run record");
     console.log(`  ${latest.id} → ${latest.status}`);
@@ -98,6 +110,9 @@ async function executeOnce(index: number): Promise<RunOutcome> {
       githubEffectOutcome: latest.githubEffectOutcome,
     };
   });
+  assertRunCodeSha(outcome, accepted);
+  assertAcceptanceCodeState(accepted, await readAcceptanceCodeState());
+  return outcome;
 }
 
 /** Asserts that a value is identical across every run, reporting the distinct values when not. */
@@ -348,6 +363,8 @@ async function main(): Promise<void> {
     return;
   }
 
+  const acceptedCodeState = await readAcceptanceCodeState();
+
   // A pre-run inspection that fails is fatal: without a baseline we cannot claim zero leaks.
   const containersBefore = await listValidatorContainers();
   const worktreesBefore = await listValidationWorktrees();
@@ -365,8 +382,9 @@ async function main(): Promise<void> {
 
   const outcomes: RunOutcome[] = [];
   for (let index = 1; index <= count; index += 1) {
-    outcomes.push(await executeOnce(index));
+    outcomes.push(await executeOnce(index, acceptedCodeState));
   }
+  assertAcceptanceCodeState(acceptedCodeState, await readAcceptanceCodeState());
 
   const results = [
     ...summarise(outcomes),
@@ -389,12 +407,9 @@ async function main(): Promise<void> {
   const candidates = [
     ...new Set(outcomes.map((outcome) => outcome.candidateFingerprint).filter(Boolean)),
   ];
-  const codeShas = [
-    ...new Set(outcomes.map((outcome) => outcome.applicationCodeSha).filter(Boolean)),
-  ];
   const headShas = [...new Set(outcomes.map((outcome) => outcome.githubHeadSha).filter(Boolean))];
   console.log(`  run ids:              ${outcomes.map((outcome) => outcome.runId).join(", ")}`);
-  console.log(`  application code sha: ${codeShas.join(", ") || "none"}`);
+  console.log(`  accepted code sha:    ${acceptedCodeState.applicationCodeSha}`);
   console.log(`  candidate identity:   ${candidates.join(", ") || "none"}`);
   console.log(`  generated pr:         ${prUrls.join(", ") || "none"}`);
   console.log(`  generated head sha:   ${headShas.join(", ") || "none"}`);

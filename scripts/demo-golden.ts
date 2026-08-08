@@ -24,27 +24,19 @@ import {
   wantsHelp,
   withRunStore,
 } from "./demo-support.js";
+import { canonicalGoldenStates } from "./golden-manifest.js";
 
 loadEnv();
 
 /** The eight recording states, matching tests/e2e/golden-recording.spec.ts. */
-const requiredStates = [
-  "01-baseline-allow",
-  "02-datahub-consumers",
-  "03-allow-to-block",
-  "04-uuid-migration",
-  "05-validation-pass",
-  "06-generated-pr",
-  "07-datahub-writeback",
-  "08-completed-summary",
-] as const;
+const requiredStates = canonicalGoldenStates;
 
 const screenshotDir = "artifacts/demo-readiness/screenshots";
 
 class GoldenFailure extends Error {}
 
 /** Resolves the run to record, refusing fixtures and anything that is not a COMPLETED LIVE run. */
-async function resolveRunId(): Promise<string> {
+async function resolveRun(): Promise<{ id: string; applicationCodeSha: string | null }> {
   const requested = argValue("--runId");
   return withRunStore(async (store) => {
     const record = requested ? await store.get(requested) : await latestLiveRun(store);
@@ -66,7 +58,7 @@ async function resolveRunId(): Promise<string> {
         `run ${record.id} is ${record.status}; only COMPLETED may be recorded`,
       );
     }
-    return record.id;
+    return { id: record.id, applicationCodeSha: record.applicationCodeSha };
   });
 }
 
@@ -81,7 +73,7 @@ async function gate(name: string, action: () => Promise<void>): Promise<CheckRes
 }
 
 /** Asserts the recording produced exactly the required states, each a non-empty PNG. */
-function verifyScreenshots(runId: string): CheckResult[] {
+function verifyScreenshots(runId: string, applicationCodeSha: string | null): CheckResult[] {
   const results: CheckResult[] = [];
   const missing: string[] = [];
   const empty: string[] = [];
@@ -110,6 +102,7 @@ function verifyScreenshots(runId: string): CheckResult[] {
   try {
     const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as {
       runId?: string;
+      applicationCodeSha?: string;
       states?: string[];
       executionMode?: string;
     };
@@ -118,11 +111,17 @@ function verifyScreenshots(runId: string): CheckResult[] {
       manifest.states.length === requiredStates.length &&
       requiredStates.every((state, index) => manifest.states?.[index] === state);
     results.push(
-      manifest.runId === runId && manifest.executionMode === "LIVE" && statesMatch
-        ? pass("recording manifest", `binds ${String(requiredStates.length)} states to ${runId}`)
+      manifest.runId === runId &&
+        manifest.applicationCodeSha === applicationCodeSha &&
+        manifest.executionMode === "LIVE" &&
+        statesMatch
+        ? pass(
+            "recording manifest",
+            `binds ${String(requiredStates.length)} states to ${runId} at ${String(applicationCodeSha)}`,
+          )
         : fail(
             "recording manifest",
-            `manifest names run ${String(manifest.runId)} (${String(manifest.executionMode)}) with ${String(manifest.states?.length)} states`,
+            `manifest names run ${String(manifest.runId)} at ${String(manifest.applicationCodeSha)} (${String(manifest.executionMode)}) with ${String(manifest.states?.length)} states`,
           ),
     );
   } catch (error) {
@@ -145,15 +144,16 @@ async function main(): Promise<void> {
     return;
   }
 
-  let runId: string;
+  let selectedRun: { id: string; applicationCodeSha: string | null };
   try {
-    runId = await resolveRunId();
+    selectedRun = await resolveRun();
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
     console.log("\ngolden: FAILED\n");
     process.exitCode = 1;
     return;
   }
+  const runId = selectedRun.id;
 
   console.log(`golden run: ${runId}\n`);
   const artifactsDir = join(process.cwd(), "artifacts/demo-runs", runId);
@@ -183,7 +183,7 @@ async function main(): Promise<void> {
     }),
   );
 
-  results.push(...verifyScreenshots(runId));
+  results.push(...verifyScreenshots(runId, selectedRun.applicationCodeSha));
 
   results.push(
     await gate("golden run snapshot", async () => {
