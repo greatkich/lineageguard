@@ -323,6 +323,34 @@ function createValidationPort(workerId: string): AgentValidationPort | undefined
 //   - Idempotent PR creation prevents duplicates
 // ---------------------------------------------------------------------------
 
+const GITHUB_BOT_IDENTITY = {
+  name: "LineageGuard Bot",
+  email: "lineageguard-bot@users.noreply.github.com",
+} as const;
+
+function deterministicCommitMetadata(baseCommit: unknown): {
+  treeSha: string;
+  identity: { name: string; email: string; date: string };
+} {
+  const commit = baseCommit as {
+    tree?: { sha?: unknown };
+    committer?: { date?: unknown };
+  };
+  if (typeof commit?.tree?.sha !== "string" || commit.tree.sha.length === 0) {
+    throw new Error("Base GitHub commit has no tree SHA");
+  }
+  const date = commit.committer?.date;
+  const rfc3339 =
+    typeof date === "string" &&
+    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2})$/.test(date);
+  const timestamp = rfc3339 ? Date.parse(date) : Number.NaN;
+  if (!Number.isFinite(timestamp)) throw new Error("Base GitHub commit has no valid RFC3339 date");
+  return {
+    treeSha: commit.tree.sha,
+    identity: { ...GITHUB_BOT_IDENTITY, date: new Date(timestamp).toISOString() },
+  };
+}
+
 export function createGitHubPort(): AgentGitHubPort | undefined {
   const token = process.env.GITHUB_TOKEN;
   const owner = process.env.GITHUB_OWNER;
@@ -362,6 +390,7 @@ export function createGitHubPort(): AgentGitHubPort | undefined {
         owner,
         repo,
         branchName,
+        baseBranch,
         baseSha,
         artifacts,
       };
@@ -372,6 +401,12 @@ export function createGitHubPort(): AgentGitHubPort | undefined {
         );
         return reconciled.receipt;
       }
+
+      const baseCommitResponse = await ghFetch(
+        token,
+        `${apiBase}/repos/${owner}/${repo}/git/commits/${baseSha}`,
+      );
+      const baseCommit = deterministicCommitMetadata(baseCommitResponse);
 
       // Create tree with artifacts
       const treeEntries: Array<{ path: string; mode: string; type: string; sha: string }> = [];
@@ -384,13 +419,9 @@ export function createGitHubPort(): AgentGitHubPort | undefined {
       }
 
       // Create tree
-      const baseCommit = (await ghFetch(
-        token,
-        `${apiBase}/repos/${owner}/${repo}/git/commits/${baseSha}`,
-      )) as { tree: { sha: string } };
       const tree = (await ghFetch(token, `${apiBase}/repos/${owner}/${repo}/git/trees`, {
         method: "POST",
-        body: { base_tree: baseCommit.tree.sha, tree: treeEntries },
+        body: { base_tree: baseCommit.treeSha, tree: treeEntries },
       })) as { sha: string };
 
       // Create commit.
@@ -407,6 +438,8 @@ export function createGitHubPort(): AgentGitHubPort | undefined {
           message: `LineageGuard migration for candidate ${candidateFingerprint.slice(0, 12)}\n\nSafe migration: customer_id → buyer_id (expand-migrate-contract)`,
           tree: tree.sha,
           parents: [baseSha],
+          author: baseCommit.identity,
+          committer: baseCommit.identity,
         },
       })) as { sha: string };
 

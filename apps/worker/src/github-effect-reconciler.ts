@@ -12,6 +12,7 @@ export interface ReconcileGitHubEffectOptions {
   owner: string;
   repo: string;
   branchName: string;
+  baseBranch: string;
   baseSha: string;
   artifacts: readonly GitHubArtifact[];
 }
@@ -25,6 +26,8 @@ interface PullRequestResponse {
   html_url?: string;
   number?: number;
   draft?: boolean;
+  base?: { ref?: string; sha?: string; repo?: { full_name?: string } | null };
+  head?: { ref?: string; sha?: string; repo?: { full_name?: string } | null };
 }
 
 interface TreeEntry {
@@ -176,11 +179,15 @@ async function assertExactArtifactBytes(
 
 async function readExactDraftPullRequest(
   options: ReconcileGitHubEffectOptions,
+  headSha: string,
 ): Promise<{ prUrl: string; prNumber: number }> {
-  const pulls = await requestJson<PullRequestResponse[]>(
-    options,
-    `/pulls?state=open&head=${options.owner}:${options.branchName}`,
-  );
+  const query = new URLSearchParams([
+    ["state", "open"],
+    ["head", `${options.owner}:${options.branchName}`],
+    ["base", options.baseBranch],
+    ["per_page", "2"],
+  ]);
+  const pulls = await requestJson<PullRequestResponse[]>(options, `/pulls?${query.toString()}`);
   if (pulls.length !== 1) {
     throw new Error("Existing GitHub effect requires exactly one open draft pull request");
   }
@@ -188,6 +195,15 @@ async function readExactDraftPullRequest(
   if (pull.draft !== true || !pull.html_url || !pull.number) {
     throw new Error("Existing GitHub effect does not have a valid draft pull request");
   }
+  const repository = `${options.owner}/${options.repo}`;
+  const bindingIsExact =
+    pull.base?.ref === options.baseBranch &&
+    pull.base.sha === options.baseSha &&
+    pull.base.repo?.full_name === repository &&
+    pull.head?.ref === options.branchName &&
+    pull.head.sha === headSha &&
+    pull.head.repo?.full_name === repository;
+  if (!bindingIsExact) throw new Error("Existing GitHub pull request binding is not exact");
   return { prUrl: pull.html_url, prNumber: pull.number };
 }
 
@@ -210,7 +226,7 @@ export async function reconcileGitHubEffect(
   const baseEntries = await readTree(options, requireTreeSha(baseCommit, "Base"));
   assertExactTreeDelta(baseEntries, headEntries, options.artifacts);
   await assertExactArtifactBytes(options, headEntries);
-  const pull = await readExactDraftPullRequest(options);
+  const pull = await readExactDraftPullRequest(options, headSha);
   const receiptFingerprint = createHash("sha256")
     .update(JSON.stringify({ prUrl: pull.prUrl, headSha }))
     .digest("hex");

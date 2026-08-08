@@ -16,6 +16,14 @@ interface RecordedRequest {
   url: string;
 }
 
+interface PullRequestFixture {
+  html_url: string;
+  number: number;
+  draft: boolean;
+  base: { ref: string; sha: string; repo: { full_name: string } };
+  head: { ref: string; sha: string; repo: { full_name: string } };
+}
+
 interface FakeOverrides {
   refStatus?: number;
   headTreeTruncated?: boolean;
@@ -26,7 +34,37 @@ interface FakeOverrides {
   modeOnlyChange?: boolean;
   submoduleChange?: boolean;
   treeAncestorChanges?: boolean;
-  pullRequests?: Array<{ html_url: string; number: number; draft: boolean }>;
+  pullRequests?: PullRequestFixture[];
+}
+
+function pullRequestFixture(
+  overrides: Partial<{
+    number: number;
+    draft: boolean;
+    baseRef: string;
+    baseSha: string;
+    baseRepo: string;
+    headRef: string;
+    headSha: string;
+    headRepo: string;
+  }> = {},
+): PullRequestFixture {
+  const number = overrides.number ?? 41;
+  return {
+    html_url: `https://github.com/owner/repo/pull/${String(number)}`,
+    number,
+    draft: overrides.draft ?? true,
+    base: {
+      ref: overrides.baseRef ?? "main",
+      sha: overrides.baseSha ?? baseSha,
+      repo: { full_name: overrides.baseRepo ?? "owner/repo" },
+    },
+    head: {
+      ref: overrides.headRef ?? branchName,
+      sha: overrides.headSha ?? headSha,
+      repo: { full_name: overrides.headRepo ?? "owner/repo" },
+    },
+  };
 }
 
 function jsonResponse(value: unknown, status = 200): Response {
@@ -110,12 +148,8 @@ function installHttpFake(overrides: FakeOverrides = {}): RecordedRequest[] {
           : artifacts[blobIndex]!.content;
       return jsonResponse({ encoding: "base64", content: Buffer.from(content).toString("base64") });
     }
-    if (url.includes(`/pulls?state=open&head=owner:${branchName}`)) {
-      return jsonResponse(
-        overrides.pullRequests ?? [
-          { html_url: "https://github.com/owner/repo/pull/41", number: 41, draft: true },
-        ],
-      );
+    if (url.includes("/pulls?")) {
+      return jsonResponse(overrides.pullRequests ?? [pullRequestFixture()]);
     }
     return jsonResponse({ message: `Unhandled fake request: ${url}` }, 500);
   });
@@ -129,6 +163,7 @@ function reconcile(): ReturnType<typeof reconcileGitHubEffect> {
     owner: "owner",
     repo: "repo",
     branchName,
+    baseBranch: "main",
     baseSha,
     artifacts,
   });
@@ -146,6 +181,9 @@ describe("reconcileGitHubEffect", () => {
 
     expect(result).toMatchObject({ kind: "EXACT", receipt: { outcome: "SKIPPED_EXACT" } });
     expect(requests.filter((request) => request.method !== "GET")).toEqual([]);
+    expect(requests.find((request) => request.url.includes("/pulls?"))?.url).toBe(
+      `https://api.github.test/repos/owner/repo/pulls?state=open&head=owner%3A${encodeURIComponent(branchName)}&base=main&per_page=2`,
+    );
   });
 
   it("treats only a 404 ref as missing", async () => {
@@ -210,9 +248,7 @@ describe("reconcileGitHubEffect", () => {
 
   it("rejects a non-draft pull request", async () => {
     installHttpFake({
-      pullRequests: [
-        { html_url: "https://github.com/owner/repo/pull/41", number: 41, draft: false },
-      ],
+      pullRequests: [pullRequestFixture({ draft: false })],
     });
 
     await expect(reconcile()).rejects.toThrow("draft pull request");
@@ -220,12 +256,22 @@ describe("reconcileGitHubEffect", () => {
 
   it("rejects duplicate open pull requests", async () => {
     installHttpFake({
-      pullRequests: [
-        { html_url: "https://github.com/owner/repo/pull/41", number: 41, draft: true },
-        { html_url: "https://github.com/owner/repo/pull/42", number: 42, draft: true },
-      ],
+      pullRequests: [pullRequestFixture(), pullRequestFixture({ number: 42 })],
     });
 
     await expect(reconcile()).rejects.toThrow("exactly one open draft pull request");
+  });
+
+  it.each([
+    { name: "base ref", pull: pullRequestFixture({ baseRef: "release" }) },
+    { name: "base sha", pull: pullRequestFixture({ baseSha: "x".repeat(40) }) },
+    { name: "head ref", pull: pullRequestFixture({ headRef: "other-branch" }) },
+    { name: "head sha", pull: pullRequestFixture({ headSha: "x".repeat(40) }) },
+    { name: "base repository", pull: pullRequestFixture({ baseRepo: "other/repo" }) },
+    { name: "head repository", pull: pullRequestFixture({ headRepo: "other/repo" }) },
+  ])("rejects a pull request with mismatched $name binding", async ({ pull }) => {
+    installHttpFake({ pullRequests: [pull] });
+
+    await expect(reconcile()).rejects.toThrow("pull request binding");
   });
 });

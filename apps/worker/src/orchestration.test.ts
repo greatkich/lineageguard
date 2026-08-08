@@ -60,15 +60,33 @@ function reviewInput(
 }
 
 type RecoveryPull = { html_url: string; number: number; draft: boolean };
+type RecordedCall = { url: string; method: string; body?: unknown };
 
 interface RecoveryFakeState {
   pulls: RecoveryPull[];
-  calls: Array<{ url: string; method: string }>;
+  calls: RecordedCall[];
   branchName: string;
   baseSha: string;
   localCommitSha: string;
   remoteHeadSha: string;
+  baseCommit: unknown;
   branchCreated: boolean;
+}
+
+function boundRecoveryPulls(state: RecoveryFakeState) {
+  return state.pulls.map((pull) => ({
+    ...pull,
+    base: {
+      ref: "main",
+      sha: state.baseSha,
+      repo: { full_name: "org/walkthrough" },
+    },
+    head: {
+      ref: state.branchName,
+      sha: state.remoteHeadSha,
+      repo: { full_name: "org/walkthrough" },
+    },
+  }));
 }
 
 function recoveryReadResponse(state: RecoveryFakeState, url: string): Response {
@@ -84,8 +102,7 @@ function recoveryReadResponse(state: RecoveryFakeState, url: string): Response {
       content: Buffer.from("# Migration\n").toString("base64"),
     });
   }
-  if (url.endsWith(`/git/commits/${state.baseSha}`))
-    return jsonResponse({ tree: { sha: "base-tree-sha" } });
+  if (url.endsWith(`/git/commits/${state.baseSha}`)) return jsonResponse(state.baseCommit);
   if (url.endsWith(`/git/commits/${state.remoteHeadSha}`)) {
     return jsonResponse({
       parents: [{ sha: state.baseSha }],
@@ -107,8 +124,7 @@ function recoveryReadResponse(state: RecoveryFakeState, url: string): Response {
       ],
     });
   }
-  if (url.includes(`/pulls?state=open&head=org:${state.branchName}`))
-    return jsonResponse(state.pulls);
+  if (url.includes("/pulls?")) return jsonResponse(boundRecoveryPulls(state));
   throw new Error(`Unexpected fetch: GET ${url}`);
 }
 
@@ -126,8 +142,17 @@ function recoveryWriteResponse(state: RecoveryFakeState, url: string): Response 
   throw new Error(`Unexpected fetch: POST ${url}`);
 }
 
-function installPrRecoveryFake(options: { pulls: RecoveryPull[]; remoteHeadSha?: string }) {
-  const input = reviewInput();
+function requestBody(init: RequestInit | undefined): unknown {
+  return typeof init?.body === "string" ? JSON.parse(init.body) : undefined;
+}
+
+function installPrRecoveryFake(options: {
+  pulls: RecoveryPull[];
+  remoteHeadSha?: string;
+  runId?: string;
+  baseCommit?: unknown;
+}) {
+  const input = reviewInput(options.runId ? { runId: options.runId } : {});
   const state: RecoveryFakeState = {
     pulls: options.pulls,
     calls: [],
@@ -135,14 +160,34 @@ function installPrRecoveryFake(options: { pulls: RecoveryPull[]; remoteHeadSha?:
     baseSha: "a".repeat(40),
     localCommitSha: "c".repeat(40),
     remoteHeadSha: options.remoteHeadSha ?? "c".repeat(40),
+    baseCommit: options.baseCommit ?? {
+      tree: { sha: "base-tree-sha" },
+      committer: { date: "2026-08-01T12:34:56Z" },
+    },
     branchCreated: false,
   };
   vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
     const method = init?.method ?? "GET";
-    state.calls.push({ url, method });
+    state.calls.push({ url, method, body: requestBody(init) });
     return method === "GET" ? recoveryReadResponse(state, url) : recoveryWriteResponse(state, url);
   });
   return { calls: state.calls, input };
+}
+
+async function createdCommitBody(runId: string): Promise<Record<string, unknown>> {
+  githubEnv();
+  const { calls, input } = installPrRecoveryFake({
+    pulls: [{ html_url: "https://github.com/org/walkthrough/pull/7", number: 7, draft: true }],
+    runId,
+  });
+  const port = createGitHubPort();
+  if (!port) throw new Error("GitHub port should be configured");
+  await port.createReview(input);
+  const commitCall = calls.find(
+    (call) => call.method === "POST" && call.url.endsWith("/git/commits"),
+  );
+  if (!commitCall?.body) throw new Error("GitHub commit request was not recorded");
+  return commitCall.body as Record<string, unknown>;
 }
 
 describe("createGitHubPort", () => {
@@ -179,6 +224,38 @@ describe("createGitHubPort", () => {
     if (!port) throw new Error("GitHub port should be configured");
 
     await expect(port.createReview(input)).rejects.toThrow(/exact recovery failed.*head/i);
+  });
+
+  it("uses identical deterministic author and committer metadata across run ids", async () => {
+    const first = await createdCommitBody("run_deterministic_commit_0001");
+    const second = await createdCommitBody("run_deterministic_commit_0002");
+    const identity = {
+      name: "LineageGuard Bot",
+      email: "lineageguard-bot@users.noreply.github.com",
+      date: "2026-08-01T12:34:56.000Z",
+    };
+
+    expect(first).toMatchObject({ author: identity, committer: identity });
+    expect(second).toMatchObject({ author: identity, committer: identity });
+    expect(first.author).toEqual(second.author);
+    expect(first.committer).toEqual(second.committer);
+    expect(JSON.stringify([first, second])).not.toContain("run_deterministic_commit");
+  });
+
+  it.each([
+    { name: "missing tree", baseCommit: { committer: { date: "2026-08-01T12:34:56Z" } } },
+    {
+      name: "invalid date",
+      baseCommit: { tree: { sha: "base-tree-sha" }, committer: { date: "now" } },
+    },
+  ])("rejects a base commit with $name before mutation", async ({ baseCommit }) => {
+    githubEnv();
+    const { calls, input } = installPrRecoveryFake({ pulls: [], baseCommit });
+    const port = createGitHubPort();
+    if (!port) throw new Error("GitHub port should be configured");
+
+    await expect(port.createReview(input)).rejects.toThrow("Base GitHub commit");
+    expect(calls.filter((call) => call.method !== "GET")).toEqual([]);
   });
 
   it.each([
