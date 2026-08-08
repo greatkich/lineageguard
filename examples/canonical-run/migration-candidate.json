@@ -45,7 +45,7 @@
       ]
     }
   ],
-  "summary": "Renaming a column referenced by five downstream consumers—including two CRITICAL dashboards and a production ML model—requires a phased expand-migrate-contract strategy to avoid breaking changes. The expand phase introduces buyer_id as a synchronized duplicate, allowing both old and new names to coexist. Consumers are migrated individually in priority order (CRITICAL systems first after the safe HIGH-priority system validates the path). Data integrity assertions run continuously during the migration window. A 90-day deprecation period gives unmapped or late-discovered consumers time to surface before the contract phase removes customer_id. Rollback paths are defined for each phase to ensure recoverability at any point.",
+  "summary": "Renaming a column in-place would instantly break five downstream consumers including two CRITICAL dashboards and an ML model. The expand-migrate-contract strategy introduces the new 'buyer_id' column alongside the existing 'customer_id', keeps both in sync with integrity assertions, migrates each consumer individually with validation, and only removes the old column after a 90-day deprecation window with confirmed zero usage. This ensures zero downtime, full backward compatibility, and safe rollback at every stage.",
   "strategy": "EXPAND_MIGRATE_CONTRACT",
   "artifacts": [
     {

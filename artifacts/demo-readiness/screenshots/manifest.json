@@ -1,9 +1,10 @@
 {
-  "runId": "run_000000000000019fde42c1f0",
+  "runId": "run_000000000000019fe1aafd0a",
+  "applicationCodeSha": "c589f69580c6c56744703ec089554df117e6b0dd",
   "executionMode": "LIVE",
   "status": "COMPLETED",
   "prUrl": "https://github.com/greatkich/lineageguard/pull/7",
-  "capturedAt": "2026-08-07T22:07:56.184Z",
+  "capturedAt": "2026-08-08T14:01:00.342Z",
   "viewport": {
     "width": 1440,
     "height": 900

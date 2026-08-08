@@ -23,16 +23,16 @@
           "role": "QUERY_DISCOVERY",
           "tool": "get_dataset_queries",
           "source": "DATAHUB_MCP",
-          "retrievedAt": "2026-08-07T22:05:52.756Z",
-          "invocationId": "mcp_29a3cfd7-626d-4aeb-8645-6cd65965d4a8",
+          "retrievedAt": "2026-08-08T13:58:36.440Z",
+          "invocationId": "mcp_49c62eeb-be39-454f-8273-454296ef4c5f",
           "responseFingerprint": "5ae6ad2907e34df653bca7481e4eaf051e8fe240067e7fad0bdac1139b68b91b"
         },
         {
           "role": "QUERY_DETAILS",
           "tool": "get_entities",
           "source": "DATAHUB_MCP",
-          "retrievedAt": "2026-08-07T22:05:54.047Z",
-          "invocationId": "mcp_b0cf39d8-3b5d-401c-907c-7e4fd8e9e15c",
+          "retrievedAt": "2026-08-08T13:58:37.953Z",
+          "invocationId": "mcp_3d5954ca-98cd-4f3b-8a2c-db8c0d14d195",
           "responseFingerprint": "049e633c4c9c6bcdd50381eda7831a516fa7cc94021f09944eb0e38a43ae823c"
         }
       ],
@@ -60,9 +60,9 @@
           "role": "OWNER",
           "tool": "get_entities",
           "source": "DATAHUB_MCP",
-          "retrievedAt": "2026-08-07T22:05:53.619Z",
-          "invocationId": "mcp_bc89de84-ca05-4d0b-b57e-e80b83660e5f",
-          "responseFingerprint": "79ed448c90e6fbb774c967436e07a08662448a081b76a368099fc0d53c019c89"
+          "retrievedAt": "2026-08-08T13:58:37.439Z",
+          "invocationId": "mcp_7773b0c6-6c3c-4d8b-955f-fe751797b096",
+          "responseFingerprint": "a8a152b8e88beefd76f80f3ceca12ce0904e1031f88a67fe52685ece4b5a3cde"
         }
       ],
       "criticality": "HIGH",
@@ -89,8 +89,8 @@
           "role": "SCHEMA",
           "tool": "list_schema_fields",
           "source": "DATAHUB_MCP",
-          "retrievedAt": "2026-08-07T22:05:49.847Z",
-          "invocationId": "mcp_c00661a8-632d-42cf-a4ac-c7abc9313e6b",
+          "retrievedAt": "2026-08-08T13:58:33.580Z",
+          "invocationId": "mcp_c11814b9-1358-4938-81ce-3589ae5d2881",
           "responseFingerprint": "36f66680231e9f7f085900065d34c28c9f0e3a65887fb44b644852b124894a3e"
         }
       ],
@@ -126,9 +126,9 @@
           "role": "ENTITY_DETAILS",
           "tool": "get_entities",
           "source": "DATAHUB_MCP",
-          "retrievedAt": "2026-08-07T22:05:53.194Z",
-          "invocationId": "mcp_b39cc0de-5c4f-4759-8fa4-0d56f1810b7f",
-          "responseFingerprint": "e890ee62c31f04a17570e6b2208a6972b81f18445f55eaf86da8f25cbfa323fa"
+          "retrievedAt": "2026-08-08T13:58:36.947Z",
+          "invocationId": "mcp_a319b70a-0ec5-496e-a0d6-af758444bfd1",
+          "responseFingerprint": "33dde5e34c3924d3dfdd44bb938217f6906e5f4218916bd646d728ced60c6c60"
         }
       ],
       "criticality": "CRITICAL",
@@ -181,24 +181,24 @@
           "role": "LINEAGE_DISCOVERY",
           "tool": "get_lineage",
           "source": "DATAHUB_MCP",
-          "retrievedAt": "2026-08-07T22:05:50.372Z",
-          "invocationId": "mcp_4c8dc5a5-98c7-4ac8-b2f2-d1a1c384be47",
-          "responseFingerprint": "4694c581bc761f4f8f7ecaf54445108161e201191db2148ee61ac0308b774b52"
+          "retrievedAt": "2026-08-08T13:58:34.077Z",
+          "invocationId": "mcp_79f8a47a-2e3d-460d-a9fb-0b80d48078e6",
+          "responseFingerprint": "ecaedf7180da007aac903fe2905847d32b20b1e58148929130fcd1dc3d9c48a9"
         },
         {
           "role": "FIELD_PATH",
           "tool": "get_lineage_paths_between",
           "source": "DATAHUB_MCP",
-          "retrievedAt": "2026-08-07T22:05:50.876Z",
-          "invocationId": "mcp_95d827d8-0cd2-4517-8079-0cc2e0e996a2",
+          "retrievedAt": "2026-08-08T13:58:34.550Z",
+          "invocationId": "mcp_4106e0c3-d397-4c37-af9b-9430f90e703f",
           "responseFingerprint": "a11143f9eb5eba46baeeb20bc8a04553ff5ede4d4470fae17cc8cad7747a6258"
         },
         {
           "role": "ENTITY_PATH",
           "tool": "get_lineage_paths_between",
           "source": "DATAHUB_MCP",
-          "retrievedAt": "2026-08-07T22:05:51.410Z",
-          "invocationId": "mcp_ff49e38d-0597-4488-a2cb-a2c872d945bc",
+          "retrievedAt": "2026-08-08T13:58:35.025Z",
+          "invocationId": "mcp_729239a1-6da8-467c-943f-d3df8d51df70",
           "responseFingerprint": "bc99ab9304e994cebdffefccc5ee1bd556d535070a08c7750bc234f64e9350e7"
         }
       ],
@@ -250,24 +250,24 @@
           "role": "LINEAGE_DISCOVERY",
           "tool": "get_lineage",
           "source": "DATAHUB_MCP",
-          "retrievedAt": "2026-08-07T22:05:50.372Z",
-          "invocationId": "mcp_4c8dc5a5-98c7-4ac8-b2f2-d1a1c384be47",
-          "responseFingerprint": "4694c581bc761f4f8f7ecaf54445108161e201191db2148ee61ac0308b774b52"
+          "retrievedAt": "2026-08-08T13:58:34.077Z",
+          "invocationId": "mcp_79f8a47a-2e3d-460d-a9fb-0b80d48078e6",
+          "responseFingerprint": "ecaedf7180da007aac903fe2905847d32b20b1e58148929130fcd1dc3d9c48a9"
         },
         {
           "role": "FIELD_PATH",
           "tool": "get_lineage_paths_between",
           "source": "DATAHUB_MCP",
-          "retrievedAt": "2026-08-07T22:05:51.896Z",
-          "invocationId": "mcp_aa6a4285-47c6-42b2-8c38-387557d38dbf",
+          "retrievedAt": "2026-08-08T13:58:35.509Z",
+          "invocationId": "mcp_8d9046c7-c82f-42c0-be08-61305f87c2ed",
           "responseFingerprint": "c0e9eeaa94f8b054b80dbae50d57317c1bd8eb19ff255b4355588d807b348656"
         },
         {
           "role": "ENTITY_PATH",
           "tool": "get_lineage_paths_between",
           "source": "DATAHUB_MCP",
-          "retrievedAt": "2026-08-07T22:05:52.335Z",
-          "invocationId": "mcp_51fd0d83-f656-4f7f-b288-010183bad102",
+          "retrievedAt": "2026-08-08T13:58:36.035Z",
+          "invocationId": "mcp_1535593c-259d-463e-8657-08b96f19f5db",
           "responseFingerprint": "389808c1a0bed65cb69e975fe1aa0a3f94e0138c074f7b80d219674f68c3550c"
         }
       ],
@@ -294,17 +294,17 @@
           "role": "GLOSSARY_BINDING",
           "tool": "list_schema_fields",
           "source": "DATAHUB_MCP",
-          "retrievedAt": "2026-08-07T22:05:49.847Z",
-          "invocationId": "mcp_c00661a8-632d-42cf-a4ac-c7abc9313e6b",
+          "retrievedAt": "2026-08-08T13:58:33.580Z",
+          "invocationId": "mcp_c11814b9-1358-4938-81ce-3589ae5d2881",
           "responseFingerprint": "36f66680231e9f7f085900065d34c28c9f0e3a65887fb44b644852b124894a3e"
         },
         {
           "role": "GLOSSARY_DETAILS",
           "tool": "get_entities",
           "source": "DATAHUB_MCP",
-          "retrievedAt": "2026-08-07T22:05:55.053Z",
-          "invocationId": "mcp_606316d3-8ed4-466b-8b55-5ae77238c2b8",
-          "responseFingerprint": "8184f85926ab7fb58a3dcb378fd0334ec8acdc51d3f269236932b638f344aec4"
+          "retrievedAt": "2026-08-08T13:58:38.870Z",
+          "invocationId": "mcp_830daed3-d1c0-444d-8078-88c42f68b7c1",
+          "responseFingerprint": "a7474d32717772d18cbd36018c5cb50b1a93f24af33ab79beb9136832889b286"
         }
       ],
       "criticality": "HIGH",
@@ -329,9 +329,9 @@
           "role": "OWNER",
           "tool": "get_entities",
           "source": "DATAHUB_MCP",
-          "retrievedAt": "2026-08-07T22:05:53.194Z",
-          "invocationId": "mcp_b39cc0de-5c4f-4759-8fa4-0d56f1810b7f",
-          "responseFingerprint": "e890ee62c31f04a17570e6b2208a6972b81f18445f55eaf86da8f25cbfa323fa"
+          "retrievedAt": "2026-08-08T13:58:36.947Z",
+          "invocationId": "mcp_a319b70a-0ec5-496e-a0d6-af758444bfd1",
+          "responseFingerprint": "33dde5e34c3924d3dfdd44bb938217f6906e5f4218916bd646d728ced60c6c60"
         }
       ],
       "criticality": "HIGH",
@@ -358,9 +358,9 @@
           "role": "OWNER",
           "tool": "get_entities",
           "source": "DATAHUB_MCP",
-          "retrievedAt": "2026-08-07T22:05:54.603Z",
-          "invocationId": "mcp_3ea77002-7af4-4190-81aa-11c92bf39aad",
-          "responseFingerprint": "83e1717524f88406cd2020948b8ee827f15bd04bdf95753ce03ba2e8f349e250"
+          "retrievedAt": "2026-08-08T13:58:38.469Z",
+          "invocationId": "mcp_16b58c28-2f5d-474b-a734-be69ada2908a",
+          "responseFingerprint": "8d2cb0df4e8a7c52827aa07760d381863761063010d63a9b2ca9a967f74bae4d"
         }
       ],
       "criticality": "HIGH",
@@ -390,7 +390,7 @@
           "endpoint": "http://127.0.0.1:8080/openapi/v3/entity/mlModel/urn%3Ali%3AmlModel%3A(urn%3Ali%3AdataPlatform%3Amlflow%2Clineageguard-canonical.fraud-model-v3%2CPROD)/mlModelTrainingData",
           "modelUrn": "urn:li:mlModel:(urn:li:dataPlatform:mlflow,lineageguard-canonical.fraud-model-v3,PROD)",
           "aspectName": "mlModelTrainingData",
-          "retrievedAt": "2026-08-07T22:05:52.354Z",
+          "retrievedAt": "2026-08-08T13:58:36.062Z",
           "responseSha256": "80faac3cadf4a038184693756a8ae33978c88cbb83af17bd2366bf560ae5c6df",
           "credentialClass": "READ",
           "provenDatasetUrn": "urn:li:dataset:(urn:li:dataPlatform:postgres,lineageguard-canonical.lineageguard.fraud.customer_features,PROD)"
@@ -405,9 +405,9 @@
           "role": "ENTITY_DETAILS",
           "tool": "get_entities",
           "source": "DATAHUB_MCP",
-          "retrievedAt": "2026-08-07T22:05:53.619Z",
-          "invocationId": "mcp_bc89de84-ca05-4d0b-b57e-e80b83660e5f",
-          "responseFingerprint": "79ed448c90e6fbb774c967436e07a08662448a081b76a368099fc0d53c019c89"
+          "retrievedAt": "2026-08-08T13:58:37.439Z",
+          "invocationId": "mcp_7773b0c6-6c3c-4d8b-955f-fe751797b096",
+          "responseFingerprint": "a8a152b8e88beefd76f80f3ceca12ce0904e1031f88a67fe52685ece4b5a3cde"
         }
       ],
       "criticality": "CRITICAL",
@@ -436,19 +436,19 @@
         "role": "RESOLUTION",
         "tool": "search",
         "source": "DATAHUB_MCP",
-        "retrievedAt": "2026-08-07T22:05:49.383Z",
-        "invocationId": "mcp_ecb9daa5-93c0-4211-b986-7e5c8f7d6967",
-        "responseFingerprint": "0e5f7d16bb9804be782c0b014c1b97cd5d8ce8eb47cb5195b476f60576304346"
+        "retrievedAt": "2026-08-08T13:58:31.903Z",
+        "invocationId": "mcp_fb0c5368-56b5-40ec-affe-9ddbbd53d1a3",
+        "responseFingerprint": "9251c547482d0822218ee3a1e0234e3bc0b95ca405b3d1776fb48dced70254f1"
       }
     ],
     "schemaFieldUrn": "urn:li:schemaField:(urn:li:dataset:(urn:li:dataPlatform:postgres,lineageguard-canonical.lineageguard.commerce.orders,PROD),customer_id)",
     "nativeFieldPath": "customer_id"
   },
-  "collectedAt": "2026-08-07T22:05:55.053Z",
+  "collectedAt": "2026-08-08T13:58:38.870Z",
   "collectionOrigin": {
     "mode": "LIVE"
   },
   "collectionStatus": "COMPLETE",
-  "collectionFingerprint": "5a4687f6313197651bf3cf6e45d0a437c74ad26a7a525672baf5014c994ff293",
+  "collectionFingerprint": "4d2136c95e97cf1ba47125677927baf2252ffdc79120c229a207dbbd8ba669fa",
   "impactContextFingerprint": "a44ffdb760b53fee35ae94f3f17c39c1630470224c0f6b895bf990bd849bcdc1"
 }
